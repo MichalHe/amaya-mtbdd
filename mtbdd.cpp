@@ -1,25 +1,15 @@
-#include <assert.h>
-#include <iterator>
-#include <sylvan.h>
-#include <sylvan_bdd.h>
+#include "amaya_mtbdd.hpp"
 #include <sylvan_common.h>
-#include <sylvan_gmp.h>
-#include <sylvan_mt.h>
 #include <sylvan_mtbdd.h>
-#include <sylvan_int.h>
-#include <sylvan_stats.h>
-
-#include <algorithm>
-#include <iostream>
-#include <set>
-#include <vector>
+#include <sylvan_mtbdd_int.h>
+#include <unistd.h>
 
 using namespace sylvan;
 using std::cout;
 using std::endl;
 using std::set;
-;
 using std::vector;
+using std::stringstream;
 
 static uint32_t mtbdd_leaf_type_set;
 
@@ -68,7 +58,7 @@ static void mk_set_leaf(uint64_t *state_set_ptr) {
 
 static void destroy_set_leaf(uint64_t leaf_value) {
   set<int> *states_set_ptr = (set<int> *)leaf_value;
-  print_states_set(states_set_ptr);
+  //print_states_set(states_set_ptr);
   delete states_set_ptr;
 }
 
@@ -94,10 +84,38 @@ static uint64_t set_leaf_hash(const uint64_t contents_ptr,
   return hash;
 }
 
+static char *set_leaf_to_str(int comp, uint64_t val, char *buf, size_t buflen){
+	(void) comp;
+	std::stringstream ss;
+	auto list_contents = (std::set<int> *) val;
+	ss << "{";
+	uint32_t cnt = 1;
+	for (auto i : *list_contents) {
+		ss << i;
+		if (cnt < list_contents->size()) {
+			ss << ",";
+		}
+		cnt++;
+	}
+	ss << "}";
+	const std::string str(ss.str());
+	
+	// Does the resulting string fits into the provided buffer?
+	if (str.size() <= buflen) {
+		const char *cstr = str.c_str();	
+		std::memcpy(buf, cstr, str.size());
+		return buf;
+	} else {
+		char *new_buf = (char *) malloc(sizeof(char) * str.size());
+		std::memcpy(buf, new_buf, str.size());
+		return new_buf;
+	}
+}
+
+
 TASK_DECL_2(MTBDD, set_union, MTBDD *, MTBDD *);
 TASK_IMPL_2(MTBDD, set_union, MTBDD *, pa, MTBDD *, pb) {
   MTBDD a = *pa, b = *pb;
-
   // When one leaf is empty set (false),
   // the algorithm should return all reachable states for the other one
   if (a == mtbdd_false) {
@@ -106,7 +124,6 @@ TASK_IMPL_2(MTBDD, set_union, MTBDD *, pa, MTBDD *, pb) {
   if (b == mtbdd_false) {
     return a; // Same here
   }
-
   // If both are leaves, we calculate union
   if (mtbdd_isleaf(a) && mtbdd_isleaf(b)) {
     std::set<int> set_a = *((std::set<int> *)mtbdd_getvalue(a));
@@ -116,12 +133,11 @@ TASK_IMPL_2(MTBDD, set_union, MTBDD *, pa, MTBDD *, pb) {
     std::set_union(set_a.begin(), set_a.end(), set_b.begin(), set_b.end(),
                    std::inserter(*_union, _union->begin()));
 
-    print_states_set(_union);
-
     MTBDD union_leaf = make_set_leaf(_union);
 
     return union_leaf;
   }
+
 
   // TODO: Perform pointer swap here, so the cache would be utilized
   // (commutative).
@@ -131,7 +147,6 @@ TASK_IMPL_2(MTBDD, set_union, MTBDD *, pa, MTBDD *, pb) {
 
 TASK_DECL_2(MTBDD, my_exists_op, MTBDD *, MTBDD *);
 TASK_IMPL_2(MTBDD, my_exists_op, MTBDD *, pa, MTBDD *, pb) {
-    cout << "Calling my_exists_op" << endl;
     return CALL(set_union, pa, pb);
 }
 
@@ -144,203 +159,45 @@ TASK_IMPL_2(MTBDD, my_exists_op, MTBDD *, pa, MTBDD *, pb) {
  */
 TASK_DECL_3(MTBDD, my_abstract_exists_op, MTBDD, MTBDD, int);
 TASK_IMPL_3(MTBDD, my_abstract_exists_op, MTBDD, a, MTBDD, b, int, k) {
-    if (k == 0) {
-        cout << "K is zero, returning my_exists_op" << endl;
-        return CALL(set_union, &a, &b);
-    } else {
-        cout << "K is not zero, returning my_exists_op" << endl;
-        return CALL(set_union, &a, &b);
-    }
-}
-
-TASK_DECL_3(MTBDD, my_abstract_exists, MTBDD, MTBDD, MTBDD);
-TASK_IMPL_3(MTBDD, my_abstract_exists, MTBDD, a, MTBDD, b, MTBDD, v) {
-    cout << "Inside my_abstract_exists" << endl;
-	// Check if there are any more variables in <v>
-    if (v == mtbdd_true) {
-		// We have exhausted the variables in <v>, no abstraction will be applied down the tree.
-		// Just apply the ordinary operator.
-        cout << "The variables <v> are exhausted" << endl;
-		return mtbdd_apply(a, b, TASK(mtbdd_op_times));
-	}
-
-	// Maybe a or b are either terminals (true,false) or leaf nodes. Check
-	// this case by trying to apply the operator, which will return mtbdd_invalid
-	// if it cannot be applied directly to nodes, and therefor the nodes are not
-	// leaves or terminals.
-    cout << "Variables <v> are not empty, trying to apply my_exists_op" << endl;
-    MTBDD result = CALL(my_exists_op, &a, &b);
-    if (result != mtbdd_invalid) {
-        cout << "my_exists_op did not return mtbdd_invalid" << endl;
-        mtbdd_refs_push(result);
-        result = mtbdd_abstract(result, v, TASK(my_abstract_exists_op));
-        mtbdd_refs_pop(1);
-        return result;
-    }
-
-    // At this point we know, that:
-	// 	- v is not a constant (contains some variables)  and
-    // 	- a or b is not a constant (are subtrees)
-
-    int is_a_leaf = mtbdd_isleaf(a);
-    int is_b_leaf = mtbdd_isleaf(b);
-    // If the <a> or <b> are not leaves, then they represent a whole MTBDD, but we want only top node.
-    // Get the top node.
-    mtbddnode_t na = is_a_leaf ? 0 : MTBDD_GETNODE(a);
-    mtbddnode_t nb = is_b_leaf ? 0 : MTBDD_GETNODE(b);
-
-    uint32_t variable_a = is_a_leaf ? 0xffffffff : mtbddnode_getvariable(na);
-    uint32_t variable_b = is_b_leaf ? 0xffffffff : mtbddnode_getvariable(nb);
-
-    // The top nodes of the two subtrees might not be at the same level (might be different vars)
-    // Get the one that is higher in the tree / variable order.
-    uint32_t var = variable_a < variable_b ? variable_a : variable_b;
-
-    // Get the topmost variable from the <v> variable set.
-    mtbddnode_t nv = MTBDD_GETNODE(v);
-    uint32_t variable_v = mtbddnode_getvariable(nv);
-
-    if (variable_v < var) {
-        cout << "The current variable from <v> is sooner than the one inside tree:" << endl;
-        cout << "Variable from <v>:" << variable_v << ", tree var: " << var << endl;
-        // We traversed deeper to the tree that the first variable specified in the variable set <v>.
-        // What to do about it? We continue recursing even deeper, however after leaving the recursion
-        // we must perform the abstraction -- with arguments (result, result) -- both subtrees of the 
-        // imaginary missing variable `variable_v` are the same trees = `result`
-        
-        // Recurse deeper with the next variable from the variable set. 
-        result = CALL(my_abstract_exists, a, b, node_gethigh(v, nv));
-        mtbdd_refs_push(result);
-        result = mtbdd_apply(result, result, TASK(my_exists_op)); // TODO: Change the operand here.
-        mtbdd_refs_pop(1);
-    } else  {
-        MTBDD alow, ahigh, blow, bhigh;
-        // TODO: Rewrite this to normal condition.
-
-        // If <a> is a leaf then it does not have successors - both successors must be <a>
-        alow  = (!is_a_leaf && variable_a == var) ? node_getlow(a, na)  : a;
-        ahigh = (!is_a_leaf && variable_a == var) ? node_gethigh(a, na) : a;
-
-        // If <b> is a leaf then it does not have successors - both successors must be <b>
-        blow  = (!is_b_leaf && variable_b == var) ? node_getlow(b, nb)  : b;
-        bhigh = (!is_b_leaf && variable_b == var) ? node_gethigh(b, nb) : b;
-
-        // Check if we currently processing one of the desired variables.
-        if (variable_v == var) {
-            cout << "Variable from <v> and current tree var are on the same level" << endl;
-            // Step down the recursion and since we are dealing with the desired variable to be
-            // abstracted away we call the operation on it.
-            mtbdd_refs_spawn(SPAWN(my_abstract_exists, ahigh, bhigh, node_gethigh(v, nv)));
-            MTBDD low = mtbdd_refs_push(CALL(my_abstract_exists, alow, blow, node_gethigh(v, nv)));
-            MTBDD high = mtbdd_refs_push(mtbdd_refs_sync(SYNC(my_abstract_exists)));
-            result = CALL(mtbdd_apply, low, high, TASK(mtbdd_op_plus)); // TODO: Change the op here.
-            mtbdd_refs_pop(2);
-        } else  {
-            cout << "Variable from <v> is deeper than the current one:" << endl;
-            cout << "Variable from <v>:" << variable_v << ", tree var: " << var << endl;
-            // variable_v > var (other possibilities were checked)
-            // This means that we are somewhere higher in the tree, and we didn't reach the required variable yet.
-            // The action is to go low via both subtrees and hight via both subtrees and just make 
-            // new node out of resuts.
-            mtbdd_refs_spawn(SPAWN(my_abstract_exists, ahigh, bhigh, v));
-            MTBDD low = mtbdd_refs_push(CALL(my_abstract_exists, alow, blow, v));
-            MTBDD high = mtbdd_refs_sync(SYNC(my_abstract_exists));
-            mtbdd_refs_pop(1);
-            result = mtbdd_makenode(var, low, high);
-        }
-    }
-
-    return result;
+	// Even if we skipped <k> levels in the mtbdd the k-times applied union()
+	//cout << "----- A ------ " << endl;
+	//mtbdd_fprintdot(stdout, a);
+	//cout << "----- B ------ " << endl;
+	//mtbdd_fprintdot(stdout, b);
+	MTBDD u = mtbdd_apply(a, b, TASK(set_union));
+	//cout << "----- Result: ------ " << endl;
+	//mtbdd_fprintdot(stdout, b);
+	return u;
 }
 
 
 VOID_TASK_0(simple_fn) {
-  // Define custom leaf type
-  mtbdd_leaf_type_set = sylvan_mt_create_type();
+    // Define custom leaf type
+    // sylvan_mt_set_write_binary(gmp_type, gmp_write_binary);
+    // sylvan_mt_set_read_binary(gmp_type, gmp_read_binary);
 
-  sylvan_mt_set_hash(mtbdd_leaf_type_set, set_leaf_hash);
-  sylvan_mt_set_equals(mtbdd_leaf_type_set, set_leaf_equals);
-  sylvan_mt_set_create(mtbdd_leaf_type_set, mk_set_leaf);
-  sylvan_mt_set_destroy(mtbdd_leaf_type_set, destroy_set_leaf);
+    // We make a simple cube to test our algorithm
+    // Transition
+    // (1) -1-> (2) --> (3) -1-> {1, 2}
 
-  // sylvan_mt_set_to_str(gmp_type, gmp_to_str);
-  // sylvan_mt_set_write_binary(gmp_type, gmp_write_binary);
-  // sylvan_mt_set_read_binary(gmp_type, gmp_read_binary);
+    // REMIND ME: makenode - Low, then high
+    std::set<int> leaf_set_a {1, 2};
+    std::set<int> leaf_set_b {1, 3};
 
-  BDD b1 = sylvan_ithvar(1);
-  BDD b2 = sylvan_ithvar(2);
+    MTBDD leaf_a = make_set_leaf(&leaf_set_a); 
+    MTBDD leaf_b = make_set_leaf(&leaf_set_b); 
 
-  std::set<int> set_A;
-  set_A.insert(1);
-  MTBDD leaf_A = make_set_leaf(&set_A);
+    MTBDD subtree = mtbdd_makenode(3, leaf_b, leaf_a);
+	MTBDD root = mtbdd_makenode(1, mtbdd_false, subtree);
 
-  std::set<int> set_B;
-  set_B.insert(2);
-  MTBDD leaf_B = make_set_leaf(&set_B);
+    uint32_t arr[] = {1, 2, 3};
+    BDDSET v = mtbdd_set_from_array(arr, 3);
+   	
+	// Project away the first variable.
+	MTBDD result = mtbdd_abstract(root, v, TASK(my_abstract_exists_op));
+	mtbdd_fprintdot(stdout, result);
 
-  std::set<int> set_C;
-  set_C.insert(3);
-  MTBDD leaf_C = make_set_leaf(&set_C);
-
-  std::set<int> set_D;
-  set_D.insert(4);
-  MTBDD leaf_D = make_set_leaf(&set_D);
-
-  // Transition t0:
-  // Q0---(1, 0) --> A
-  // 	 \--(1, 1) --> B
-  MTBDD t0_subtree = mtbdd_makenode(b2, leaf_A, leaf_B);
-  MTBDD t0_root = mtbdd_makenode(b1, mtbdd_false, t0_subtree);
-
-  // Transition:
-  // Q1---(0, *) --> C
-  // 	 \--(1, 1) --> D
-  MTBDD t1_subtree = mtbdd_makenode(b2, mtbdd_false, leaf_D);
-  MTBDD t1_root = mtbdd_makenode(b1, leaf_C, t1_subtree);
-
-  mtbdd_refs_push(t0_root);
-  mtbdd_refs_push(t1_root);
-
-  BDDSET vars = mtbdd_set_empty();
-  vars = mtbdd_set_add(vars, 2);
-  vars = mtbdd_set_add(vars, 1);
-
-  MTBDD tfn_root = mtbdd_apply(t0_root, t1_root, TASK(set_union));
-  mtbdd_refs_push(tfn_root);
-  // Expected transition fn:
-  // {Q0, Q1}----(0, *) --> {C}
-  // 		   \---(1, 0) --> {A}
-  // 		   \---(1, 1) --> {3, 4}
-
-  {
-    // Root low examination
-    MTBDD root_low = mtbdd_getlow(tfn_root);
-    assert(mtbdd_isleaf(root_low));
-    set<int> *root_low_states = (set<int> *)mtbdd_getvalue(root_low);
-    print_states_set(root_low_states);
-  }
-
-  {
-    // Root hight examination
-    MTBDD root_high = mtbdd_gethigh(tfn_root);
-    assert(!mtbdd_isleaf(root_high));
-    {
-      MTBDD root_high_high = mtbdd_gethigh(root_high);
-      assert(mtbdd_isleaf(root_high_high));
-      set<int> *root_low_states = (set<int> *)mtbdd_getvalue(root_high_high);
-      print_states_set(root_low_states); // This should be {3, 4}
-    }
-    {
-      MTBDD root_high_low = mtbdd_getlow(root_high);
-      assert(mtbdd_isleaf(root_high_low));
-      set<int> *root_low_states = (set<int> *)mtbdd_getvalue(root_high_low);
-      print_states_set(root_low_states);
-    }
-  }
-
-  mtbdd_refs_pop(3);
-
-  sylvan_gc();
+    sylvan_gc();
 }
 
 VOID_TASK_1(_main, void *, arg) {
@@ -350,11 +207,7 @@ VOID_TASK_1(_main, void *, arg) {
 
   sylvan_init_mtbdd();
 
-  CALL(simple_fn);
-
-  sylvan_stats_report(stdout);
-
-  sylvan_quit();
+  //sylvan_quit();
   (void)arg;
 }
 
@@ -364,6 +217,116 @@ int main() {
   size_t program_stack_size = 0; // Use default
 
   lace_init(n_workers, dequeue_size);
-
   lace_startup(program_stack_size, TASK(_main), NULL);
+}
+
+void init_machinery() {
+  int n_workers = 1;
+  size_t dequeue_size = 0;       // Auto select
+  size_t program_stack_size = 0; // Use default
+
+  lace_init(n_workers, dequeue_size);
+  //lace_startup(program_stack_size, TASK(_main), NULL);
+
+  // THIS SEEMS TO BE THE SECRET
+  // When the TASK parameter (the middle one) is set to be NULL, it does not spawn a new thread
+  // and instead uses the current thread for all tasks (makes it possible to call from python)
+  lace_startup(0, NULL, NULL); 
+  sylvan_set_sizes(1LL << 22, 1LL << 26, 1LL << 22, 1LL << 26);
+  sylvan_init_package();
+  sylvan_init_mtbdd();
+
+  // Initialize my own sylvan type.
+
+    mtbdd_leaf_type_set = sylvan_mt_create_type();
+    sylvan_mt_set_hash(mtbdd_leaf_type_set, set_leaf_hash);
+    sylvan_mt_set_equals(mtbdd_leaf_type_set, set_leaf_equals);
+    sylvan_mt_set_create(mtbdd_leaf_type_set, mk_set_leaf);
+    sylvan_mt_set_destroy(mtbdd_leaf_type_set, destroy_set_leaf);
+    sylvan_mt_set_to_str(mtbdd_leaf_type_set, set_leaf_to_str);
+}
+
+void shutdown_machinery() {
+	sylvan_quit();
+	lace_exit();
+}
+
+MTBDD w_mtbdd_makenode(uint32_t var, MTBDD low, MTBDD high) {
+	return mtbdd_makenode(2, mtbdd_true, mtbdd_false);
+}
+
+MTBDD w_sylvan_ithvar(uint32_t var) {
+	return mtbdd_ithvar(var);
+}
+
+
+MTBDD amaya_mtbdd_build_single_terminal(
+		uint8_t *transition_symbols,  // 2D array of size (variable_count) * transition_symbols_count
+		uint32_t transition_symbols_count,
+		uint32_t variable_count,
+		uint32_t *destination_set,
+		uint32_t destination_set_size)
+{
+	// CALL(mtbdd_union_cube(mtbdd, variables, cube, terminal)	
+	// Cube (transitions symbols) have to be in format -- suppose the transition_symbols are ready
+	// x_0 = 0  ===> low transition
+	// x_0 = 1  ===> high transition
+	// x_0 = 2  ===> any
+	// Construct variables set containing all the variables.
+	BDDSET variables = mtbdd_set_empty();
+	for (uint32_t i=1; i <= variable_count; i++) {
+		variables = mtbdd_set_add(variables, i); // Variables are numbered from 1
+	}
+
+	// Construct the leaf
+	std::set<int> *leaf_state_set = new std::set<int>();	
+	for (uint32_t i = 0; i < destination_set_size; i++) {
+		leaf_state_set->insert(destination_set[i]);
+	}	
+	MTBDD leaf = make_set_leaf(leaf_state_set);
+
+	// Construct the initial MTBDD, then add the rest of the symbols
+	// signature: mtbdd_cube(MTBDD variables, uint8_t *cube, MTBDD terminal)
+	// initial_cube = transition_symbols[0*variable_count + (0..variable_count)] (size: variable_count)
+	MTBDD mtbdd = mtbdd_cube(variables, transition_symbols, leaf);
+	
+	LACE_ME;
+	for (uint32_t i = 1; i < transition_symbols_count; i++) {
+		// Cube for this iteration:
+		//   i*variable_count + (0..variable_count)
+		mtbdd = CALL(mtbdd_union_cube, mtbdd, variables, &transition_symbols[i*variable_count], leaf);
+	}
+	//mtbdd_fprintdot(stdout, mtbdd);
+	return mtbdd;
+}
+
+void amaya_print_dot(MTBDD m, int32_t fd) {
+	FILE* file = fdopen(fd, "w");
+	cout << file << endl;
+	mtbdd_fprintdot(file, m);
+	fflush(file);
+	// fclose(file);  The file will be closed in python
+}
+
+MTBDD amaya_project_variables_away(MTBDD m, uint32_t *variables, uint32_t var_count) {
+	// Construct the variables set.
+	BDDSET var_set = mtbdd_set_empty();
+	for (uint32_t i = 0; i < var_count; i++) {
+		var_set = mtbdd_set_add(var_set, variables[i]);
+	}
+	
+	// Do the projection itself.
+	LACE_ME;
+	MTBDD result = mtbdd_abstract(m, var_set, TASK(my_abstract_exists_op));
+	
+	//mtbdd_fprintdot(stdout, result);
+	return result;
+}
+
+MTBDD amaya_unite_mtbdds(MTBDD m1, MTBDD m2) {
+	LACE_ME;
+	MTBDD u = mtbdd_apply(m1, m2, TASK(set_union));
+	//mtbdd_fprintdot(stdout, u);
+
+	return u;
 }
