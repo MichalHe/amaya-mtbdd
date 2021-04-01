@@ -10,6 +10,11 @@ mtbdd_wrapper.amaya_mtbdd_get_transition_target.argtypes = (
     ct.POINTER(ct.c_uint32)
 )
 mtbdd_wrapper.amaya_mtbdd_get_transition_target.restype = ct.POINTER(ct.c_int)
+mtbdd_wrapper.amaya_mtbdd_rename_states.argtypes = (
+    ct.c_long,
+    ct.POINTER(ct.c_int),
+    ct.c_uint32,
+)
 
 
 mtbdd_false = ct.c_ulong.in_dll(mtbdd_wrapper, 'w_mtbdd_false')
@@ -98,12 +103,38 @@ class MTBDDTransitionFn():
         mtbdd_wrapper.amaya_do_free(result)
         return set(dest_)
 
+    def rename_states(self, mappings: Dict[int, int]):
+        '''Renames all states referenced within stored mtbdds with the
+        provided mapping.
+
+        Requires all referenced states to be present in the mapping.
+        '''
+        flat_mapping_size = 2*len(mappings)
+        arr = (ct.c_int * flat_mapping_size)()
+
+        for i, mapping in enumerate(mappings.items()):
+            old, new = mapping
+            arr[2*i] = ct.c_int(old)
+            arr[2*i + 1] = ct.c_int(new)
+
+        mapping_ptr = ct.cast(arr, ct.POINTER(ct.c_int))
+        mapping_size = ct.c_uint32(len(mappings))
+
+        for mtbdd in self.mtbdds.values():
+            mtbdd_wrapper.amaya_mtbdd_rename_states(
+                mtbdd,
+                mapping_ptr,
+                mapping_size
+            )
+
 
 M = MTBDDTransitionFn()
 
 M.insert_transition(0, (0, 0, 1), 1)
 M.insert_transition(0, (0, 0, 1), 2)
-M.insert_transition(0, (1, 1, 1), 3)
-M.insert_transition(0, (1, 1, 1), 5)
-
-print(M.get_transition_target(0, (0, 0, '*')))
+M.insert_transition(0, (0, 1, 1), 3)
+M.insert_transition(0, (0, 1, 1), 4)
+M.rename_states({1: 10, 2: 20, 3: 30, 4: 40})
+M.write_mtbdd_dot_to_file(M.mtbdds[0], '/tmp/AYAY.dot')
+print(M.get_transition_target(0, (0, 0, 1)))
+print(M.get_transition_target(0, (0, 1, 1)))

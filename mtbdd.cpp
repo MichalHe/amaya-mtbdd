@@ -417,6 +417,50 @@ std::set<int>* _get_transition_target(
 	}
 }
 
+void amaya_mtbdd_rename_states(
+		MTBDD root, 
+		int* names, // [(old, new), (old, new), (old, new)] 
+		uint32_t name_count)
+{
+	LACE_ME;
+	MTBDD support = mtbdd_support(root);
+	uint32_t support_size = mtbdd_set_count(support);
+	cout << "Support size: " << support_size << endl;
+	
+	uint8_t* arr = (uint8_t*) malloc(sizeof(uint8_t) * support_size);
+	MTBDD leaf = mtbdd_enum_first(root, support, arr, NULL);
+	std::set<MTBDD> leaves {};
+	uint32_t old_name, new_name;
+
+	// Collect leaves
+ 	while (leaf != mtbdd_false)
+	{
+		leaves.insert(leaf);
+ 	    leaf = mtbdd_enum_next(root, support, arr, NULL);
+ 	}
+	cout << "Collected leaves count: " << leaves.size() << endl;
+	cout << "Names count: " << name_count << endl;
+	for (auto leaf : leaves) 
+	{
+		std::set<int>* leaf_contents = (std::set<int>*) mtbdd_getvalue(leaf);
+		std::vector<int> new_leaf_contents;
+		cout << "Remapping leaf: "; 
+		print_states_set(leaf_contents);
+		for (uint32_t i = 0; i < name_count; i++) 
+		{
+			old_name = names[2*i];
+			new_name = names[2*i + 1];
+			bool is_in_leaf = leaf_contents->find(old_name) != leaf_contents->end();
+
+			if (is_in_leaf) new_leaf_contents.push_back(new_name);
+		}
+		leaf_contents->clear();
+		for (auto i : new_leaf_contents) leaf_contents->insert(i);
+		cout << "Leaf states remapped into: "; print_states_set(leaf_contents);
+	}
+		//std::set<int>* leaf_contents = (std::set<int>*) mtbdd_getvalue(leaf);
+}
+
 
 void amaya_print_dot(MTBDD m, int32_t fd) {
 	FILE* file = fdopen(fd, "w");

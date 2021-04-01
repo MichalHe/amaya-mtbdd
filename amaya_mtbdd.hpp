@@ -44,6 +44,10 @@ extern "C" {
 		uint32_t variable_count,
 		uint32_t *destination_set,
 		uint32_t destination_set_size);
+	void amaya_mtbdd_rename_states(
+			sylvan::MTBDD root, 
+			int* names, // [(old, new), (old, new), (old, new)] 
+			uint32_t name_count);
 
 	void amaya_do_free(void *ptr);
 
