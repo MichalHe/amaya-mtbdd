@@ -89,6 +89,8 @@ static char *set_leaf_to_str(int comp, uint64_t val, char *buf, size_t buflen){
 	(void) comp;
 	std::stringstream ss;
 	auto list_contents = (std::set<int> *) val;
+	cout << "leaf2str: State count: " << list_contents->size() << endl;
+	print_states_set(list_contents);
 	ss << "{";
 	uint32_t cnt = 1;
 	for (auto i : *list_contents) {
@@ -103,13 +105,16 @@ static char *set_leaf_to_str(int comp, uint64_t val, char *buf, size_t buflen){
 	const std::string str(ss.str());
 	
 	// Does the resulting string fits into the provided buffer?
-	if (str.size() <= buflen) {
+	const size_t required_buf_size = str.size() + 1; // With nullbyte
+	if (required_buf_size <= buflen) {
 		const char *cstr = str.c_str();	
-		std::memcpy(buf, cstr, str.size());
+		std::memcpy(buf, cstr, sizeof(char) * required_buf_size);
+		cout << buf << endl;
 		return buf;
 	} else {
-		char *new_buf = (char *) malloc(sizeof(char) * (str.size() + 1)); // Don't forget the null byte
-		std::memcpy(new_buf, str.c_str(), sizeof(char) * str.size());
+		char *new_buf = (char *) malloc(sizeof(char) * required_buf_size);
+		std::memcpy(new_buf, str.c_str(), sizeof(char) * required_buf_size);
+		cout << new_buf << endl;
 		return new_buf;
 	}
 }
@@ -284,6 +289,8 @@ MTBDD amaya_mtbdd_build_single_terminal(
 	for (uint32_t i = 0; i < destination_set_size; i++) {
 		leaf_state_set->insert(destination_set[i]);
 	}	
+	//cout << "Build single terminal: ";
+	//print_states_set(leaf_state_set);
 	MTBDD leaf = make_set_leaf(leaf_state_set);
 
 	// Construct the initial MTBDD, then add the rest of the symbols
