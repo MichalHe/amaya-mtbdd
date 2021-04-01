@@ -42,6 +42,7 @@ make_set_leaf(std::set<int> *value) {
  * Function is called when a new node is being inserted to the hash table
  *
  * @param state_set_ptr 	Pointer to an old valid leaf value, which is being
+ *
  * copied to the hash table. This means that its a pointer to a poiter to a
  * vector.(which is our value).
  */
@@ -98,6 +99,7 @@ static char *set_leaf_to_str(int comp, uint64_t val, char *buf, size_t buflen){
 		cnt++;
 	}
 	ss << "}";
+
 	const std::string str(ss.str());
 	
 	// Does the resulting string fits into the provided buffer?
@@ -106,8 +108,8 @@ static char *set_leaf_to_str(int comp, uint64_t val, char *buf, size_t buflen){
 		std::memcpy(buf, cstr, str.size());
 		return buf;
 	} else {
-		char *new_buf = (char *) malloc(sizeof(char) * str.size());
-		std::memcpy(buf, new_buf, str.size());
+		char *new_buf = (char *) malloc(sizeof(char) * (str.size() + 1)); // Don't forget the null byte
+		std::memcpy(new_buf, str.c_str(), sizeof(char) * str.size());
 		return new_buf;
 	}
 }
@@ -195,7 +197,6 @@ VOID_TASK_0(simple_fn) {
    	
 	// Project away the first variable.
 	MTBDD result = mtbdd_abstract(root, v, TASK(my_abstract_exists_op));
-	mtbdd_fprintdot(stdout, result);
 
     sylvan_gc();
 }
@@ -464,8 +465,10 @@ void amaya_mtbdd_rename_states(
 
 void amaya_print_dot(MTBDD m, int32_t fd) {
 	FILE* file = fdopen(fd, "w");
+	cout << m << endl;
 	cout << file << endl;
 	mtbdd_fprintdot(file, m);
+	cout << "Done" << endl;
 	fflush(file);
 	// fclose(file);  The file will be closed in python
 }
