@@ -300,6 +300,124 @@ MTBDD amaya_mtbdd_build_single_terminal(
 	return mtbdd;
 }
 
+
+int* amaya_mtbdd_get_transition_target(MTBDD mtbdd, uint8_t* cube, uint32_t cube_size, uint32_t* result_size) 
+{
+
+	auto search_result = _get_transition_target(mtbdd, 1, cube, cube_size);
+	if (search_result == NULL)
+	{
+		*result_size = 0;
+		return NULL;
+	} else 
+	{
+		const uint32_t rs = search_result->size();
+		*result_size = rs;
+		int* result_arr = (int*) malloc(sizeof(uint32_t) * rs);
+		uint32_t i = 0;
+		for (auto v : *search_result) 
+		{
+			result_arr[i++] = v;
+		}
+		return result_arr;
+	}
+}
+
+void amaya_do_free(void *ptr)
+{
+	free(ptr);
+}
+
+std::set<int>* _get_transition_target(
+		MTBDD root, 
+		uint32_t current_variable,
+		uint8_t* variable_assigments, 
+		uint32_t var_count)
+{
+	int is_leaf = mtbdd_isleaf(root);
+	if (var_count == 0) {
+		if (is_leaf) {
+			if (root == mtbdd_false) return NULL;
+			auto leaf_value = (std::set<int>*) mtbdd_getvalue(root);	
+			std::set<int>* result = new std::set<int>(*leaf_value); // Return a copy (might modify elsewhere)
+			return result;
+		} else {
+			// We have exhausted all variables, yet we did not hit a leaf. 
+			// That means the cube did not contain all the variables.
+			return NULL;  // Not enough information to decide.
+		}
+	}
+	
+	if (is_leaf) {
+		if (root == mtbdd_false) return NULL;
+		else {
+			// Found a solution
+			auto leaf_value = (std::set<int>*) mtbdd_getvalue(root);	
+			std::set<int>* result = new std::set<int>(*leaf_value); // Return a copy (might modify elsewhere)
+			return result;
+		}
+	}
+	
+	// If we got here then root is not a leaf and we still have still some variables
+	uint32_t root_var = mtbdd_getvar(root);
+
+	if (root_var == current_variable) {
+		if (*variable_assigments == 0) 
+		{
+			// Go low
+			return _get_transition_target(
+					mtbdd_getlow(root), 
+					current_variable + 1, 
+					variable_assigments + 1, 
+					var_count - 1);
+		} 
+		else if (*variable_assigments == 1) 
+		{
+			// Go high
+			return _get_transition_target(
+					mtbdd_gethigh(root), 
+					current_variable + 1, 
+					variable_assigments + 1, 
+					var_count - 1);
+		}
+		else 
+		{
+			// That means that the current assigment is don't care (2)
+			// First go low
+			std::set<int>* low_result = _get_transition_target(
+					mtbdd_getlow(root), 
+					current_variable + 1, 
+					variable_assigments + 1, 
+					var_count - 1);
+
+			// Then go high
+			std::set<int>* high_result = _get_transition_target(
+					mtbdd_gethigh(root), 
+					current_variable + 1, 
+					variable_assigments + 1, 
+					var_count - 1);
+
+			// Now decide what to do with the results
+			if (low_result == NULL) return high_result; // Might return NULL
+			if (high_result == NULL) return low_result; // The low result is not NULL
+
+			low_result->insert(high_result->begin(), high_result->end());
+			delete high_result; // Only low result will be propagated upwards
+			return low_result;
+		}
+	} else 
+	{
+		// The current variable in the tree skipped a variable.
+		// That means the current variable assignment did not matter.
+		return _get_transition_target(
+				root, 
+				current_variable + 1,   		// Move to the next variable
+				variable_assigments + 1,		// --^
+				var_count - 1);
+	}
+}
+
+
 void amaya_print_dot(MTBDD m, int32_t fd) {
 	FILE* file = fdopen(fd, "w");
 	cout << file << endl;

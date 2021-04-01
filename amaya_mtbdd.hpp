@@ -31,6 +31,11 @@ extern "C" {
 	sylvan::MTBDD amaya_unite_mtbdds(sylvan::MTBDD m1, sylvan::MTBDD m2);
 	sylvan::MTBDD amaya_project_variables_away(
 			sylvan::MTBDD m, uint32_t *variables, uint32_t var_count);
+	int* amaya_mtbdd_get_transition_target(
+			sylvan::MTBDD mtbdd, 
+			uint8_t* cube, 
+			uint32_t cube_size, 
+			uint32_t* result_size);
 
 	void amaya_print_dot(sylvan::MTBDD m, int32_t fd);
 	sylvan::MTBDD amaya_mtbdd_build_single_terminal(
@@ -40,8 +45,15 @@ extern "C" {
 		uint32_t *destination_set,
 		uint32_t destination_set_size);
 
+	void amaya_do_free(void *ptr);
+
 	void shutdown_machinery();
 	void init_machinery();
 }
 
+std::set<int>* _get_transition_target(
+		sylvan::MTBDD root, 
+		uint32_t current_variable,
+		uint8_t* variable_assigments, 
+		uint32_t var_count);
 #endif
