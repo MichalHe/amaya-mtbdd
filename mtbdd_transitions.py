@@ -16,6 +16,11 @@ mtbdd_wrapper.amaya_mtbdd_rename_states.argtypes = (
     ct.c_uint32,
 )
 
+mtbdd_wrapper.amaya_project_variables_away.argtypes = (
+    ct.c_ulong,
+    ct.POINTER(ct.c_uint32),
+    ct.c_uint32
+)
 
 mtbdd_false = ct.c_ulong.in_dll(mtbdd_wrapper, 'w_mtbdd_false')
 MTBDD = ct.c_ulong
@@ -127,14 +132,25 @@ class MTBDDTransitionFn():
                 mapping_size
             )
 
+    def project_variable_away(self, variable: int):
+        '''Not sure what happens when trying to project a variable that is not
+        present.'''
+        assert variable > 0, 'MTBDD variables are numbered via ints from 1 up'
 
-M = MTBDDTransitionFn()
+        variables = (ct.c_uint32 * 1)(variable)
+        for state in self.mtbdds:
+            mtbdd = self.mtbdds[state]
+            new_mtbdd = mtbdd_wrapper.amaya_project_variables_away(
+                mtbdd,
+                variables,
+                ct.c_uint32(1)
+            )
+            self.mtbdds[state] = new_mtbdd
 
-M.insert_transition(0, (0, 0, 1), 1)
-M.insert_transition(0, (0, 0, 1), 2)
-M.insert_transition(0, (0, 1, 1), 3)
-M.insert_transition(0, (0, 1, 1), 4)
-M.rename_states({1: 10, 2: 20, 3: 30, 4: 40})
-M.write_mtbdd_dot_to_file(M.mtbdds[0], '/tmp/AYAY.dot')
-print(M.get_transition_target(0, (0, 0, 1)))
-print(M.get_transition_target(0, (0, 1, 1)))
+
+if __name__ == '__main__':
+    mtfn = MTBDDTransitionFn()
+    mtfn.insert_transition(0, (0, 1, 1), 1)
+    mtfn.insert_transition(0, (0, 1, 1), 2)
+    mtfn.project_variable_away(2)
+    mtfn.write_mtbdd_dot_to_file(mtfn.mtbdds[0], '/tmp/AY.dot')
