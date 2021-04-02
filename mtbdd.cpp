@@ -542,7 +542,5 @@ MTBDD amaya_project_variables_away(MTBDD m, uint32_t *variables, uint32_t var_co
 MTBDD amaya_unite_mtbdds(MTBDD m1, MTBDD m2) {
 	LACE_ME;
 	MTBDD u = mtbdd_apply(m1, m2, TASK(set_union));
-	//mtbdd_fprintdot(stdout, u);
-
 	return u;
 }

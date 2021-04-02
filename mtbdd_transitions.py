@@ -28,6 +28,12 @@ mtbdd_wrapper.amaya_mtbdd_get_leaves.argtypes = (
     ct.POINTER(ct.c_uint32)  # Leaf count
 )
 
+mtbdd_wrapper.amaya_unite_mtbdds.argtypes = (
+    ct.c_ulong,  # MTBDD a
+    ct.c_ulong,  # MTBDD b
+)
+mtbdd_wrapper.amaya_unite_mtbdds.restype = ct.c_ulong
+
 mtbdd_wrapper.amaya_mtbdd_get_leaves.restype = ct.POINTER(ct.c_int)  # Pointer to array containing the states
 
 mtbdd_false = ct.c_ulong.in_dll(mtbdd_wrapper, 'w_mtbdd_false')
@@ -180,14 +186,47 @@ class MTBDDTransitionFn():
 
         return leaves
 
+    def get_union_mtbdd_for_states(self, states: List[int]) -> MTBDD:
+        '''Does what name suggests.'''
+        resulting_mtbdd = mtbdd_false
+        for state in states:
+            if state not in self.mtbdds:
+                continue
+            mtbdd = self.mtbdds[state]
+            resulting_mtbdd = mtbdd_wrapper.amaya_unite_mtbdds(
+                mtbdd,
+                resulting_mtbdd)
+        return resulting_mtbdd
+
+
+def determinize_mtbdd(tfn: MTBDDTransitionFn, initial_states: List[int]):
+    work_queue = [tuple(initial_states)]
+    states = set()
+    while work_queue:
+        c_metastate = work_queue.pop(-1)
+        states.add(c_metastate)
+        print(c_metastate)
+        transition = tfn.get_union_mtbdd_for_states(c_metastate)
+
+        reachable_states = tfn.get_mtbdd_leaves(transition)
+        for rs in reachable_states:
+            rs = tuple(rs)
+            if rs not in states:
+                # @Optimize: this is a linear search.
+                if rs not in work_queue:
+                    work_queue.append(rs)
+    return states
+
 
 if __name__ == '__main__':
-    mtfn = MTBDDTransitionFn()
-    mtfn.insert_transition(0, (0, 1, 1), 1)
-    mtfn.insert_transition(0, (0, 1, 1), 2)
-    mtfn.insert_transition(0, (0, 0, 1), 3)
-    mtfn.insert_transition(0, (0, 0, 1), 4)
-    mtfn.insert_transition(0, (0, 1, 1), 3)
+    tfn = MTBDDTransitionFn()
+    tfn.insert_transition(0, (0, 1, 1), 1)
+    tfn.insert_transition(0, (0, 1, 1), 2)
+    tfn.insert_transition(0, (0, 1, 1), 3)
 
-    mtbdd = mtfn.mtbdds[0]
-    print(mtfn.get_mtbdd_leaves(mtbdd))
+    tfn.insert_transition(0, (0, 0, 1), 3)
+    tfn.insert_transition(0, (0, 0, 1), 4)
+
+    tfn.insert_transition(1, (0, 1, 1), 3)
+
+    determinize_mtbdd(tfn, [0])
