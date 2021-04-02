@@ -49,6 +49,11 @@ extern "C" {
 			int* names, // [(old, new), (old, new), (old, new)] 
 			uint32_t name_count);
 
+	int* amaya_mtbdd_get_leaves(
+			sylvan::MTBDD root, 
+			uint32_t** leaf_sizes,	// OUT, Array containing the sizes of leaves inside dest
+			uint32_t* leaf_cnt);	// OUT, Number of leaves in the tree
+
 	void amaya_do_free(void *ptr);
 
 	void shutdown_machinery();
@@ -60,4 +65,6 @@ std::set<int>* _get_transition_target(
 		uint32_t current_variable,
 		uint8_t* variable_assigments, 
 		uint32_t var_count);
+
+void collect_mtbdd_leaves(sylvan::MTBDD root, std::set<sylvan::MTBDD>& dest);
 #endif

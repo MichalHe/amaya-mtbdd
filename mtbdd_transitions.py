@@ -1,5 +1,5 @@
 import ctypes as ct
-from typing import Dict, Any, Tuple, Union
+from typing import Dict, Any, Tuple, Union, List
 
 mtbdd_wrapper = ct.CDLL('./amaya-mtbdd.so', mode=1)
 mtbdd_wrapper.init_machinery()
@@ -21,6 +21,14 @@ mtbdd_wrapper.amaya_project_variables_away.argtypes = (
     ct.POINTER(ct.c_uint32),
     ct.c_uint32
 )
+
+mtbdd_wrapper.amaya_mtbdd_get_leaves.argtypes = (
+    ct.c_ulong,
+    ct.POINTER(ct.POINTER((ct.c_uint32))),  # Leaf sizes
+    ct.POINTER(ct.c_uint32)  # Leaf count
+)
+
+mtbdd_wrapper.amaya_mtbdd_get_leaves.restype = ct.POINTER(ct.c_int)  # Pointer to array containing the states
 
 mtbdd_false = ct.c_ulong.in_dll(mtbdd_wrapper, 'w_mtbdd_false')
 MTBDD = ct.c_ulong
@@ -147,10 +155,39 @@ class MTBDDTransitionFn():
             )
             self.mtbdds[state] = new_mtbdd
 
+    def get_mtbdd_leaves(self, mtbdd: MTBDD) -> List[List[int]]:
+        ''' Internal procedure. '''
+        leaf_sizes = ct.POINTER(ct.c_uint32)()
+        leaf_cnt = ct.c_uint32()
+        leaf_contents = mtbdd_wrapper.amaya_mtbdd_get_leaves(
+            mtbdd,
+            ct.byref(leaf_sizes),
+            ct.byref(leaf_cnt)
+        )
+
+        state_i = 0
+        leaves = []
+        for i in range(leaf_cnt.value):
+            leaf = []
+            for j in range(leaf_sizes[i]):
+                state = leaf_contents[state_i]
+                state_i += 1
+                leaf.append(state)
+            leaves.append(leaf)
+
+        mtbdd_wrapper.amaya_do_free(leaf_sizes)
+        mtbdd_wrapper.amaya_do_free(leaf_contents)
+
+        return leaves
+
 
 if __name__ == '__main__':
     mtfn = MTBDDTransitionFn()
     mtfn.insert_transition(0, (0, 1, 1), 1)
     mtfn.insert_transition(0, (0, 1, 1), 2)
-    mtfn.project_variable_away(2)
-    mtfn.write_mtbdd_dot_to_file(mtfn.mtbdds[0], '/tmp/AY.dot')
+    mtfn.insert_transition(0, (0, 0, 1), 3)
+    mtfn.insert_transition(0, (0, 0, 1), 4)
+    mtfn.insert_transition(0, (0, 1, 1), 3)
+
+    mtbdd = mtfn.mtbdds[0]
+    print(mtfn.get_mtbdd_leaves(mtbdd))

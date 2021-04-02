@@ -430,29 +430,15 @@ void amaya_mtbdd_rename_states(
 		int* names, // [(old, new), (old, new), (old, new)] 
 		uint32_t name_count)
 {
-	LACE_ME;
-	MTBDD support = mtbdd_support(root);
-	uint32_t support_size = mtbdd_set_count(support);
-	cout << "Support size: " << support_size << endl;
-	
-	uint8_t* arr = (uint8_t*) malloc(sizeof(uint8_t) * support_size);
-	MTBDD leaf = mtbdd_enum_first(root, support, arr, NULL);
-	std::set<MTBDD> leaves {};
 	uint32_t old_name, new_name;
 
-	// Collect leaves
- 	while (leaf != mtbdd_false)
-	{
-		leaves.insert(leaf);
- 	    leaf = mtbdd_enum_next(root, support, arr, NULL);
- 	}
-	cout << "Collected leaves count: " << leaves.size() << endl;
-	cout << "Names count: " << name_count << endl;
+	std::set<MTBDD> leaves {};
+	collect_mtbdd_leaves(root, leaves);	
+
 	for (auto leaf : leaves) 
 	{
 		std::set<int>* leaf_contents = (std::set<int>*) mtbdd_getvalue(leaf);
 		std::vector<int> new_leaf_contents;
-		cout << "Remapping leaf: "; 
 		print_states_set(leaf_contents);
 		for (uint32_t i = 0; i < name_count; i++) 
 		{
@@ -464,13 +450,71 @@ void amaya_mtbdd_rename_states(
 		}
 		leaf_contents->clear();
 		for (auto i : new_leaf_contents) leaf_contents->insert(i);
-		cout << "Leaf states remapped into: "; print_states_set(leaf_contents);
 	}
-		//std::set<int>* leaf_contents = (std::set<int>*) mtbdd_getvalue(leaf);
+}
+
+void collect_mtbdd_leaves(MTBDD root, std::set<MTBDD>& dest)
+{
+	LACE_ME;
+	MTBDD support = mtbdd_support(root);
+	uint32_t support_size = mtbdd_set_count(support);
+		
+	// Stores the tree path to the leaf
+	uint8_t* arr = (uint8_t*) malloc(sizeof(uint8_t) * support_size);
+
+	MTBDD leaf = mtbdd_enum_first(root, support, arr, NULL);
+	
+ 	while (leaf != mtbdd_false)
+	{
+		dest.insert(leaf);
+ 	    leaf = mtbdd_enum_next(root, support, arr, NULL);
+ 	}
+}
+
+int* amaya_mtbdd_get_leaves(
+		MTBDD root, 
+		uint32_t** leaf_sizes,	// OUT, Array containing the sizes of leaves inside dest
+		uint32_t* leaf_cnt)		// OUT, Number of leaves in the tree
+{
+	std::set<MTBDD> leaves {};
+	collect_mtbdd_leaves(root, leaves);	
+
+	// This probably is not the most efficient way how to do it.	
+	// First compute the destination size (for malloc)
+	uint32_t size_cnt = 0; // Counter for the total number of states.
+	for (MTBDD leaf : leaves) 
+	{
+		std::set<int>* contents = (std::set<int>*) mtbdd_getvalue(leaf);
+		size_cnt += contents->size();
+	}
+
+	// Do the allocations
+	uint32_t* _leaf_sizes = (uint32_t*) malloc(sizeof(uint32_t) * leaves.size());  // One slot for each leaf 
+	int* _leaf_states = (int *) malloc(sizeof(int) * size_cnt);
+	
+	// Populate
+	uint32_t state_i = 0;
+	uint32_t size_i = 0;
+	for (MTBDD leaf : leaves)
+	{
+		std::set<int>* contents = (std::set<int>*) mtbdd_getvalue(leaf);
+		for (int state : *contents) 
+		{
+			_leaf_states[state_i] = state;
+			state_i++;
+		}
+		_leaf_sizes[size_i] = contents->size();
+		size_i++;
+	}
+	
+	*leaf_sizes = _leaf_sizes;
+	*leaf_cnt = (uint32_t) leaves.size();
+	return _leaf_states;
 }
 
 
-void amaya_print_dot(MTBDD m, int32_t fd) {
+void amaya_print_dot(MTBDD m, int32_t fd) 
+{
 	FILE* file = fdopen(fd, "w");
 	cout << m << endl;
 	cout << file << endl;
