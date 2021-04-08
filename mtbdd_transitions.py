@@ -1,5 +1,5 @@
 import ctypes as ct
-from typing import Dict, Any, Tuple, Union, List, Iterable
+from typing import Dict, Any, Tuple, Union, List, Iterable, Set
 
 mtbdd_wrapper = ct.CDLL('./amaya-mtbdd.so', mode=1)
 mtbdd_wrapper.init_machinery()
@@ -379,14 +379,18 @@ class MTBDDTransitionFn():
         return intersect_mtbdd
 
 
-def determinize_mtbdd(tfn: MTBDDTransitionFn, initial_states: List[int]):
+def determinize_mtbdd(tfn: MTBDDTransitionFn, initial_states: Set[int], final_states: Set[int]):
     work_queue = [tuple(initial_states)]
     states = set()
+    dfa_final_states = set()
+    initial_states = set(initial_states)
     while work_queue:
         c_metastate = work_queue.pop(-1)
         states.add(c_metastate)
-        print(c_metastate)
         transition = tfn.get_union_mtbdd_for_states(c_metastate)
+
+        if set(c_metastate).intersection(final_states):
+            dfa_final_states.append(tuple(c_metastate))
 
         reachable_states = tfn.get_mtbdd_leaves(transition)
         for rs in reachable_states:
@@ -395,6 +399,7 @@ def determinize_mtbdd(tfn: MTBDDTransitionFn, initial_states: List[int]):
                 # @Optimize: this is a linear search.
                 if rs not in work_queue:
                     work_queue.append(rs)
+
     return states
 
 
