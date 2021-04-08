@@ -1,5 +1,5 @@
 import ctypes as ct
-from typing import Dict, Any, Tuple, Union, List, Set
+from typing import Dict, Any, Tuple, Union, List
 
 mtbdd_wrapper = ct.CDLL('./amaya-mtbdd.so', mode=1)
 mtbdd_wrapper.init_machinery()
@@ -47,7 +47,17 @@ mtbdd_wrapper.amaya_mtbdd_do_pad_closure.argtypes = (
     ct.POINTER(ct.c_int),  # Array with final states.
     ct.c_uint32  # Number of final states
 )
-mtbdd_wrapper.amaya_mtbdd_do_pad_closure.restype = ct.POINTER(ct.c_bool)
+mtbdd_wrapper.amaya_mtbdd_do_pad_closure.restype = ct.c_bool
+
+mtbdd_wrapper.amaya_mtbdd_get_transitions.argtypes = (
+    ct.c_ulong,                           # MTBDD root
+    ct.POINTER(ct.c_uint32),              # Array with variables.
+    ct.c_uint32,                          # Size of array with variables
+    ct.POINTER(ct.c_uint32),              # OUT, number of transitions
+    ct.POINTER(ct.POINTER(ct.c_int)),     # OUT Pointer to array containing destinations states
+    ct.POINTER(ct.POINTER(ct.c_uint32)),  # OUT Pointer to array containing sizes of serialized destinations states
+)
+mtbdd_wrapper.amaya_mtbdd_get_transitions.restype = ct.POINTER(ct.c_uint8)
 
 
 mtbdd_false = ct.c_ulong.in_dll(mtbdd_wrapper, 'w_mtbdd_false')
@@ -297,6 +307,47 @@ class MTBDDTransitionFn():
 
         return bool(was_modified)
 
+    def iter_transitions(self, state: int, variables: List[int]):
+        mtbdd = self.mtbdds.get(state, None)
+        if mtbdd is None:
+            return
+
+        _vars = (ct.c_uint32 * len(variables))(*variables)
+
+        transition_dest_states = ct.POINTER(ct.c_int)()
+        transition_dest_states_sizes = ct.POINTER(ct.c_uint32)()
+        transition_count = ct.c_uint32()
+
+        symbols = mtbdd_wrapper.amaya_mtbdd_get_transitions(
+            mtbdd,
+            ct.cast(_vars, ct.POINTER(ct.c_uint32)),
+            ct.c_uint32(len(variables)),
+            ct.byref(transition_count),
+            ct.byref(transition_dest_states),
+            ct.byref(transition_dest_states_sizes)
+        )
+
+        s_length = len(variables)
+        i = 0
+        # ti = transition index
+        for ti in range(transition_count.value):
+            symbol = []
+            for s in range(s_length):
+                symbol.append(symbols[s_length*ti + s])
+
+            dest = []
+            dest_size = transition_dest_states_sizes[ti]
+            for _ in range(dest_size):
+                dest.append(transition_dest_states[i])
+                i += 1
+
+            for dest_state in dest:
+                yield (state, symbol, dest_state)
+
+        mtbdd_wrapper.amaya_do_free(transition_dest_states)
+        mtbdd_wrapper.amaya_do_free(transition_dest_states_sizes)
+        mtbdd_wrapper.amaya_do_free(symbols)
+
 
 def determinize_mtbdd(tfn: MTBDDTransitionFn, initial_states: List[int]):
     work_queue = [tuple(initial_states)]
@@ -334,7 +385,5 @@ if __name__ == '__main__':
     initial_state = 0
 
     # Initialstate, final states
-    tfn.do_pad_closure(initial_state, final_states)
-
-    tfn.is_post_cache_valid = False
-    tfn.write_mtbdd_dot_to_file(tfn.mtbdds[0], '/tmp/amaya_padding_test.dot')
+    # tfn.do_pad_closure(initial_state, final_states)
+    print(list(tfn.iter_transitions(0, [1, 2, 3])))

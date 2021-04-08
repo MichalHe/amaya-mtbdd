@@ -630,6 +630,65 @@ bool amaya_mtbdd_do_pad_closure(MTBDD left, MTBDD right, int* final_states, uint
 	return pci.had_effect;
 }
 
+uint8_t* amaya_mtbdd_get_transitions(
+		MTBDD root, 	// The mtbdd
+		uint32_t* vars,	
+		uint32_t var_count,
+		uint32_t* symbols_cnt,
+		int** dest_states,
+		uint32_t** dest_states_sizes)
+{
+	LACE_ME;
+	
+	// Construct MTBDD set from given vars
+	MTBDD variable_set = mtbdd_set_empty();
+	for (uint32_t i = 0; i < var_count; i++) {
+		variable_set= mtbdd_set_add(variable_set, vars[i]);
+	}
+
+	// Stores the tree path to the leaf
+	uint8_t* arr = (uint8_t*) malloc(sizeof(uint8_t) * var_count);
+
+	MTBDD leaf = mtbdd_enum_first(root, variable_set, arr, NULL);
+	
+	std::vector<int> dest_states_vec;
+	std::vector<uint8_t> symbols;
+	std::vector<uint32_t> state_sizes;
+ 	while (leaf != mtbdd_false)
+	{
+		// Add the destination states to the oveall vector
+		std::set<int>* leaf_contents = (std::set<int>*) mtbdd_getvalue(leaf);
+		for (int state: *leaf_contents) {
+			dest_states_vec.push_back(state);
+		}
+
+		for (uint32_t i = 0; i < var_count; i++) {
+			symbols.push_back(arr[i]);
+		}
+
+		state_sizes.push_back(leaf_contents->size());
+
+ 	    leaf = mtbdd_enum_next(root, variable_set, arr, NULL);
+ 	}
+
+	// Create output arrays
+	uint8_t* symbols_out = (uint8_t*) malloc(sizeof(uint8_t) * symbols.size());
+	for (uint32_t i = 0; i < symbols.size(); i++) symbols_out[i] = symbols.at(i);
+
+	uint32_t* dest_states_sizes_out = (uint32_t*) malloc(sizeof(uint32_t) * state_sizes.size());
+	for (uint32_t i = 0; i < state_sizes.size(); i++) dest_states_sizes_out[i] = state_sizes.at(i);
+
+	int* dest_states_out = (int*) malloc(sizeof(int) * dest_states_vec.size());
+	for (uint32_t i = 0; i < dest_states_vec.size(); i++) dest_states_out [i] = dest_states_vec.at(i);
+
+	// Do the return arrays assignment
+	*dest_states = dest_states_out;
+	*dest_states_sizes = dest_states_sizes_out;
+
+	*symbols_cnt = state_sizes.size(); // For every destination size, there exists 1 symbol leading to it.
+	return symbols_out;
+}
+
 MTBDD amaya_unite_mtbdds(MTBDD m1, MTBDD m2) {
 	LACE_ME;
 	MTBDD u = mtbdd_apply(m1, m2, TASK(set_union));

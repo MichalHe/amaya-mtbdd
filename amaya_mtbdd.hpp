@@ -81,6 +81,24 @@ extern "C" {
 			int* final_states, 
 			uint32_t final_states_cnt);
 
+	/**
+	 * Debug function that allows to retrieve all paths inside the MTBDD and corresponding destinations.
+	 * @param root The MTBDD itself.
+	 * @param vars Array containing the variables of interest
+	 * @param varcount Size of vars array
+	 * @param symbols_cnt (Out) Will contain the number of symbols returned.
+	 * @param dest_states (Out) Will point to an array where destination states are stored.
+	 * @param dest_states_cnt (Out) Array of sizes for each destination set stored in dest_states.
+	 * @returns Array of symbols serialized. Each symbol has the length of var_count, and the array contains symbols_cnt of such symbols.
+	 */
+	uint8_t* amaya_mtbdd_get_transitions(
+			sylvan::MTBDD root, 	// The mtbdd
+			uint32_t* vars,	
+			uint32_t var_count,
+			uint32_t* symbols_cnt,
+			int** dest_states,
+			uint32_t** dest_states_cnt
+			);
 	void amaya_do_free(void *ptr);
 
 	void shutdown_machinery();
