@@ -50,6 +50,8 @@ Symbol = Tuple[Union[str, int], ...]
 class MTBDDTransitionFn():
     def __init__(self):
         self.mtbdds: Dict[Any, MTBDD] = {}
+        self.post_cache = dict()
+        self.is_post_cache_valid = False
 
     def insert_transition(self,
                           source: Any,
@@ -216,6 +218,37 @@ class MTBDDTransitionFn():
             result.append(state_post_arr[i])
         return result
 
+    def get_state_pre(self, state: int, initial_state: int) -> List[int]:
+        if not self.is_post_cache_valid:
+            self.post_cache = self._build_morph_map(initial_state)
+
+        # Use the post cache to calculate state pre.
+        state_pre = set()
+        for s in self.post_cache:
+            s_post = self.post_cache[s]
+            if state in s_post:
+                state_pre.add(state)
+        return list(state_pre)
+
+    def _build_morph_map(self, initial_state: int) -> Dict[int, List[int]]:
+        '''Builds the image of the transition function with the information
+        about transition symbols left out.'''
+
+        morph_map = {}
+        work_queue = [initial_state]
+        while work_queue:
+            state = work_queue.pop(-1)
+            state_post = self.get_state_post(state)
+            if not state_post:
+                # state is terminal
+                continue
+            morph_map[state] = state_post
+            for new_state in state_post:
+                # Check whether the state is not scheduled/processed already
+                if new_state not in work_queue and new_state not in morph_map:
+                    work_queue.append(new_state)
+        return morph_map
+
 
 def determinize_mtbdd(tfn: MTBDDTransitionFn, initial_states: List[int]):
     work_queue = [tuple(initial_states)]
@@ -246,3 +279,4 @@ if __name__ == '__main__':
     tfn.insert_transition(0, (0, 0, 1), 4)
 
     tfn.insert_transition(0, (1, '*', '*'), 10)
+    print(tfn.get_state_pre(3, 0))
