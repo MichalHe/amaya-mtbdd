@@ -1,4 +1,5 @@
 #include "amaya_mtbdd.hpp"
+#include <algorithm>
 #include <sylvan_common.h>
 #include <sylvan_mtbdd.h>
 #include <sylvan_mtbdd_int.h>
@@ -149,6 +150,40 @@ TASK_IMPL_2(MTBDD, set_union, MTBDD *, pa, MTBDD *, pb) {
   // (commutative).
   // TODO: Utilize operation cache.
   return mtbdd_invalid;
+}
+
+TASK_DECL_2(MTBDD, set_intersection_op, MTBDD *, MTBDD *);
+TASK_IMPL_2(MTBDD, set_intersection_op, MTBDD *, pa, MTBDD *, pb) 
+{
+    MTBDD a = *pa, b = *pb;
+	// Intersection with an empty set (mtbdd_false) is empty set (mtbdd_false)
+    if (a == mtbdd_false || b == mtbdd_false) {
+        return mtbdd_false;
+    }
+
+    // If both are leaves calculate intersection
+    if (mtbdd_isleaf(a) && mtbdd_isleaf(b)) {
+        std::set<int>& set_a = *((std::set<int> *)mtbdd_getvalue(a));
+        std::set<int>& set_b = *((std::set<int> *)mtbdd_getvalue(b));
+
+        std::set<int> *intersection = new std::set<int>();
+        std::set_intersection(set_a.begin(), set_a.end(), set_b.begin(), set_b.end(),
+                       std::inserter(*intersection, intersection->begin()));
+
+		cout << "Calculated intersection: " << endl;
+		cout << "A:"; print_states_set(&set_a);
+		cout << "B:"; print_states_set(&set_b);
+		cout << "A x B :"; print_states_set(intersection);
+
+        MTBDD union_leaf = make_set_leaf(intersection);
+
+        return union_leaf;
+    }
+
+    // TODO: Perform pointer swap here, so the cache would be utilized
+    // (commutative).
+    // TODO: Utilize operation cache.
+    return mtbdd_invalid;
 }
 
 TASK_DECL_2(MTBDD, my_exists_op, MTBDD *, MTBDD *);
@@ -687,6 +722,12 @@ uint8_t* amaya_mtbdd_get_transitions(
 
 	*symbols_cnt = state_sizes.size(); // For every destination size, there exists 1 symbol leading to it.
 	return symbols_out;
+}
+
+MTBDD amaya_mtbdd_intersection(MTBDD a, MTBDD b) 
+{
+	LACE_ME;
+	return mtbdd_apply(a, b, TASK(set_intersection_op));
 }
 
 MTBDD amaya_unite_mtbdds(MTBDD m1, MTBDD m2) {

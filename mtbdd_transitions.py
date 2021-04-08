@@ -1,5 +1,5 @@
 import ctypes as ct
-from typing import Dict, Any, Tuple, Union, List
+from typing import Dict, Any, Tuple, Union, List, Iterable
 
 mtbdd_wrapper = ct.CDLL('./amaya-mtbdd.so', mode=1)
 mtbdd_wrapper.init_machinery()
@@ -236,9 +236,9 @@ class MTBDDTransitionFn():
             result.append(state_post_arr[i])
         return result
 
-    def get_state_pre(self, state: int, initial_state: int) -> List[int]:
+    def get_state_pre(self, state: int, initial_states: Iterable[int]) -> List[int]:
         if not self.is_post_cache_valid:
-            self.post_cache = self._build_morph_map(initial_state)
+            self.post_cache = self._build_morph_map(initial_states)
 
         # Use the post cache to calculate state pre.
         state_pre = set()
@@ -248,12 +248,12 @@ class MTBDDTransitionFn():
                 state_pre.add(s)
         return list(state_pre)
 
-    def _build_morph_map(self, initial_state: int) -> Dict[int, List[int]]:
+    def _build_morph_map(self, initial_states: Iterable[int]) -> Dict[int, List[int]]:
         '''Builds the image of the transition function with the information
         about transition symbols left out.'''
 
         morph_map = {}
-        work_queue = [initial_state]
+        work_queue = list(initial_states)
         while work_queue:
             state = work_queue.pop(-1)
             state_post = self.get_state_post(state)
@@ -267,18 +267,18 @@ class MTBDDTransitionFn():
                     work_queue.append(new_state)
         return morph_map
 
-    def do_pad_closure(self, initial_state: int, final_states: List[int]):
+    def do_pad_closure(self, initial_states: Iterable[int], final_states: List[int]):
         '''Performs padding closure on the underlying automatic structure.'''
         # Initialize the working queue with all states, that have some final
         # state in their Post
         final_states_pre_set = set()
         for fs in final_states:
-            final_states_pre_set.update(self.get_state_pre(fs, initial_state=initial_state))
+            final_states_pre_set.update(self.get_state_pre(fs, initial_states=initial_states))
         work_queue = list(final_states_pre_set)
 
         while work_queue:
             state = work_queue.pop()
-            state_pre_list = self.get_state_pre(state, initial_state=initial_state)
+            state_pre_list = self.get_state_pre(state, initial_states=initial_states)
             for pre_state in state_pre_list:
                 print(f'Applying PC on: {pre_state} ---> {state}')
                 had_pc_effect = self._do_pad_closure_single(pre_state, state, final_states)
@@ -348,6 +348,36 @@ class MTBDDTransitionFn():
         mtbdd_wrapper.amaya_do_free(transition_dest_states_sizes)
         mtbdd_wrapper.amaya_do_free(symbols)
 
+    def get_intersection_for_states(self, states: Iterable[int]):
+        '''Calculates a MTBDD that contains only transitions present
+        in every transition function of the given states.'''
+
+        intersect_start = 0
+        # Locate first of the states that has some transitions stored.
+        for state in states:
+            if state in self.mtbdds:
+                break
+            else:
+                intersect_start += 1
+
+        if intersect_start == len(states):
+            return mtbdd_false
+
+        intersect_mtbdd = self.mtbdds[states[intersect_start]]
+        for i in range(intersect_start + 1, len(states)):
+            state = states[i]
+            if state not in self.mtbdds:
+                continue
+
+            curr_mtbdd = self.mtbdds[state]
+            print(curr_mtbdd)
+            intersect_mtbdd = mtbdd_wrapper.amaya_mtbdd_intersection(
+                intersect_mtbdd,
+                curr_mtbdd
+            )
+
+        return intersect_mtbdd
+
 
 def determinize_mtbdd(tfn: MTBDDTransitionFn, initial_states: List[int]):
     work_queue = [tuple(initial_states)]
@@ -373,17 +403,27 @@ if __name__ == '__main__':
     zeta0 = (0, 0, 1)
     zeta1 = (1, 0, 0)
 
-    tfn.insert_transition(0, zeta0, 1)
-    tfn.insert_transition(0, zeta1, 1)
+    # TODO: Move this to a test file (pad closure)
+    # tfn.insert_transition(0, zeta0, 1)
+    # tfn.insert_transition(0, zeta1, 1)
 
-    tfn.insert_transition(1, zeta1, 2)
-    tfn.insert_transition(1, zeta0, 3)
+    # tfn.insert_transition(1, zeta1, 2)
+    # tfn.insert_transition(1, zeta0, 3)
 
-    tfn.insert_transition(2, zeta1, 3)
+    # tfn.insert_transition(2, zeta1, 3)
 
-    final_states = [3]
-    initial_state = 0
+    # final_states = [3]
+    # initial_states = [0]
 
     # Initialstate, final states
-    # tfn.do_pad_closure(initial_state, final_states)
-    print(list(tfn.iter_transitions(0, [1, 2, 3])))
+    # tfn.do_pad_closure(initial_states, final_states)
+    tfn.insert_transition(0, (0, 0, 1), 1)
+    tfn.insert_transition(0, (0, 0, 1), 2)
+
+    tfn.insert_transition(1, (0, 0, 1), 1)
+    tfn.insert_transition(1, (0, 0, 1), 3)
+
+    result = tfn.get_intersection_for_states([0, 1])
+    tfn.write_mtbdd_dot_to_file(result, '/tmp/amaya_intersection.dot')
+
+    # print(list(tfn.iter_transitions(0, [1, 2, 3])))

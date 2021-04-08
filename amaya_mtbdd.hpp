@@ -92,13 +92,23 @@ extern "C" {
 	 * @returns Array of symbols serialized. Each symbol has the length of var_count, and the array contains symbols_cnt of such symbols.
 	 */
 	uint8_t* amaya_mtbdd_get_transitions(
-			sylvan::MTBDD root, 	// The mtbdd
+			sylvan::MTBDD root,
 			uint32_t* vars,	
 			uint32_t var_count,
 			uint32_t* symbols_cnt,
 			int** dest_states,
 			uint32_t** dest_states_cnt
 			);
+
+	/**
+	 * Calculate the intersection of two mtbdds (Operation on leaves is set intersection).
+	 * @param a Some transition MTBDD
+	 * @param b Other transition MTBDD
+	 * @returns A MTBDD that contains only transitions that are present in both given MTBDDs.
+	 */
+	sylvan::MTBDD amaya_mtbdd_intersection(
+			sylvan::MTBDD a, 
+			sylvan::MTBDD b);
 	void amaya_do_free(void *ptr);
 
 	void shutdown_machinery();
