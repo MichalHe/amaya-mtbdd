@@ -47,7 +47,7 @@ mtbdd_wrapper.amaya_mtbdd_do_pad_closure.argtypes = (
     ct.POINTER(ct.c_int),  # Array with final states.
     ct.c_uint32  # Number of final states
 )
-mtbdd_wrapper.amaya_mtbdd_get_state_post.restype = ct.POINTER(ct.c_bool)
+mtbdd_wrapper.amaya_mtbdd_do_pad_closure.restype = ct.POINTER(ct.c_bool)
 
 
 mtbdd_false = ct.c_ulong.in_dll(mtbdd_wrapper, 'w_mtbdd_false')
@@ -235,7 +235,7 @@ class MTBDDTransitionFn():
         for s in self.post_cache:
             s_post = self.post_cache[s]
             if state in s_post:
-                state_pre.add(state)
+                state_pre.add(s)
         return list(state_pre)
 
     def _build_morph_map(self, initial_state: int) -> Dict[int, List[int]]:
@@ -257,8 +257,24 @@ class MTBDDTransitionFn():
                     work_queue.append(new_state)
         return morph_map
 
-    def do_pad_closure(self, initial_state: int, final_states: Set[int]):
+    def do_pad_closure(self, initial_state: int, final_states: List[int]):
         '''Performs padding closure on the underlying automatic structure.'''
+        # Initialize the working queue with all states, that have some final
+        # state in their Post
+        final_states_pre_set = set()
+        for fs in final_states:
+            final_states_pre_set.update(self.get_state_pre(fs, initial_state=initial_state))
+        work_queue = list(final_states_pre_set)
+
+        while work_queue:
+            state = work_queue.pop()
+            state_pre_list = self.get_state_pre(state, initial_state=initial_state)
+            for pre_state in state_pre_list:
+                print(f'Applying PC on: {pre_state} ---> {state}')
+                had_pc_effect = self._do_pad_closure_single(pre_state, state, final_states)
+                if had_pc_effect:
+                    if pre_state not in work_queue:
+                        work_queue.append(pre_state)
 
     def _do_pad_closure_single(self, left_state: int, right_state: int, final_states: List[int]) -> bool:
         '''(left_state) --A--> (right_state) --B--> final_states'''
@@ -303,10 +319,22 @@ def determinize_mtbdd(tfn: MTBDDTransitionFn, initial_states: List[int]):
 
 if __name__ == '__main__':
     tfn = MTBDDTransitionFn()
-    tfn.insert_transition(0, (0, 1, 1), 1)
-    tfn.insert_transition(1, (0, 1, 1), 2)
+    zeta0 = (0, 0, 1)
+    zeta1 = (1, 0, 0)
 
-    tfn.write_mtbdd_dot_to_file(tfn.mtbdds[0], '/tmp/amaya_before_pc_left.dot')
-    tfn.write_mtbdd_dot_to_file(tfn.mtbdds[1], '/tmp/amaya_before_pc_right.dot')
-    tfn._do_pad_closure_single(0, 1, [2])
-    tfn.write_mtbdd_dot_to_file(tfn.mtbdds[0], '/tmp/amaya_after_pc_left.dot')
+    tfn.insert_transition(0, zeta0, 1)
+    tfn.insert_transition(0, zeta1, 1)
+
+    tfn.insert_transition(1, zeta1, 2)
+    tfn.insert_transition(1, zeta0, 3)
+
+    tfn.insert_transition(2, zeta1, 3)
+
+    final_states = [3]
+    initial_state = 0
+
+    # Initialstate, final states
+    tfn.do_pad_closure(initial_state, final_states)
+
+    tfn.is_post_cache_valid = False
+    tfn.write_mtbdd_dot_to_file(tfn.mtbdds[0], '/tmp/amaya_padding_test.dot')
