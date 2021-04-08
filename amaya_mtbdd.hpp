@@ -21,6 +21,9 @@
 
 #ifndef AMAYA_MTBDD_H
 #define AMAYA_MTBDD_H
+
+#define AMAYA_PAD_CLOSURE_OPERATION_ID 10
+
 extern "C" {
 	// Export constants (wrapped)
 	extern const sylvan::MTBDD w_mtbdd_true = sylvan::mtbdd_true;
@@ -64,6 +67,20 @@ extern "C" {
 			sylvan::MTBDD m, 
 			uint32_t *post_size);
 
+	/**
+	 * Apply the padding closure to a state with transition function `left`, with successor's function `right`.
+	 * @param left 			The transitions of state into which we want to propagate finishing symbols.
+	 * @param right 		The transitions of a state that has some transitions leading to the final state.
+	 * @param final_states 		Pointer to an array containing the final states of the automaton.
+	 * @param final_states_cnt 	Number of states in the final_state array.
+	 * @returns Boolean indicating whether the left mtbdd was modified (new transitions to final state were added).
+	 */
+	bool amaya_mtbdd_do_pad_closure(
+			sylvan::MTBDD left, 
+			sylvan::MTBDD right, 
+			int* final_states, 
+			uint32_t final_states_cnt);
+
 	void amaya_do_free(void *ptr);
 
 	void shutdown_machinery();
@@ -75,6 +92,12 @@ std::set<int>* _get_transition_target(
 		uint32_t current_variable,
 		uint8_t* variable_assigments, 
 		uint32_t var_count);
+
+typedef struct {
+	bool had_effect;
+	uint32_t final_states_cnt;
+	int *final_states;
+} pad_closure_info_t;
 
 void collect_mtbdd_leaves(sylvan::MTBDD root, std::set<sylvan::MTBDD>& dest);
 #endif

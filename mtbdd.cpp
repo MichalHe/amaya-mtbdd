@@ -133,8 +133,8 @@ TASK_IMPL_2(MTBDD, set_union, MTBDD *, pa, MTBDD *, pb) {
   }
   // If both are leaves, we calculate union
   if (mtbdd_isleaf(a) && mtbdd_isleaf(b)) {
-    std::set<int> set_a = *((std::set<int> *)mtbdd_getvalue(a));
-    std::set<int> set_b = *((std::set<int> *)mtbdd_getvalue(b));
+    std::set<int>& set_a = *((std::set<int> *)mtbdd_getvalue(a));
+    std::set<int>& set_b = *((std::set<int> *)mtbdd_getvalue(b));
 
     std::set<int> *_union = new std::set<int>();
     std::set_union(set_a.begin(), set_a.end(), set_b.begin(), set_b.end(),
@@ -144,7 +144,6 @@ TASK_IMPL_2(MTBDD, set_union, MTBDD *, pa, MTBDD *, pb) {
 
     return union_leaf;
   }
-
 
   // TODO: Perform pointer swap here, so the cache would be utilized
   // (commutative).
@@ -564,6 +563,72 @@ int* amaya_mtbdd_get_state_post(MTBDD m, uint32_t *post_size)
 	return result;
 }
 
+
+TASK_DECL_3(MTBDD, pad_closure_op, MTBDD *, MTBDD *, uint64_t);
+TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, op_param) {
+	MTBDD left = *p_left, right = *p_right;
+    if (left == mtbdd_false) {
+        return right; // Padding closure has no effect, when one mtbdd path leads to nothing
+    }
+    if (right == mtbdd_false) {
+        return left; // Same here
+    }
+    // If both are non-false leaves, we can try doing the actual padding closure
+    if (mtbdd_isleaf(left) && mtbdd_isleaf(right)) {
+        std::set<int>& left_states  = *((std::set<int>*) mtbdd_getvalue(left));
+        std::set<int>& right_states = *((std::set<int>*) mtbdd_getvalue(right));
+
+	    pad_closure_info_t* pci = (pad_closure_info_t*) op_param;
+
+	    bool is_final;
+	    for (int rs: right_states)
+	    {
+			is_final = false;
+
+			// Is the current right state final?
+			for (uint32_t i = 0; i < pci->final_states_cnt; i++) {
+				if (rs == pci->final_states[i]) {
+					is_final = true;
+					break; // We have the information we required, we don't need to iterate further.
+				}
+			}
+			
+			if (is_final) {
+				const bool is_missing_from_left = left_states.find(rs) == left_states.end();
+				if (is_missing_from_left) {
+					// We've located a state that is final, and is not in left, pad closure adds it to the left states.
+					left_states.insert(rs); // The actual pad closure
+					pci->had_effect = true; // To utilize the python cache
+				}
+			}
+	    }
+
+		// The pad closure is in place modification 
+		// (no new MTBDD is created, only leaf states are modified)
+        return left;
+    }
+
+    return mtbdd_invalid;
+}
+
+
+bool amaya_mtbdd_do_pad_closure(MTBDD left, MTBDD right, int* final_states, uint32_t final_states_cnt)
+{
+	pad_closure_info_t pci = {0};
+	pci.final_states = final_states;
+	pci.final_states_cnt = final_states_cnt;
+	pci.had_effect = false;
+	
+	LACE_ME;
+	mtbdd_applyp(
+			left, 
+			right, 
+			(uint64_t) &pci, 
+			TASK(pad_closure_op), 
+			AMAYA_PAD_CLOSURE_OPERATION_ID);
+
+	return pci.had_effect;
+}
 
 MTBDD amaya_unite_mtbdds(MTBDD m1, MTBDD m2) {
 	LACE_ME;

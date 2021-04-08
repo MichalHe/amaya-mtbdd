@@ -1,5 +1,5 @@
 import ctypes as ct
-from typing import Dict, Any, Tuple, Union, List
+from typing import Dict, Any, Tuple, Union, List, Set
 
 mtbdd_wrapper = ct.CDLL('./amaya-mtbdd.so', mode=1)
 mtbdd_wrapper.init_machinery()
@@ -40,6 +40,14 @@ mtbdd_wrapper.amaya_mtbdd_get_state_post.argtypes = (
     ct.POINTER(ct.c_uint32),  # MTBDD result array size
 )
 mtbdd_wrapper.amaya_mtbdd_get_state_post.restype = ct.POINTER(ct.c_int)
+
+mtbdd_wrapper.amaya_mtbdd_do_pad_closure.argtypes = (
+    ct.c_ulong,  # MTBDD left
+    ct.c_ulong,  # MTBDD right
+    ct.POINTER(ct.c_int),  # Array with final states.
+    ct.c_uint32  # Number of final states
+)
+mtbdd_wrapper.amaya_mtbdd_get_state_post.restype = ct.POINTER(ct.c_bool)
 
 
 mtbdd_false = ct.c_ulong.in_dll(mtbdd_wrapper, 'w_mtbdd_false')
@@ -249,6 +257,30 @@ class MTBDDTransitionFn():
                     work_queue.append(new_state)
         return morph_map
 
+    def do_pad_closure(self, initial_state: int, final_states: Set[int]):
+        '''Performs padding closure on the underlying automatic structure.'''
+
+    def _do_pad_closure_single(self, left_state: int, right_state: int, final_states: List[int]) -> bool:
+        '''(left_state) --A--> (right_state) --B--> final_states'''
+        left_mtbdd = self.mtbdds.get(left_state, None)
+        right_mtbdd = self.mtbdds.get(right_state, None)
+
+        if left_mtbdd is None or right_mtbdd is None:
+            return  # We need a pair of mtbdds to perform padding closure.
+
+        # Convert the set into C array
+        final_states_arr = (ct.c_int * len(final_states))(*list(final_states))
+        final_states_cnt = ct.c_uint32(len(final_states))
+
+        was_modified = mtbdd_wrapper.amaya_mtbdd_do_pad_closure(
+            left_mtbdd,
+            right_mtbdd,
+            final_states_arr,
+            final_states_cnt
+        )
+
+        return bool(was_modified)
+
 
 def determinize_mtbdd(tfn: MTBDDTransitionFn, initial_states: List[int]):
     work_queue = [tuple(initial_states)]
@@ -272,11 +304,9 @@ def determinize_mtbdd(tfn: MTBDDTransitionFn, initial_states: List[int]):
 if __name__ == '__main__':
     tfn = MTBDDTransitionFn()
     tfn.insert_transition(0, (0, 1, 1), 1)
-    tfn.insert_transition(0, (0, 1, 1), 2)
-    tfn.insert_transition(0, (0, 1, 1), 3)
+    tfn.insert_transition(1, (0, 1, 1), 2)
 
-    tfn.insert_transition(0, (0, 0, 1), 3)
-    tfn.insert_transition(0, (0, 0, 1), 4)
-
-    tfn.insert_transition(0, (1, '*', '*'), 10)
-    print(tfn.get_state_pre(3, 0))
+    tfn.write_mtbdd_dot_to_file(tfn.mtbdds[0], '/tmp/amaya_before_pc_left.dot')
+    tfn.write_mtbdd_dot_to_file(tfn.mtbdds[1], '/tmp/amaya_before_pc_right.dot')
+    tfn._do_pad_closure_single(0, 1, [2])
+    tfn.write_mtbdd_dot_to_file(tfn.mtbdds[0], '/tmp/amaya_after_pc_left.dot')
