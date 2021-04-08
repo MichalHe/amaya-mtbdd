@@ -27,6 +27,7 @@ mtbdd_wrapper.amaya_mtbdd_get_leaves.argtypes = (
     ct.POINTER(ct.POINTER((ct.c_uint32))),  # Leaf sizes
     ct.POINTER(ct.c_uint32)  # Leaf count
 )
+mtbdd_wrapper.amaya_mtbdd_get_leaves.restype = ct.POINTER(ct.c_int)  # Pointer to array containing the states
 
 mtbdd_wrapper.amaya_unite_mtbdds.argtypes = (
     ct.c_ulong,  # MTBDD a
@@ -34,7 +35,12 @@ mtbdd_wrapper.amaya_unite_mtbdds.argtypes = (
 )
 mtbdd_wrapper.amaya_unite_mtbdds.restype = ct.c_ulong
 
-mtbdd_wrapper.amaya_mtbdd_get_leaves.restype = ct.POINTER(ct.c_int)  # Pointer to array containing the states
+mtbdd_wrapper.amaya_mtbdd_get_state_post.argtypes = (
+    ct.c_ulong,  # MTBDD m
+    ct.POINTER(ct.c_uint32),  # MTBDD result array size
+)
+mtbdd_wrapper.amaya_mtbdd_get_state_post.restype = ct.POINTER(ct.c_int)
+
 
 mtbdd_false = ct.c_ulong.in_dll(mtbdd_wrapper, 'w_mtbdd_false')
 MTBDD = ct.c_ulong
@@ -198,6 +204,18 @@ class MTBDDTransitionFn():
                 resulting_mtbdd)
         return resulting_mtbdd
 
+    def get_state_post(self, state: int) -> List[int]:
+        mtbdd = self.mtbdds.get(state, None)
+        if mtbdd is None:
+            return []
+        result_size = ct.c_uint32()
+        state_post_arr = mtbdd_wrapper.amaya_mtbdd_get_state_post(mtbdd, ct.byref(result_size))
+
+        result = []
+        for i in range(result_size.value):
+            result.append(state_post_arr[i])
+        return result
+
 
 def determinize_mtbdd(tfn: MTBDDTransitionFn, initial_states: List[int]):
     work_queue = [tuple(initial_states)]
@@ -227,6 +245,4 @@ if __name__ == '__main__':
     tfn.insert_transition(0, (0, 0, 1), 3)
     tfn.insert_transition(0, (0, 0, 1), 4)
 
-    tfn.insert_transition(1, (0, 1, 1), 3)
-
-    determinize_mtbdd(tfn, [0])
+    tfn.insert_transition(0, (1, '*', '*'), 10)
