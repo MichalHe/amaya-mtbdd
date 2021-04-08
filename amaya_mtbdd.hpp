@@ -54,6 +54,16 @@ extern "C" {
 			uint32_t** leaf_sizes,	// OUT, Array containing the sizes of leaves inside dest
 			uint32_t* leaf_cnt);	// OUT, Number of leaves in the tree
 
+	/**
+	 * Calculates the post set from given MTBDD.
+	 * @param m The transitions MTBDD for the state for which we calculate the post set.
+	 * @param post_size (out) The size of the returned array.
+	 * @returns array containing the post set.
+	 */
+	int* amaya_mtbdd_get_state_post(
+			sylvan::MTBDD m, 
+			uint32_t *post_size);
+
 	void amaya_do_free(void *ptr);
 
 	void shutdown_machinery();

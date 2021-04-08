@@ -471,6 +471,7 @@ void collect_mtbdd_leaves(MTBDD root, std::set<MTBDD>& dest)
  	}
 }
 
+// TODO: Cache this
 int* amaya_mtbdd_get_leaves(
 		MTBDD root, 
 		uint32_t** leaf_sizes,	// OUT, Array containing the sizes of leaves inside dest
@@ -538,6 +539,31 @@ MTBDD amaya_project_variables_away(MTBDD m, uint32_t *variables, uint32_t var_co
 	//mtbdd_fprintdot(stdout, result);
 	return result;
 }
+
+int* amaya_mtbdd_get_state_post(MTBDD m, uint32_t *post_size)
+{
+	std::set<MTBDD> leaves;
+	collect_mtbdd_leaves(m, leaves);
+	
+	std::set<int> state_post_set;
+
+	for (auto leaf: leaves)
+	{
+		std::set<int>* leaf_contents = (std::set<int>*)	mtbdd_getvalue(leaf);
+		state_post_set.insert(leaf_contents->begin(), leaf_contents->end());
+	}
+	
+	int* result = (int*) malloc(sizeof(int) * state_post_set.size());
+	uint32_t i = 0;
+	for (int state: state_post_set)
+	{
+		result[i++] = state;
+	}
+
+	*post_size = state_post_set.size();
+	return result;
+}
+
 
 MTBDD amaya_unite_mtbdds(MTBDD m1, MTBDD m2) {
 	LACE_ME;
