@@ -1,5 +1,5 @@
 import ctypes as ct
-from typing import Dict, Any, Tuple, Union, List, Iterable, Set
+from typing import Dict, Any, Tuple, Union, List, Iterable, Set, Optional
 
 mtbdd_wrapper = ct.CDLL('./amaya-mtbdd.so', mode=1)
 mtbdd_wrapper.init_machinery()
@@ -64,12 +64,34 @@ mtbdd_false = ct.c_ulong.in_dll(mtbdd_wrapper, 'w_mtbdd_false')
 MTBDD = ct.c_ulong
 Symbol = Tuple[Union[str, int], ...]
 
+# Required functions:
+# -> get_symbols_between_states?
+# -> state_has_post?
+# -> is_in_state_post?
+# -> get_states_with_post_containig
+
+# Needs implementation:
+# -> complete_with_trap_state?
+# -> remove_nonfinishing_states?
+
+# cannot/will not:
+# -> copy :: () -> cannot
+
+# Done functions:
+# -> project_bit_away --> project_variable_away
+# -> union_of
+# -> iter
+# -> insert_transition
+# -> get_transition_target :: (source_state, symbol) -> List[state]
+# -> rename_states :: (state_mapping)
+
 
 class MTBDDTransitionFn():
-    def __init__(self):
+    def __init__(self, alphabet_variables: List[int]):
         self.mtbdds: Dict[Any, MTBDD] = {}
         self.post_cache = dict()
         self.is_post_cache_valid = False
+        self.alphabet_variables = alphabet_variables
 
     def insert_transition(self,
                           source: Any,
@@ -307,7 +329,10 @@ class MTBDDTransitionFn():
 
         return bool(was_modified)
 
-    def iter_transitions(self, state: int, variables: List[int]):
+    def iter(self, state: int, variables: Optional[List[int]] = None):
+        if variables is None:
+            variables = self.alphabet_variables
+
         mtbdd = self.mtbdds.get(state, None)
         if mtbdd is None:
             return
@@ -387,10 +412,11 @@ def determinize_mtbdd(tfn: MTBDDTransitionFn, initial_states: Set[int], final_st
     while work_queue:
         c_metastate = work_queue.pop(-1)
         states.add(c_metastate)
+
         transition = tfn.get_union_mtbdd_for_states(c_metastate)
 
         if set(c_metastate).intersection(final_states):
-            dfa_final_states.append(tuple(c_metastate))
+            dfa_final_states.add(tuple(c_metastate))
 
         reachable_states = tfn.get_mtbdd_leaves(transition)
         for rs in reachable_states:
@@ -401,6 +427,25 @@ def determinize_mtbdd(tfn: MTBDDTransitionFn, initial_states: Set[int], final_st
                     work_queue.append(rs)
 
     return states
+
+    @staticmethod
+    def union_of(mtfn0: MTBDDTransitionFn, mtfn1: MTBDDTransitionFn) -> MTBDDTransitionFn:
+        '''Creates a new MTBDD transition function that contains transitions
+        from both transition functions.'''
+
+        assert mtfn0.alphabet_variables == mtfn1.alphabet_variables, \
+            'MTBBDs require to have the same set of variables.'
+
+        resulting_mtbdds: Dict[int, MTBDD] = dict()
+        resulting_mtbdds.updatE(mtfn0.mtbdds)
+        for s1, m1 in mtfn0.mtbdds.items():
+            assert s1 not in resulting_mtbdds, \
+                'The union should be calculated on states that have been renamed first'
+            resulting_mtbdds[s1] = m1
+
+        union_tfn = MTBDDTransitionFn(mtfn0.alphabet_variables)
+        union_tfn.mtbdds = resulting_mtbdds
+        return union_tfn
 
 
 if __name__ == '__main__':
@@ -425,10 +470,16 @@ if __name__ == '__main__':
     tfn.insert_transition(0, (0, 0, 1), 1)
     tfn.insert_transition(0, (0, 0, 1), 2)
 
+    mtbdd_a = tfn.mtbdds[0]
+    tfn.write_mtbdd_dot_to_file(mtbdd_a, '/tmp/amaya_before_intersection_a.dot')
+
     tfn.insert_transition(1, (0, 0, 1), 1)
     tfn.insert_transition(1, (0, 0, 1), 3)
 
+    mtbdd_b = tfn.mtbdds[1]
+    tfn.write_mtbdd_dot_to_file(mtbdd_b, '/tmp/amaya_before_intersection_b.dot')
+
     result = tfn.get_intersection_for_states([0, 1])
-    tfn.write_mtbdd_dot_to_file(result, '/tmp/amaya_intersection.dot')
+    tfn.write_mtbdd_dot_to_file(result, '/tmp/amaya_after_intersection.dot')
 
     # print(list(tfn.iter_transitions(0, [1, 2, 3])))
