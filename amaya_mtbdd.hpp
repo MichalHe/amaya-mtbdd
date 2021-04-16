@@ -115,7 +115,18 @@ extern "C" {
 	void init_machinery();
 }
 
-std::set<int>* _get_transition_target(
+class Transition_Destination_Set {
+public:
+	uint32_t last_state_rename_id;
+	std::set<int>* destination_set;
+	Transition_Destination_Set();
+	Transition_Destination_Set(const Transition_Destination_Set &other);
+	Transition_Destination_Set(std::set<int>* destination_set);
+	~Transition_Destination_Set();
+	void print_dest_states();
+};
+
+Transition_Destination_Set* _get_transition_target(
 		sylvan::MTBDD root, 
 		uint32_t current_variable,
 		uint8_t* variable_assigments, 
