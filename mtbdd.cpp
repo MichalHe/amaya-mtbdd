@@ -4,6 +4,7 @@
 #include <sylvan_mtbdd.h>
 #include <sylvan_mtbdd_int.h>
 #include <unistd.h>
+#include <utility>
 
 using namespace sylvan;
 using std::cout;
@@ -11,6 +12,10 @@ using std::endl;
 using std::set;
 using std::vector;
 using std::stringstream;
+using std::map;
+using std::pair;
+
+static map<pair<int, int>, int>* intersection_state = NULL;
 
 Transition_Destination_Set::Transition_Destination_Set() 
 {
@@ -64,7 +69,7 @@ static inline uint64_t rotl64(uint64_t x, int8_t r)
 
 MTBDD
 make_set_leaf(Transition_Destination_Set* value) {
-    MTBDD leaf = mtbdd_makeleaf(mtbdd_leaf_type_set, (uint64_t)value);
+    MTBDD leaf = mtbdd_makeleaf(mtbdd_leaf_type_set, (uint64_t) value);
     return leaf;
 }
 
@@ -192,8 +197,8 @@ TASK_IMPL_3(MTBDD, set_union, MTBDD*, pa, MTBDD*, pb, uint64_t, param)
   return mtbdd_invalid;
 }
 
-TASK_DECL_2(MTBDD, set_intersection_op, MTBDD *, MTBDD *);
-TASK_IMPL_2(MTBDD, set_intersection_op, MTBDD *, pa, MTBDD *, pb) 
+TASK_DECL_3(MTBDD, set_intersection_op, MTBDD *, MTBDD *, uint64_t);
+TASK_IMPL_3(MTBDD, set_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64_t, param) 
 {
     MTBDD a = *pa, b = *pb;
 	// Intersection with an empty set (mtbdd_false) is empty set (mtbdd_false)
@@ -203,17 +208,51 @@ TASK_IMPL_2(MTBDD, set_intersection_op, MTBDD *, pa, MTBDD *, pb)
 
     // If both are leaves calculate intersection
     if (mtbdd_isleaf(a) && mtbdd_isleaf(b)) {
+		auto intersect_info = (intersect_info_t*) param;
+
         auto& tds_a = *((Transition_Destination_Set*) mtbdd_getvalue(a));
         auto& tds_b = *((Transition_Destination_Set*) mtbdd_getvalue(b));
 
-        std::set<int>* intersection_set = new std::set<int>();
-        std::set_intersection(
-            tds_a.destination_set->begin(), tds_a.destination_set->begin(),
-            tds_b.destination_set->begin(), tds_b.destination_set->begin(),
-            std::inserter(*intersection_set, intersection_set->begin()));
+        std::set<int> *left_states  = tds_a.destination_set;  
+        std::set<int> *right_states = tds_b.destination_set;  
 
-        
-        Transition_Destination_Set* intersection_tds = new Transition_Destination_Set();
+        // Calculate cross product
+        pair<int, int> metastate; 
+        int state;
+
+        std::set<int>* intersection_leaf_states = new std::set<int>();
+
+        for (auto left_state : *left_states) {
+            for (auto right_state : *right_states) {
+                metastate = std::make_pair(left_state, right_state);
+                auto pos = intersection_state->find(metastate);
+                bool contains_metastate = pos != intersection_state->end();
+                if (contains_metastate) {
+                    state = pos->second;
+                } else {
+                    // We have discovered a new state.
+                    // Update the global intersection state, so in the future every such
+                    // state will get the same integer
+                    state = intersection_state->size();
+                    intersection_state->insert(std::make_pair(metastate, state));
+
+                    // Update the discoveries local for this intersection, so that the Python
+                    // side knows whats up.
+                    intersect_info->discoveries->push_back(left_state);
+                    intersect_info->discoveries->push_back(right_state);
+                    intersect_info->discoveries->push_back(state);
+                }
+
+                intersection_leaf_states->insert(state); 
+            }
+        }
+
+        if (intersection_leaf_states->empty()) {
+            delete intersection_leaf_states;
+            return mtbdd_false;
+        }
+         
+        auto intersection_tds = new Transition_Destination_Set(intersect_info->automaton_id, intersection_leaf_states);
         MTBDD intersection_leaf = make_set_leaf(intersection_tds);
         return intersection_leaf;
     }
@@ -307,13 +346,13 @@ MTBDD amaya_mtbdd_build_single_terminal(
 	for (uint32_t i=1; i <= variable_count; i++) {
 		variables = mtbdd_set_add(variables, i); // Variables are numbered from 1
 	}
-
+    
 	// Construct the destination set
 	std::set<int> *leaf_state_set = new std::set<int>();	
 	for (uint32_t i = 0; i < destination_set_size; i++) {
 		leaf_state_set->insert(destination_set[i]);
 	}
-
+    
     Transition_Destination_Set* tds = new Transition_Destination_Set(automaton_id, leaf_state_set);
 	MTBDD leaf = make_set_leaf(tds);
 
@@ -321,6 +360,7 @@ MTBDD amaya_mtbdd_build_single_terminal(
 	// signature: mtbdd_cube(MTBDD variables, uint8_t *cube, MTBDD terminal)
 	// initial_cube = transition_symbols[0*variable_count + (0..variable_count)] (size: variable_count)
 	MTBDD mtbdd = mtbdd_cube(variables, transition_symbols, leaf);
+
 	
 	LACE_ME;
 	for (uint32_t i = 1; i < transition_symbols_count; i++) {
@@ -525,11 +565,11 @@ void collect_mtbdd_leaves(MTBDD root, std::set<MTBDD>& dest)
  	}
 }
 
-// TODO: Cache this
 int* amaya_mtbdd_get_leaves(
 		MTBDD root, 
 		uint32_t** leaf_sizes,	// OUT, Array containing the sizes of leaves inside dest
-		uint32_t* leaf_cnt)		// OUT, Number of leaves in the tree
+		uint32_t*  leaf_cnt,	// OUT, Number of leaves in the tree
+        void***    leaf_ptrs)   // Pointer to an array of pointers to MTBDD leaves
 {
 	std::set<MTBDD> leaves {};
 	collect_mtbdd_leaves(root, leaves);	
@@ -561,10 +601,30 @@ int* amaya_mtbdd_get_leaves(
 		_leaf_sizes[size_i] = tds->destination_set->size();
 		size_i++;
 	}
+    if (leaf_ptrs != NULL) {
+        void** leaf_ptr_arr = (void**) malloc(sizeof(void*) * leaves.size());    
+        
+        uint32_t i = 0;
+        for (auto leaf : leaves) {
+            Transition_Destination_Set* tds = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
+            leaf_ptr_arr[i] = (void*) tds;
+            i++;
+        }
+        *leaf_ptrs = leaf_ptr_arr;
+    }
 	
 	*leaf_sizes = _leaf_sizes;
 	*leaf_cnt = (uint32_t) leaves.size();
 	return _leaf_states;
+}
+
+void amaya_replace_leaf_contents_with(void *leaf_tds, int* new_contents, uint32_t contents_size)
+{
+    auto tds = (Transition_Destination_Set*) leaf_tds;
+    tds->destination_set->clear();
+    for (uint32_t i = 0; i < contents_size; i++) {
+        tds->destination_set->insert(new_contents[i]);
+    }
 }
 
 
@@ -760,14 +820,63 @@ void amaya_mtbdd_change_automaton_id_for_leaves(
     }
 }
 
-MTBDD amaya_mtbdd_intersection(MTBDD a, MTBDD b) 
+MTBDD amaya_mtbdd_intersection(
+        MTBDD a, 
+        MTBDD b,
+        uint32_t result_automaton_id, 
+        int** discovered_states,         // OUT
+        int*  discovered_states_cnt)     // OUT
 {
+    auto intersect_info = (intersect_info_t*) malloc(sizeof(intersect_info_t)); // TODO: replace malloc with new
+    intersect_info->automaton_id = result_automaton_id;
+    intersect_info->discoveries = new std::vector<int>();
+
 	LACE_ME;
-	return mtbdd_apply(a, b, TASK(set_intersection_op));
+	MTBDD result = mtbdd_applyp(a, b, (uint64_t) intersect_info, TASK(set_intersection_op), AMAYA_INTERSECTION_OP_ID);
+    
+    
+    if (!intersect_info->discoveries->empty()) {
+        auto discovered_states_arr = (int*) malloc(sizeof(int) * intersect_info->discoveries->size());
+        for (uint32_t i = 0; i < intersect_info->discoveries->size(); i++) {
+            discovered_states_arr[i] = intersect_info->discoveries->at(i);
+        }
+
+        // Send the new discoveries to the python side.
+        *discovered_states = discovered_states_arr;
+        *discovered_states_cnt = intersect_info->discoveries->size() / 3;
+    } else {
+        // Nothing new was discovered, do not malloc
+        *discovered_states = NULL;
+        *discovered_states_cnt = 0;
+    }
+
+    delete intersect_info->discoveries;
+    free(intersect_info);
+
+    return result;
 }
 
 MTBDD amaya_unite_mtbdds(MTBDD m1, MTBDD m2, uint32_t automaton_id) {
 	LACE_ME;
 	MTBDD u = mtbdd_applyp(m1, m2, (uint64_t) automaton_id, TASK(set_union), AMAYA_UNION_OP_ID);
 	return u;
+}
+
+void amaya_begin_intersection() 
+{
+    intersection_state = new map<pair<int, int>, int>();
+}
+
+void amaya_update_intersection_state(int* metastates, int* renamed_metastates, uint32_t cnt)
+{
+    for (uint32_t i = 0; i < cnt; i++) {
+        const auto metastate = std::make_pair(metastates[2*i], metastates[2*i + 1]);
+        intersection_state->insert(std::make_pair(metastate, renamed_metastates[i])); 
+    }
+}
+
+void amaya_end_intersection() 
+{
+    delete intersection_state;
+    intersection_state = NULL;
 }
