@@ -22,7 +22,9 @@
 #ifndef AMAYA_MTBDD_H
 #define AMAYA_MTBDD_H
 
-#define AMAYA_PAD_CLOSURE_OPERATION_ID 10
+#define AMAYA_PAD_CLOSURE_OPERATION_ID 	10
+#define AMAYA_EXISTS_OPERATION_ID 		11
+#define AMAYA_UNION_OP_ID 				12
 
 extern "C" {
 	// Export constants (wrapped)
@@ -31,7 +33,7 @@ extern "C" {
 
 
 	// Functions
-	sylvan::MTBDD amaya_unite_mtbdds(sylvan::MTBDD m1, sylvan::MTBDD m2);
+	sylvan::MTBDD amaya_unite_mtbdds(sylvan::MTBDD m1, sylvan::MTBDD m2, uint32_t automaton_id);
 	sylvan::MTBDD amaya_project_variables_away(
 			sylvan::MTBDD m, uint32_t *variables, uint32_t var_count);
 	int* amaya_mtbdd_get_transition_target(
@@ -42,13 +44,16 @@ extern "C" {
 
 	void amaya_print_dot(sylvan::MTBDD m, int32_t fd);
 	sylvan::MTBDD amaya_mtbdd_build_single_terminal(
-		uint8_t *transition_symbols,  // 2D array of size (variable_count) * transition_symbols_count
-		uint32_t transition_symbols_count,
-		uint32_t variable_count,
-		uint32_t *destination_set,
-		uint32_t destination_set_size);
+		uint32_t  automaton_id,
+		uint8_t*  transition_symbols,  // 2D array of size (variable_count) * transition_symbols_count
+		uint32_t  transition_symbols_count,
+		uint32_t  variable_count,
+		int* 	  destination_set,
+		uint32_t  destination_set_size);
+
 	void amaya_mtbdd_rename_states(
-			sylvan::MTBDD root, 
+			sylvan::MTBDD* mtbdd_roots, 
+			uint32_t root_count,
 			int* names, // [(old, new), (old, new), (old, new)] 
 			uint32_t name_count);
 
@@ -56,6 +61,19 @@ extern "C" {
 			sylvan::MTBDD root, 
 			uint32_t** leaf_sizes,	// OUT, Array containing the sizes of leaves inside dest
 			uint32_t* leaf_cnt);	// OUT, Number of leaves in the tree
+
+	/**
+	 * Given an arary of MTBDD roots, collects their leaves and changes their automaton id
+	 * to `new_id`. Should be called after a new automaton is a result of automaton union.
+	 *
+	 * @param roots 	The array of mtbdds roots.
+	 * @param root_cnt 	The number of roots in the `roots` array.
+	 * @param new_id 	New automaton identifier for the leaves.
+	 */
+	void amaya_mtbdd_change_automaton_id_for_leaves(
+			sylvan::MTBDD* roots,
+			uint32_t root_cnt,
+			uint32_t new_id);
 
 	/**
 	 * Calculates the post set from given MTBDD.
@@ -117,11 +135,12 @@ extern "C" {
 
 class Transition_Destination_Set {
 public:
-	uint32_t last_state_rename_id;
 	std::set<int>* destination_set;
+	uint32_t automaton_id;
+
 	Transition_Destination_Set();
 	Transition_Destination_Set(const Transition_Destination_Set &other);
-	Transition_Destination_Set(std::set<int>* destination_set);
+	Transition_Destination_Set(uint32_t automaton_id, std::set<int>* destination_set);
 	~Transition_Destination_Set();
 	void print_dest_states();
 };

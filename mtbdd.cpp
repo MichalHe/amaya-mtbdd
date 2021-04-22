@@ -15,18 +15,18 @@ using std::stringstream;
 Transition_Destination_Set::Transition_Destination_Set() 
 {
 	this->destination_set = NULL;
-	this->last_state_rename_id = 0;
+	this->automaton_id = 0;
 }
 
 Transition_Destination_Set::Transition_Destination_Set(const Transition_Destination_Set &other) 
 {
-    this->last_state_rename_id = other.last_state_rename_id;
     this->destination_set = new std::set<int>(*other.destination_set); // Do copy
+    this->automaton_id = other.automaton_id;
 }
 
-Transition_Destination_Set::Transition_Destination_Set(std::set<int>* destination_set) 
+Transition_Destination_Set::Transition_Destination_Set(uint32_t automaton_id, std::set<int>* destination_set) 
 {
-    this->last_state_rename_id = 0;
+	this->automaton_id = automaton_id;
     this->destination_set = destination_set;
 }
 
@@ -63,8 +63,7 @@ static inline uint64_t rotl64(uint64_t x, int8_t r)
 #endif
 
 MTBDD
-make_set_leaf(Transition_Destination_Set* value) 
-{
+make_set_leaf(Transition_Destination_Set* value) {
     MTBDD leaf = mtbdd_makeleaf(mtbdd_leaf_type_set, (uint64_t)value);
     return leaf;
 }
@@ -95,9 +94,14 @@ static void destroy_set_leaf(uint64_t leaf_value)
 int set_leaf_equals(uint64_t a_ptr, uint64_t b_ptr) 
 {
     Transition_Destination_Set* a_tds = (Transition_Destination_Set*) a_ptr;
-    Transition_Destination_Set* b_tds = (Transition_Destination_Set*) a_ptr;
+    Transition_Destination_Set* b_tds = (Transition_Destination_Set*) b_ptr;
 
-    return (*a_tds->destination_set) == (*b_tds->destination_set);
+    if (a_tds->automaton_id == b_tds->automaton_id) {
+        if ((*a_tds->destination_set) == (*b_tds->destination_set)) {
+            return true;
+        };
+    }
+    return false;
 }
 
 static uint64_t set_leaf_hash(const uint64_t contents_ptr,
@@ -113,6 +117,11 @@ static uint64_t set_leaf_hash(const uint64_t contents_ptr,
         hash = hash * prime;
     }
 
+	// Hash also the automaton_id, TODO: Remove this?
+	//hash = hash ^ tds->automaton_id;
+	//hash = rotl64(hash, 31);
+	//hash = hash * prime;
+
     return hash;
 }
 
@@ -120,6 +129,7 @@ static char *set_leaf_to_str(int comp, uint64_t leaf_val, char *buf, size_t bufl
 	(void) comp;
 	std::stringstream ss;
 	auto tds = (Transition_Destination_Set*) leaf_val;
+    ss << "#" <<tds->automaton_id << " ";
 	ss << "{";
 	uint32_t cnt = 1;
 	for (auto i : *tds->destination_set) {
@@ -138,19 +148,17 @@ static char *set_leaf_to_str(int comp, uint64_t leaf_val, char *buf, size_t bufl
 	if (required_buf_size <= buflen) {
 		const char *cstr = str.c_str();	
 		std::memcpy(buf, cstr, sizeof(char) * required_buf_size);
-		cout << buf << endl;
 		return buf;
 	} else {
 		char *new_buf = (char *) malloc(sizeof(char) * required_buf_size);
 		std::memcpy(new_buf, str.c_str(), sizeof(char) * required_buf_size);
-		cout << new_buf << endl;
 		return new_buf;
 	}
 }
 
 
-TASK_DECL_2(MTBDD, set_union, MTBDD *, MTBDD *);
-TASK_IMPL_2(MTBDD, set_union, MTBDD *, pa, MTBDD *, pb) 
+TASK_DECL_3(MTBDD, set_union, MTBDD*, MTBDD*, uint64_t);
+TASK_IMPL_3(MTBDD, set_union, MTBDD*, pa, MTBDD*, pb, uint64_t, param) 
 {
   MTBDD a = *pa, b = *pb;
   // When one leaf is empty set (false),
@@ -172,8 +180,7 @@ TASK_IMPL_2(MTBDD, set_union, MTBDD *, pa, MTBDD *, pb)
             tds_b.destination_set->begin(), tds_b.destination_set->end(),
             std::inserter(*union_set, union_set->begin()));
 
-    Transition_Destination_Set* union_tds = new Transition_Destination_Set();
-    union_tds->destination_set = union_set;
+    Transition_Destination_Set* union_tds = new Transition_Destination_Set((uint32_t) param, union_set);
 
     MTBDD union_leaf = make_set_leaf(union_tds);  // Wrap the TDS with a MTBDD leaf.
     return union_leaf;
@@ -217,12 +224,6 @@ TASK_IMPL_2(MTBDD, set_intersection_op, MTBDD *, pa, MTBDD *, pb)
     return mtbdd_invalid;
 }
 
-TASK_DECL_2(MTBDD, my_exists_op, MTBDD *, MTBDD *);
-TASK_IMPL_2(MTBDD, my_exists_op, MTBDD *, pa, MTBDD *, pb) 
-{
-    return CALL(set_union, pa, pb);
-}
-
 /**
  * The *abstraction* F definition.
  * Task returns a MTBDD. Task accepts two MTBDDs - left and right child (subtree) of a
@@ -238,7 +239,7 @@ TASK_IMPL_3(MTBDD, my_abstract_exists_op, MTBDD, a, MTBDD, b, int, k)
 	//mtbdd_fprintdot(stdout, a);
 	//cout << "----- B ------ " << endl;
 	//mtbdd_fprintdot(stdout, b);
-	MTBDD u = mtbdd_apply(a, b, TASK(set_union));
+	MTBDD u = mtbdd_applyp(a, b, (uint64_t) -1, TASK(set_union), AMAYA_EXISTS_OPERATION_ID);
 	//cout << "----- Result: ------ " << endl;
 	//mtbdd_fprintdot(stdout, b);
 	return u;
@@ -289,11 +290,12 @@ MTBDD w_sylvan_ithvar(uint32_t var)
 
 
 MTBDD amaya_mtbdd_build_single_terminal(
-		uint8_t *transition_symbols,  // 2D array of size (variable_count) * transition_symbols_count
-		uint32_t transition_symbols_count,
-		uint32_t variable_count,
-		uint32_t *destination_set,
-		uint32_t destination_set_size)
+		uint32_t  automaton_id,
+		uint8_t*  transition_symbols,  // 2D array of size (variable_count) * transition_symbols_count
+		uint32_t  transition_symbols_count,
+		uint32_t  variable_count,
+		int* 	  destination_set,
+		uint32_t  destination_set_size)
 {
 	// CALL(mtbdd_union_cube(mtbdd, variables, cube, terminal)	
 	// Cube (transitions symbols) have to be in format -- suppose the transition_symbols are ready
@@ -310,9 +312,9 @@ MTBDD amaya_mtbdd_build_single_terminal(
 	std::set<int> *leaf_state_set = new std::set<int>();	
 	for (uint32_t i = 0; i < destination_set_size; i++) {
 		leaf_state_set->insert(destination_set[i]);
-	}	
-    Transition_Destination_Set* tds = new Transition_Destination_Set(leaf_state_set);
+	}
 
+    Transition_Destination_Set* tds = new Transition_Destination_Set(automaton_id, leaf_state_set);
 	MTBDD leaf = make_set_leaf(tds);
 
 	// Construct the initial MTBDD, then add the rest of the symbols
@@ -454,20 +456,41 @@ Transition_Destination_Set* _get_transition_target(
 }
 
 void amaya_mtbdd_rename_states(
-		MTBDD root, 
+		MTBDD* mtbdd_roots, 
+		uint32_t root_count,
 		int* names, // [(old, new), (old, new), (old, new)] 
 		uint32_t name_count)
 {
 	int old_name, new_name;
 
+	 // No MTBDD interference can happen, since the leaves contain automaton_id, and therefore
+	 // each MTBDD has unique leaves.
 	std::set<MTBDD> leaves {};
-	collect_mtbdd_leaves(root, leaves);	
+	for (uint32_t i = 0; i < root_count; i++) {
+		// This only inserts them into leaves, does not clear the container
+		collect_mtbdd_leaves(mtbdd_roots[i], leaves); 
+	}
 
-	for (auto leaf : leaves) 
-	{
+	if (leaves.empty()) {
+		return;
+	}
+
+	for (auto leaf : leaves) {
 		Transition_Destination_Set* tds = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
-		std::vector<int> new_leaf_contents;
-		bool has_some_state_renamed = false;
+	}
+
+    for (uint32_t i = 0; i < name_count; i++) 
+    {
+        old_name = names[2*i];
+        new_name = names[2*i + 1];
+    }
+
+	
+	for (auto leaf : leaves) {
+
+		Transition_Destination_Set* tds = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
+
+		auto* new_leaf_contents = new std::set<int>();
 		for (uint32_t i = 0; i < name_count; i++) 
 		{
 			old_name = names[2*i];
@@ -475,18 +498,12 @@ void amaya_mtbdd_rename_states(
 			bool is_in_leaf = (tds->destination_set->find(old_name) != tds->destination_set->end());
 
 			if (is_in_leaf) {
-				new_leaf_contents.push_back(new_name);
-				has_some_state_renamed = true;
+				new_leaf_contents->insert(new_name);
 			}
 		}
-
-		if (has_some_state_renamed) {
-			// If the leaf has no state renamed that means it already was processed. 
-			tds->destination_set->clear();
-			for (auto i : new_leaf_contents) {
-				tds->destination_set->insert(i);
-			}
-		}
+        
+		delete tds->destination_set;
+		tds->destination_set = new_leaf_contents;
 	}
 }
 
@@ -554,10 +571,7 @@ int* amaya_mtbdd_get_leaves(
 void amaya_print_dot(MTBDD m, int32_t fd) 
 {
 	FILE* file = fdopen(fd, "w");
-	cout << m << endl;
-	cout << file << endl;
 	mtbdd_fprintdot(file, m);
-	cout << "Done" << endl;
 	fflush(file);
 	// fclose(file);  The file will be closed in python
 }
@@ -730,14 +744,30 @@ uint8_t* amaya_mtbdd_get_transitions(
 	return symbols_out;
 }
 
+void amaya_mtbdd_change_automaton_id_for_leaves(
+        MTBDD* roots,
+        uint32_t root_cnt,
+        uint32_t new_id)
+{
+	std::set<MTBDD> leaves {};
+    for (uint32_t i = 0; i < root_cnt; i++) {
+        collect_mtbdd_leaves(roots[i], leaves);
+    }
+
+    for (auto leaf : leaves) {
+        auto tds = (Transition_Destination_Set*) mtbdd_getvalue(leaf); 
+        tds->automaton_id = new_id;
+    }
+}
+
 MTBDD amaya_mtbdd_intersection(MTBDD a, MTBDD b) 
 {
 	LACE_ME;
 	return mtbdd_apply(a, b, TASK(set_intersection_op));
 }
 
-MTBDD amaya_unite_mtbdds(MTBDD m1, MTBDD m2) {
+MTBDD amaya_unite_mtbdds(MTBDD m1, MTBDD m2, uint32_t automaton_id) {
 	LACE_ME;
-	MTBDD u = mtbdd_apply(m1, m2, TASK(set_union));
+	MTBDD u = mtbdd_applyp(m1, m2, (uint64_t) automaton_id, TASK(set_union), AMAYA_UNION_OP_ID);
 	return u;
 }
