@@ -116,7 +116,9 @@ extern "C" {
 	 * @returns Boolean indicating whether the left mtbdd was modified (new transitions to final state were added).
 	 */
 	bool amaya_mtbdd_do_pad_closure(
+			int left_state,
 			sylvan::MTBDD left, 
+			int right_state,
 			sylvan::MTBDD right, 
 			int* final_states, 
 			uint32_t final_states_cnt);
@@ -182,6 +184,7 @@ extern "C" {
 	 */
 	void amaya_end_intersection();
 
+	void amaya_set_debugging(bool debug);
 
 	void amaya_do_free(void *ptr);
 
@@ -209,6 +212,8 @@ Transition_Destination_Set* _get_transition_target(
 
 typedef struct {
 	bool had_effect;
+	int left_state; 	// For debug purposes
+	int right_state; 	// Actually used
 	uint32_t final_states_cnt;
 	int *final_states;
 } pad_closure_info_t;

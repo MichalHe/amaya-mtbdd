@@ -16,6 +16,7 @@ using std::map;
 using std::pair;
 
 static map<pair<int, int>, int>* intersection_state = NULL;
+static bool DEBUG_ON = false;
 
 Transition_Destination_Set::Transition_Destination_Set() 
 {
@@ -690,13 +691,19 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
     }
     // If both are non-false leaves, we can try doing the actual padding closure
     if (mtbdd_isleaf(left) && mtbdd_isleaf(right)) {
-        auto& left_tds  = *((Transition_Destination_Set*) mtbdd_getvalue(left));
-        auto& right_tds = *((Transition_Destination_Set*) mtbdd_getvalue(right));
+        auto left_tds  = (Transition_Destination_Set*) mtbdd_getvalue(left);
+        auto right_tds = (Transition_Destination_Set*) mtbdd_getvalue(right);
 
 	    pad_closure_info_t* pci = (pad_closure_info_t*) op_param;
 
+		// Check whether the transition destination state even leads the the right state (might not)
+		if (left_tds->destination_set->find(pci->right_state) == left_tds->destination_set->end()) {
+			// Does not lead to the right state, therefore cannot propagate padding.
+			return left; 
+		}
+
 	    bool is_final;
-	    for (int rs: *right_tds.destination_set)
+	    for (int rs: *right_tds->destination_set)
 	    {
 			is_final = false;
 
@@ -709,10 +716,10 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
 			}
 			
 			if (is_final) {
-				const bool is_missing_from_left = left_tds.destination_set->find(rs) == left_tds.destination_set->end();
+				const bool is_missing_from_left = left_tds->destination_set->find(rs) == left_tds->destination_set->end();
 				if (is_missing_from_left) {
 					// We've located a state that is final, and is not in left, pad closure adds it to the left states.
-					left_tds.destination_set->insert(rs); // The actual pad closure
+					left_tds->destination_set->insert(rs); // The actual pad closure
 					pci->had_effect = true; // To utilize the python cache
 				}
 			}
@@ -727,12 +734,20 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
 }
 
 
-bool amaya_mtbdd_do_pad_closure(MTBDD left, MTBDD right, int* final_states, uint32_t final_states_cnt)
+bool amaya_mtbdd_do_pad_closure(int left_state, MTBDD left, int right_state, MTBDD right, int* final_states, uint32_t final_states_cnt)
 {
+	// We need to invalidate MTBDD cache here - for the same pair of mtbdds can the 
+	// padding closure be called multiple times as the final states bubble up the state-pre chain
+	// TODO: This this is kindof inefficient - maybe try populating the cache with purposely
+	// different value before the pad closure, so that the `applyp` will not recognize it???
+	cache_clear();
 	pad_closure_info_t pci = {0};
 	pci.final_states = final_states;
 	pci.final_states_cnt = final_states_cnt;
 	pci.had_effect = false;
+
+	pci.right_state = right_state;
+	pci.left_state = left_state;
 	
 	LACE_ME;
 	mtbdd_applyp(
@@ -879,4 +894,8 @@ void amaya_end_intersection()
 {
     delete intersection_state;
     intersection_state = NULL;
+}
+
+void amaya_set_debugging(bool debug) {
+	DEBUG_ON = debug;
 }
