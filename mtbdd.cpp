@@ -736,11 +736,6 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
 
 bool amaya_mtbdd_do_pad_closure(int left_state, MTBDD left, int right_state, MTBDD right, int* final_states, uint32_t final_states_cnt)
 {
-	// We need to invalidate MTBDD cache here - for the same pair of mtbdds can the 
-	// padding closure be called multiple times as the final states bubble up the state-pre chain
-	// TODO: This this is kindof inefficient - maybe try populating the cache with purposely
-	// different value before the pad closure, so that the `applyp` will not recognize it???
-	cache_clear();
 	pad_closure_info_t pci = {0};
 	pci.final_states = final_states;
 	pci.final_states_cnt = final_states_cnt;
@@ -750,12 +745,15 @@ bool amaya_mtbdd_do_pad_closure(int left_state, MTBDD left, int right_state, MTB
 	pci.left_state = left_state;
 	
 	LACE_ME;
-	mtbdd_applyp(
-			left, 
-			right, 
-			(uint64_t) &pci, 
-			TASK(pad_closure_op), 
-			AMAYA_PAD_CLOSURE_OPERATION_ID);
+	mtbdd_applyp(left, 
+				 right,
+				 (uint64_t) &pci, 
+				 TASK(pad_closure_op), 
+				 CUR_PADDING_CLOSURE_ID);
+
+	// Every padding closure that is performed (even repeated) should be treated
+	// as a unique operation --> so that the caching problems will not occur
+	CUR_PADDING_CLOSURE_ID++;
 
 	return pci.had_effect;
 }

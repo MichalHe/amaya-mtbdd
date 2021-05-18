@@ -24,12 +24,13 @@
 #ifndef AMAYA_MTBDD_H
 #define AMAYA_MTBDD_H
 
-#define AMAYA_PAD_CLOSURE_OPERATION_ID 	10
 #define AMAYA_EXISTS_OPERATION_ID 		11
 #define AMAYA_UNION_OP_ID 				12
 #define AMAYA_INTERSECTION_OP_ID 		13
 
 extern "C" {
+	static uint32_t CUR_PADDING_CLOSURE_ID = 64;
+
 	// Export constants (wrapped)
 	extern const sylvan::MTBDD w_mtbdd_true = sylvan::mtbdd_true;
 	extern const sylvan::MTBDD w_mtbdd_false = sylvan::mtbdd_false;
