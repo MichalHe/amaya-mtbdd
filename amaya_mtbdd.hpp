@@ -189,6 +189,30 @@ extern "C" {
 
 	void amaya_do_free(void *ptr);
 
+	/** 
+	 * Renames the metastates that are contained withing the roots of mtbdds resulting 
+	 * from the determinization procedure some automaton.
+	 * @param roots 					The roots of the MTBDDs that were created during the determinization procedure.  
+	 * @param root_cnt  				The number of given MTBDDs. 
+	 * @param resulting_automaton_id  	The ID of the resulting automaton.
+	 * @param out_metastates_sizes   	OUTPUT: The sized of the located metastates.
+	 * @param out_metastates_cnt   		OUTPUT: The number of located metastates.
+	 * @returns The array containing serialized metastates in the order they were located in the given MTBDDs.
+	 */
+	int* amaya_rename_metastates_to_int(
+			sylvan::MTBDD* roots, 							// MTBDDs resulting from determinization
+			uint32_t root_cnt,								// Root count
+			int metastate_num_range_start,
+			uint32_t resulting_automaton_id,
+			uint32_t** out_metastates_sizes,
+			uint32_t*  out_metastates_cnt
+			);
+
+	sylvan::MTBDD amaya_complete_mtbdd_with_trapstate(
+			sylvan::MTBDD mtbdd,
+			uint32_t automaton_id, 
+			int trapstate);
+
 	void shutdown_machinery();
 	void init_machinery();
 }
@@ -218,6 +242,11 @@ typedef struct {
 	uint32_t final_states_cnt;
 	int *final_states;
 } pad_closure_info_t;
+
+typedef struct {
+	uint32_t automaton_id;
+	int trapstate;
+} Complete_With_Trapstate_Op_Info;
 
 typedef struct {
 	uint32_t automaton_id;

@@ -4,6 +4,7 @@
 #include <sylvan_mtbdd.h>
 #include <sylvan_mtbdd_int.h>
 #include <unistd.h>
+#include <assert.h>
 #include <utility>
 
 using namespace sylvan;
@@ -163,22 +164,56 @@ static char *set_leaf_to_str(int comp, uint64_t leaf_val, char *buf, size_t bufl
 }
 
 
+inline 
+MTBDD copy_leaf_with_new_id(MTBDD old_leaf, uint32_t new_id) {
+	auto original_tds = (Transition_Destination_Set*) mtbdd_getvalue(old_leaf);
+	auto new_tds = new Transition_Destination_Set(*original_tds);
+	new_tds->automaton_id = new_id;
+	return make_set_leaf(new_tds);
+}
+
+
 TASK_DECL_3(MTBDD, set_union, MTBDD*, MTBDD*, uint64_t);
 TASK_IMPL_3(MTBDD, set_union, MTBDD*, pa, MTBDD*, pb, uint64_t, param) 
 {
   MTBDD a = *pa, b = *pb;
+  if (a == mtbdd_false && b == mtbdd_false) return mtbdd_false;
+
   // When one leaf is empty set (false),
   // the algorithm should return all reachable states for the other one
   if (a == mtbdd_false) {
-    return b; // If b is also mtbdd_false, nothing wrong is happening
+	//if (mtbdd_isleaf(b) && param != -1) {
+		//// We are performing an union and we expect all the states to have different automaton id
+		//// However the old one might be still used somewhere else.
+		//cout << "EEEh #1: "; ((Transition_Destination_Set*) mtbdd_getvalue(b))->print_dest_states();
+		//return copy_leaf_with_new_id(b, param);
+	//} else {
+		//return mtbdd_invalid;
+	//}
+    return b; 
   }
+
   if (b == mtbdd_false) {
-    return a; // Same here
+	//if (mtbdd_isleaf(a) && param != -1) {
+		//cout << "EEEh #2" << endl;
+	  //return copy_leaf_with_new_id(a, param);
+	//} else {
+		//return mtbdd_invalid;
+	//}
+	return a; 
   }
   // If both are leaves, we calculate union
   if (mtbdd_isleaf(a) && mtbdd_isleaf(b)) {
     auto& tds_a = *((Transition_Destination_Set*) mtbdd_getvalue(a));
     auto& tds_b = *((Transition_Destination_Set*) mtbdd_getvalue(b));
+		
+	// If the passed parameter is missing (-1) that means that we should derive it 
+	// from the leaves (TDS). This can happen when padding closure is performed, as
+	// the leaf automaton id is not modified.
+	if (param == -1) {
+		assert(tds_a.automaton_id == tds_b.automaton_id);
+		param = (uint32_t) tds_a.automaton_id;
+	}
 
     std::set<int> *union_set = new std::set<int>();
     std::set_union(
@@ -285,6 +320,25 @@ TASK_IMPL_3(MTBDD, my_abstract_exists_op, MTBDD, a, MTBDD, b, int, k)
 	return u;
 }
 
+TASK_DECL_2(MTBDD, complete_with_trapstate_op, MTBDD, uint64_t);
+
+TASK_IMPL_2(MTBDD, complete_with_trapstate_op, MTBDD, r, uint64_t, op_info_raw_ptr) {
+	if (r == mtbdd_false) {
+		auto op_info = (Complete_With_Trapstate_Op_Info*) op_info_raw_ptr;
+		
+		set<int>* leaf_set = new set<int>({op_info->trapstate});
+		Transition_Destination_Set* trapstate_tds = new Transition_Destination_Set(op_info->automaton_id, leaf_set);
+
+		printf("Creating the leaf that will replace the mtbdd_false state.\n");
+
+		return make_set_leaf(trapstate_tds);
+	} 
+
+	if (mtbdd_isleaf(r)) return r;
+
+	return mtbdd_invalid;
+}
+
 void init_machinery() 
 {
     int n_workers = 1;
@@ -373,6 +427,20 @@ MTBDD amaya_mtbdd_build_single_terminal(
 	return mtbdd;
 }
 
+
+MTBDD amaya_complete_mtbdd_with_trapstate(MTBDD mtbdd, uint32_t automaton_id, int trapstate) 
+{
+	Complete_With_Trapstate_Op_Info op_info = {};
+	op_info.trapstate = trapstate;
+	op_info.automaton_id = automaton_id;
+	
+	cout << "Received the following info" << endl;
+	cout << "Trapstate: " <<op_info.trapstate << endl;
+	cout << "Automaton id: " << op_info.automaton_id << endl;
+
+	LACE_ME;
+	return mtbdd_uapply(mtbdd, TASK(complete_with_trapstate_op), (uint64_t) &op_info);
+}
 
 int* amaya_mtbdd_get_transition_target(
         MTBDD mtbdd, 
@@ -628,6 +696,64 @@ void amaya_replace_leaf_contents_with(void *leaf_tds, int* new_contents, uint32_
     }
 }
 
+int* amaya_rename_metastates_to_int(
+		MTBDD* roots, 							// MTBDDs resulting from determinization
+		uint32_t root_cnt,						// Root count
+		int metastate_num_range_start,
+		uint32_t resulting_automaton_id,
+		uint32_t **out_metastates_sizes,
+		uint32_t *out_metastates_cnt
+		)
+{
+
+	set<MTBDD> leaves;
+	for (uint32_t root_i = 0; root_i < root_cnt; root_i++) {
+		collect_mtbdd_leaves(roots[root_i], leaves);
+	}
+
+#ifdef AMAYA_DEBUG
+	cout << "Collected " << leaves.size() << " leaves in provided mtbdds" << endl;
+#endif
+
+	uint32_t metastates_cnt = leaves.size();
+	uint32_t metastates_sizes_first_empty_i = 0;
+	uint32_t* metastates_sizes = (uint32_t *) malloc(metastates_cnt * sizeof(uint32_t));
+	assert(metastates_sizes != NULL);
+	vector<int> metastates_serialized;
+
+	for (auto leaf: leaves) {
+		auto leaf_contents = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
+
+		// Serialize the mapping so that the Python side will know what was mapped to what.
+		for (auto state : *leaf_contents->destination_set) {
+			metastates_serialized.push_back(state);
+		}
+
+		metastates_sizes[metastates_sizes_first_empty_i++] = leaf_contents->destination_set->size();
+		
+		// We need to convert the internal transition destination set into a sorted vector.
+		// @Warn: Currently we rely on the fact that we use std::set that stores the destination states
+		// 		  in a sorted manner (a balanced binary tree)
+		
+		// Do the actual renaming.
+		int metastate_num = metastate_num_range_start++;
+		leaf_contents->automaton_id = resulting_automaton_id;
+		leaf_contents->destination_set->clear();
+		leaf_contents->destination_set->insert(metastate_num);
+	} 
+
+	*out_metastates_sizes = metastates_sizes;
+	*out_metastates_cnt = leaves.size();
+	
+	int* metastates_serialized_arr = (int*) malloc(metastates_serialized.size() * sizeof(int));
+	assert(metastates_serialized_arr != NULL);
+	for (uint32_t i = 0; i < metastates_serialized.size(); i++) {
+		metastates_serialized_arr[i] = metastates_serialized.at(i); 
+	}
+
+	return metastates_serialized_arr;
+}
+
 
 void amaya_print_dot(MTBDD m, int32_t fd) 
 {
@@ -753,7 +879,7 @@ bool amaya_mtbdd_do_pad_closure(int left_state, MTBDD left, int right_state, MTB
 
 	// Every padding closure that is performed (even repeated) should be treated
 	// as a unique operation --> so that the caching problems will not occur
-	CUR_PADDING_CLOSURE_ID++;
+	CUR_PADDING_CLOSURE_ID += 2;
 
 	return pci.had_effect;
 }
