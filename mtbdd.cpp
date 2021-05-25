@@ -321,15 +321,15 @@ TASK_IMPL_3(MTBDD, my_abstract_exists_op, MTBDD, a, MTBDD, b, int, k)
 }
 
 TASK_DECL_2(MTBDD, complete_with_trapstate_op, MTBDD, uint64_t);
-
 TASK_IMPL_2(MTBDD, complete_with_trapstate_op, MTBDD, r, uint64_t, op_info_raw_ptr) {
 	if (r == mtbdd_false) {
 		auto op_info = (Complete_With_Trapstate_Op_Info*) op_info_raw_ptr;
 		
 		set<int>* leaf_set = new set<int>({op_info->trapstate});
 		Transition_Destination_Set* trapstate_tds = new Transition_Destination_Set(op_info->automaton_id, leaf_set);
-
-		printf("Creating the leaf that will replace the mtbdd_false state.\n");
+		
+		// Inform the Python side, that it needs to add a Trapstate to the set of states.
+		op_info->had_effect = true;
 
 		return make_set_leaf(trapstate_tds);
 	} 
@@ -428,18 +428,22 @@ MTBDD amaya_mtbdd_build_single_terminal(
 }
 
 
-MTBDD amaya_complete_mtbdd_with_trapstate(MTBDD mtbdd, uint32_t automaton_id, int trapstate) 
+MTBDD amaya_complete_mtbdd_with_trapstate(
+		MTBDD mtbdd, 
+		uint32_t automaton_id, 
+		int trapstate,
+		bool* had_effect) 
 {
+
 	Complete_With_Trapstate_Op_Info op_info = {};
 	op_info.trapstate = trapstate;
 	op_info.automaton_id = automaton_id;
-	
-	cout << "Received the following info" << endl;
-	cout << "Trapstate: " <<op_info.trapstate << endl;
-	cout << "Automaton id: " << op_info.automaton_id << endl;
+	op_info.had_effect = false;
 
 	LACE_ME;
-	return mtbdd_uapply(mtbdd, TASK(complete_with_trapstate_op), (uint64_t) &op_info);
+	MTBDD result = mtbdd_uapply(mtbdd, TASK(complete_with_trapstate_op), (uint64_t) &op_info);
+	*had_effect = op_info.had_effect;
+	return result;
 }
 
 int* amaya_mtbdd_get_transition_target(
@@ -870,7 +874,9 @@ bool amaya_mtbdd_do_pad_closure(int left_state, MTBDD left, int right_state, MTB
 	pci.right_state = right_state;
 	pci.left_state = left_state;
 	
+
 	LACE_ME;
+	sylvan_clear_cache();
 	mtbdd_applyp(left, 
 				 right,
 				 (uint64_t) &pci, 
@@ -879,7 +885,7 @@ bool amaya_mtbdd_do_pad_closure(int left_state, MTBDD left, int right_state, MTB
 
 	// Every padding closure that is performed (even repeated) should be treated
 	// as a unique operation --> so that the caching problems will not occur
-	CUR_PADDING_CLOSURE_ID += 2;
+	CUR_PADDING_CLOSURE_ID += 4;
 
 	return pci.had_effect;
 }

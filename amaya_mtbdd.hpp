@@ -211,7 +211,9 @@ extern "C" {
 	sylvan::MTBDD amaya_complete_mtbdd_with_trapstate(
 			sylvan::MTBDD mtbdd,
 			uint32_t automaton_id, 
-			int trapstate);
+			int trapstate,
+			bool* had_effect
+			);
 
 	void shutdown_machinery();
 	void init_machinery();
@@ -246,6 +248,7 @@ typedef struct {
 typedef struct {
 	uint32_t automaton_id;
 	int trapstate;
+	bool had_effect;
 } Complete_With_Trapstate_Op_Info;
 
 typedef struct {
