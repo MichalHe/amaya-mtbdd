@@ -972,31 +972,30 @@ MTBDD amaya_mtbdd_intersection(
         int** discovered_states,         // OUT
         int*  discovered_states_cnt)     // OUT
 {
-    auto intersect_info = (Intersection_Op_Info*) malloc(sizeof(Intersection_Op_Info)); // TODO: replace malloc with new
-    intersect_info->automaton_id = result_automaton_id;
-    intersect_info->discoveries = new std::vector<int>();
+    Intersection_Op_Info intersect_info = {0};
+    intersect_info.automaton_id = result_automaton_id;
+    intersect_info.discoveries = new std::vector<int>();
 
 	LACE_ME;
-	MTBDD result = mtbdd_applyp(a, b, (uint64_t) intersect_info, TASK(set_intersection_op), AMAYA_INTERSECTION_OP_ID);
+	MTBDD result = mtbdd_applyp(a, b, (uint64_t) &intersect_info, TASK(set_intersection_op), AMAYA_INTERSECTION_OP_ID);
     
     
-    if (!intersect_info->discoveries->empty()) {
-        auto discovered_states_arr = (int*) malloc(sizeof(int) * intersect_info->discoveries->size());
-        for (uint32_t i = 0; i < intersect_info->discoveries->size(); i++) {
-            discovered_states_arr[i] = intersect_info->discoveries->at(i);
+    if (!intersect_info.discoveries->empty()) {
+        auto discovered_states_arr = (int*) malloc(sizeof(int) * intersect_info.discoveries->size());
+        for (uint32_t i = 0; i < intersect_info.discoveries->size(); i++) {
+            discovered_states_arr[i] = intersect_info.discoveries->at(i);
         }
 
         // Send the new discoveries to the python side.
         *discovered_states = discovered_states_arr;
-        *discovered_states_cnt = intersect_info->discoveries->size() / 3;
+        *discovered_states_cnt = intersect_info.discoveries->size() / 3;
     } else {
         // Nothing new was discovered, do not malloc
         *discovered_states = NULL;
         *discovered_states_cnt = 0;
     }
 
-    delete intersect_info->discoveries;
-    free(intersect_info);
+    delete intersect_info.discoveries;
 
     return result;
 }
