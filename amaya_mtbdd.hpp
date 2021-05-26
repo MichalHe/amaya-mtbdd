@@ -256,5 +256,11 @@ typedef struct {
 	std::vector<int>* discoveries; // Flat array of [metastate_left, metastate_right, state, ...]
 } Intersection_Op_Info;
 
+typedef struct {
+	std::map<std::pair<int, int>, int>* intersection_state_pairs_numbers;
+	bool prune_pairs_states_with_one_final;
+	int final_states[2];
+} Intersection_State;
+
 void collect_mtbdd_leaves(sylvan::MTBDD root, std::set<sylvan::MTBDD>& dest);
 #endif

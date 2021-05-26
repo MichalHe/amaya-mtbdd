@@ -16,7 +16,8 @@ using std::stringstream;
 using std::map;
 using std::pair;
 
-static map<pair<int, int>, int>* intersection_state = NULL;
+
+static Intersection_State* intersection_state = NULL;
 static bool DEBUG_ON = false;
 
 Transition_Destination_Set::Transition_Destination_Set() 
@@ -257,20 +258,22 @@ TASK_IMPL_3(MTBDD, set_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64_t, para
         int state;
 
         std::set<int>* intersection_leaf_states = new std::set<int>();
+		
+		auto already_discovered_intersection_states = intersection_state->intersection_state_pairs_numbers;
 
         for (auto left_state : *left_states) {
             for (auto right_state : *right_states) {
                 metastate = std::make_pair(left_state, right_state);
-                auto pos = intersection_state->find(metastate);
-                bool contains_metastate = pos != intersection_state->end();
+                auto pos = already_discovered_intersection_states->find(metastate);
+                bool contains_metastate = (pos != already_discovered_intersection_states->end());
                 if (contains_metastate) {
                     state = pos->second;
                 } else {
                     // We have discovered a new state.
                     // Update the global intersection state, so in the future every such
                     // state will get the same integer
-                    state = intersection_state->size();
-                    intersection_state->insert(std::make_pair(metastate, state));
+                    state = already_discovered_intersection_states->size();
+                    already_discovered_intersection_states->insert(std::make_pair(metastate, state));
 
                     // Update the discoveries local for this intersection, so that the Python
                     // side knows whats up.
@@ -1008,20 +1011,28 @@ MTBDD amaya_unite_mtbdds(MTBDD m1, MTBDD m2, uint32_t automaton_id) {
 
 void amaya_begin_intersection() 
 {
-    intersection_state = new map<pair<int, int>, int>();
+    intersection_state = (Intersection_State*) malloc(sizeof(Intersection_State));
+	intersection_state->intersection_state_pairs_numbers = new map<pair<int, int>, int>();
+
+	// TODO: This is just zero-initialized state, add a method to remove such states.
+	intersection_state->prune_pairs_states_with_one_final = false;
+	intersection_state->final_states[0] = 0;
+	intersection_state->final_states[1] = 0;
 }
 
 void amaya_update_intersection_state(int* metastates, int* renamed_metastates, uint32_t cnt)
 {
     for (uint32_t i = 0; i < cnt; i++) {
         const auto metastate = std::make_pair(metastates[2*i], metastates[2*i + 1]);
-        intersection_state->insert(std::make_pair(metastate, renamed_metastates[i])); 
+        intersection_state
+			->intersection_state_pairs_numbers
+			->insert(std::make_pair(metastate, renamed_metastates[i])); 
     }
 }
 
 void amaya_end_intersection() 
 {
-    delete intersection_state;
+    free(intersection_state);
     intersection_state = NULL;
 }
 
