@@ -244,7 +244,7 @@ TASK_IMPL_3(MTBDD, set_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64_t, para
 
     // If both are leaves calculate intersection
     if (mtbdd_isleaf(a) && mtbdd_isleaf(b)) {
-		auto intersect_info = (intersect_info_t*) param;
+		auto intersect_info = (Intersection_Op_Info*) param;
 
         auto& tds_a = *((Transition_Destination_Set*) mtbdd_getvalue(a));
         auto& tds_b = *((Transition_Destination_Set*) mtbdd_getvalue(b));
@@ -824,7 +824,7 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
         auto left_tds  = (Transition_Destination_Set*) mtbdd_getvalue(left);
         auto right_tds = (Transition_Destination_Set*) mtbdd_getvalue(right);
 
-	    pad_closure_info_t* pci = (pad_closure_info_t*) op_param;
+	    auto pci = (Pad_Closure_Info*) op_param;
 
 		// Check whether the transition destination state even leads the the right state (might not)
 		if (left_tds->destination_set->find(pci->right_state) == left_tds->destination_set->end()) {
@@ -866,7 +866,7 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
 
 bool amaya_mtbdd_do_pad_closure(int left_state, MTBDD left, int right_state, MTBDD right, int* final_states, uint32_t final_states_cnt)
 {
-	pad_closure_info_t pci = {0};
+	Pad_Closure_Info pci = {0};
 	pci.final_states = final_states;
 	pci.final_states_cnt = final_states_cnt;
 	pci.had_effect = false;
@@ -972,7 +972,7 @@ MTBDD amaya_mtbdd_intersection(
         int** discovered_states,         // OUT
         int*  discovered_states_cnt)     // OUT
 {
-    auto intersect_info = (intersect_info_t*) malloc(sizeof(intersect_info_t)); // TODO: replace malloc with new
+    auto intersect_info = (Intersection_Op_Info*) malloc(sizeof(Intersection_Op_Info)); // TODO: replace malloc with new
     intersect_info->automaton_id = result_automaton_id;
     intersect_info->discoveries = new std::vector<int>();
 

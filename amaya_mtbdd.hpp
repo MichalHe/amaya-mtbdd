@@ -243,7 +243,7 @@ typedef struct {
 	int right_state; 	// Actually used
 	uint32_t final_states_cnt;
 	int *final_states;
-} pad_closure_info_t;
+} Pad_Closure_Info;
 
 typedef struct {
 	uint32_t automaton_id;
@@ -254,7 +254,7 @@ typedef struct {
 typedef struct {
 	uint32_t automaton_id;
 	std::vector<int>* discoveries; // Flat array of [metastate_left, metastate_right, state, ...]
-} intersect_info_t;
+} Intersection_Op_Info;
 
 void collect_mtbdd_leaves(sylvan::MTBDD root, std::set<sylvan::MTBDD>& dest);
 #endif
