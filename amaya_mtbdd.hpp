@@ -19,6 +19,7 @@
 #include <utility>
 #include <vector>
 #include <sstream>
+#include <unordered_set>
 #include <string>
 
 #ifndef AMAYA_MTBDD_H
@@ -167,7 +168,10 @@ extern "C" {
 	 * Marks the beginning of intersection. Setups global std::map that holds
 	 * information about which intersection metastates (pairs) were mapped to which values.
 	 */
-	void amaya_begin_intersection();
+	void amaya_begin_intersection(
+			bool should_do_early_prunining, 
+			int* prune_final_states, 
+			uint32_t final_states_cnt);
 
 	/**
 	 * Updates the intersection state information by inserting provided metastates (flat 2d array)
@@ -259,8 +263,8 @@ typedef struct {
 
 typedef struct {
 	std::map<std::pair<int, int>, int>* intersection_state_pairs_numbers;
-	bool prune_pairs_states_with_one_final;
-	int final_states[2];
+	bool should_do_early_prunining;
+	std::unordered_set<int>* prune_final_states;
 } Intersection_State;
 
 void collect_mtbdd_leaves(sylvan::MTBDD root, std::set<sylvan::MTBDD>& dest);

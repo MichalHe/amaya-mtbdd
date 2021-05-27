@@ -5,6 +5,7 @@
 #include <sylvan_mtbdd_int.h>
 #include <unistd.h>
 #include <assert.h>
+#include <unordered_set>
 #include <utility>
 
 using namespace sylvan;
@@ -15,6 +16,7 @@ using std::vector;
 using std::stringstream;
 using std::map;
 using std::pair;
+using std::unordered_set;
 
 
 static Intersection_State* intersection_state = NULL;
@@ -253,6 +255,10 @@ TASK_IMPL_3(MTBDD, set_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64_t, para
         std::set<int> *left_states  = tds_a.destination_set;  
         std::set<int> *right_states = tds_b.destination_set;  
 
+		if (left_states->empty() || right_states->empty()) {
+			return mtbdd_false;
+		}
+
         // Calculate cross product
         pair<int, int> metastate; 
         int state;
@@ -270,6 +276,19 @@ TASK_IMPL_3(MTBDD, set_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64_t, para
                     state = pos->second;
                 } else {
                     // We have discovered a new state.
+					// Check (if early pruning is on) whether the state should be pruned.  
+					if (intersection_state->should_do_early_prunining) {
+						const bool is_left_in_pruned = (intersection_state->prune_final_states->find(left_state) != intersection_state->prune_final_states->end());
+						const bool is_right_in_pruned = (intersection_state->prune_final_states->find(right_state) != intersection_state->prune_final_states->end());
+						
+						// Pruning is performed only when exactly one of the states is in the pruned set
+						if (is_left_in_pruned != is_right_in_pruned) {
+							// The state should be pruned
+							printf("Pruninig state! (%d, %d)\n", left_state, right_state);
+							continue;
+						}
+					}
+
                     // Update the global intersection state, so in the future every such
                     // state will get the same integer
                     state = already_discovered_intersection_states->size();
@@ -284,11 +303,6 @@ TASK_IMPL_3(MTBDD, set_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64_t, para
 
                 intersection_leaf_states->insert(state); 
             }
-        }
-
-        if (intersection_leaf_states->empty()) {
-            delete intersection_leaf_states;
-            return mtbdd_false;
         }
          
         auto intersection_tds = new Transition_Destination_Set(intersect_info->automaton_id, intersection_leaf_states);
@@ -1009,15 +1023,21 @@ MTBDD amaya_unite_mtbdds(MTBDD m1, MTBDD m2, uint32_t automaton_id) {
 	return u;
 }
 
-void amaya_begin_intersection() 
+void amaya_begin_intersection(bool prune_state_pairs_with_one_final, int* prune_final_states, uint32_t final_states_cnt) 
 {
     intersection_state = (Intersection_State*) malloc(sizeof(Intersection_State));
 	intersection_state->intersection_state_pairs_numbers = new map<pair<int, int>, int>();
 
-	// TODO: This is just zero-initialized state, add a method to remove such states.
-	intersection_state->prune_pairs_states_with_one_final = false;
-	intersection_state->final_states[0] = 0;
-	intersection_state->final_states[1] = 0;
+	if (prune_state_pairs_with_one_final) {
+		intersection_state->should_do_early_prunining = true;
+		intersection_state->prune_final_states = new unordered_set<int>();
+		for (uint32_t i = 0; i < final_states_cnt; i++) {
+			intersection_state->prune_final_states->insert(prune_final_states[i]);
+		}
+	} else {
+		intersection_state->should_do_early_prunining = false;
+		intersection_state->prune_final_states = NULL;
+	}
 }
 
 void amaya_update_intersection_state(int* metastates, int* renamed_metastates, uint32_t cnt)
@@ -1032,6 +1052,10 @@ void amaya_update_intersection_state(int* metastates, int* renamed_metastates, u
 
 void amaya_end_intersection() 
 {
+	delete intersection_state->intersection_state_pairs_numbers;
+	if (intersection_state->should_do_early_prunining) {
+		delete intersection_state->prune_final_states;
+	}
     free(intersection_state);
     intersection_state = NULL;
 }
