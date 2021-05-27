@@ -24,9 +24,10 @@
 #ifndef AMAYA_MTBDD_H
 #define AMAYA_MTBDD_H
 
-#define AMAYA_EXISTS_OPERATION_ID 		11
-#define AMAYA_UNION_OP_ID 				12
-#define AMAYA_INTERSECTION_OP_ID 		13
+// The upper 3 bits are used to identify operation.
+#define AMAYA_EXISTS_OPERATION_ID 		0x2000000
+#define AMAYA_UNION_OP_ID 				0x4000000
+#define AMAYA_INTERSECTION_OP_ID 		0x6000000
 
 extern "C" {
 	static uint32_t CUR_PADDING_CLOSURE_ID = 64;
