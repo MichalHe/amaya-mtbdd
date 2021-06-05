@@ -21,6 +21,7 @@ using std::unordered_set;
 
 static Intersection_State* intersection_state = NULL;
 static bool DEBUG_ON = false;
+static Amaya_Stats STATS = {0};
 
 Transition_Destination_Set::Transition_Destination_Set() 
 {
@@ -128,9 +129,9 @@ static uint64_t set_leaf_hash(const uint64_t contents_ptr,
     }
 
 	// Hash also the automaton_id, TODO: Remove this?
-	//hash = hash ^ tds->automaton_id;
-	//hash = rotl64(hash, 31);
-	//hash = hash * prime;
+	hash = hash ^ tds->automaton_id;
+	hash = rotl64(hash, 31);
+	hash = hash * prime;
 
     return hash;
 }
@@ -284,7 +285,7 @@ TASK_IMPL_3(MTBDD, set_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64_t, para
 						// Pruning is performed only when exactly one of the states is in the pruned set
 						if (is_left_in_pruned != is_right_in_pruned) {
 							// The state should be pruned
-							printf("Pruninig state! (%d, %d)\n", left_state, right_state);
+							STATS_INC(STATS.intersection_states_pruned);
 							continue;
 						}
 					}
@@ -337,24 +338,6 @@ TASK_IMPL_3(MTBDD, my_abstract_exists_op, MTBDD, a, MTBDD, b, int, k)
 	return u;
 }
 
-TASK_DECL_2(MTBDD, complete_with_trapstate_op, MTBDD, uint64_t);
-TASK_IMPL_2(MTBDD, complete_with_trapstate_op, MTBDD, r, uint64_t, op_info_raw_ptr) {
-	if (r == mtbdd_false) {
-		auto op_info = (Complete_With_Trapstate_Op_Info*) op_info_raw_ptr;
-		
-		set<int>* leaf_set = new set<int>({op_info->trapstate});
-		Transition_Destination_Set* trapstate_tds = new Transition_Destination_Set(op_info->automaton_id, leaf_set);
-		
-		// Inform the Python side, that it needs to add a Trapstate to the set of states.
-		op_info->had_effect = true;
-
-		return make_set_leaf(trapstate_tds);
-	} 
-
-	if (mtbdd_isleaf(r)) return r;
-
-	return mtbdd_invalid;
-}
 
 void init_machinery() 
 {
@@ -369,7 +352,7 @@ void init_machinery()
     // When the TASK parameter (the middle one) is set to be NULL, it does not spawn a new thread
     // and instead uses the current thread for all tasks (makes it possible to call from python)
     lace_startup(0, NULL, NULL); 
-    sylvan_set_sizes(1LL << 22, 1LL << 26, 1LL << 22, 1LL << 26);
+    sylvan_set_sizes(1LL << 23, 1LL << 27, 1LL << 23, 1LL << 27);
     sylvan_init_package();
     sylvan_init_mtbdd();
 
@@ -420,7 +403,7 @@ MTBDD amaya_mtbdd_build_single_terminal(
 	}
     
 	// Construct the destination set
-	std::set<int> *leaf_state_set = new std::set<int>();	
+	std::set<int> *leaf_state_set = new std::set<int>();
 	for (uint32_t i = 0; i < destination_set_size; i++) {
 		leaf_state_set->insert(destination_set[i]);
 	}
@@ -432,7 +415,6 @@ MTBDD amaya_mtbdd_build_single_terminal(
 	// signature: mtbdd_cube(MTBDD variables, uint8_t *cube, MTBDD terminal)
 	// initial_cube = transition_symbols[0*variable_count + (0..variable_count)] (size: variable_count)
 	MTBDD mtbdd = mtbdd_cube(variables, transition_symbols, leaf);
-
 	
 	LACE_ME;
 	for (uint32_t i = 1; i < transition_symbols_count; i++) {
@@ -457,8 +439,11 @@ MTBDD amaya_complete_mtbdd_with_trapstate(
 	op_info.automaton_id = automaton_id;
 	op_info.had_effect = false;
 
+
 	LACE_ME;
-	MTBDD result = mtbdd_uapply(mtbdd, TASK(complete_with_trapstate_op), (uint64_t) &op_info);
+	MTBDD result = perform_mtbdd_completition_with_trapstate(mtbdd, &op_info);
+
+	if (DEBUG_ON) printf("Had the complete with trapstate effect? %s\n", (op_info.had_effect ? "Yes": "No"));
 	*had_effect = op_info.had_effect;
 	return result;
 }
@@ -528,8 +513,7 @@ Transition_Destination_Set* _get_transition_target(
 	uint32_t root_var = mtbdd_getvar(root);
 
 	if (root_var == current_variable) {
-		if (*variable_assigments == 0) 
-		{
+		if (*variable_assigments == 0) {
 			// Go low
 			return _get_transition_target(
 					mtbdd_getlow(root), 
@@ -537,8 +521,7 @@ Transition_Destination_Set* _get_transition_target(
 					variable_assigments + 1, 
 					var_count - 1);
 		} 
-		else if (*variable_assigments == 1) 
-		{
+		else if (*variable_assigments == 1) {
 			// Go high
 			return _get_transition_target(
 					mtbdd_gethigh(root), 
@@ -546,8 +529,7 @@ Transition_Destination_Set* _get_transition_target(
 					variable_assigments + 1, 
 					var_count - 1);
 		}
-		else 
-		{
+		else {
 			// That means that the current assigment is don't care (2)
             // Then we need to explore both branches and return the results
 			auto low_tds = _get_transition_target(
@@ -573,8 +555,8 @@ Transition_Destination_Set* _get_transition_target(
 			delete high_tds; // Only low result will be propagated upwards
 			return low_tds;
 		}
-	} else 
-	{
+
+	} else {
 		// The current variable in the tree skipped a variable.
 		// That means the current variable assignment did not matter.
 		return _get_transition_target(
@@ -582,6 +564,43 @@ Transition_Destination_Set* _get_transition_target(
 				current_variable + 1,   		// Move to the next variable
 				variable_assigments + 1,		// --^
 				var_count - 1);
+	}
+}
+
+
+MTBDD perform_mtbdd_completition_with_trapstate(
+		MTBDD root, 
+		Complete_With_Trapstate_Op_Info *op_info) 
+{
+	if (root == mtbdd_false) {
+		Transition_Destination_Set* tds = new Transition_Destination_Set();
+		tds->automaton_id = op_info->automaton_id;
+		tds->destination_set = new set<int>();
+		tds->destination_set->insert(op_info->trapstate);
+
+		op_info->had_effect = true;
+		return make_set_leaf(tds);
+	} else if (mtbdd_isleaf(root)) {
+		// @TODO: Check that the complete with trapstate does have the same automaton ID as the node 
+		// being returned.
+		return root;
+	} else {
+		// Then the root is a binary node (some leaves might be mtbdd_false)
+		// @MemoryMangment: Push refs to the subtrees we are about to visit and then pop them.
+		MTBDD low_subtree = mtbdd_getlow(root);
+		MTBDD high_subtree = mtbdd_gethigh(root);
+
+		MTBDD low_subtree_patched = perform_mtbdd_completition_with_trapstate(low_subtree, op_info); 
+		MTBDD high_subtree_patched = perform_mtbdd_completition_with_trapstate(high_subtree, op_info); 
+
+		if (low_subtree == low_subtree_patched && high_subtree == high_subtree_patched) {
+			// No patching was performed down the tree, return it unchanged.
+			return root;
+		}
+		
+		uint32_t var = mtbdd_getvar(root);
+
+		return mtbdd_makenode(var, low_subtree_patched, high_subtree_patched);
 	}
 }
 
@@ -609,8 +628,7 @@ void amaya_mtbdd_rename_states(
 		Transition_Destination_Set* tds = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
 	}
 
-    for (uint32_t i = 0; i < name_count; i++) 
-    {
+    for (uint32_t i = 0; i < name_count; i++) {
         old_name = names[2*i];
         new_name = names[2*i + 1];
     }
@@ -653,6 +671,8 @@ void collect_mtbdd_leaves(MTBDD root, std::set<MTBDD>& dest)
 		dest.insert(leaf);
  	    leaf = mtbdd_enum_next(root, support, arr, NULL);
  	}
+
+	free(arr);
 }
 
 int* amaya_mtbdd_get_leaves(
@@ -893,7 +913,7 @@ bool amaya_mtbdd_do_pad_closure(int left_state, MTBDD left, int right_state, MTB
 	
 
 	LACE_ME;
-	sylvan_clear_cache();
+	//sylvan_clear_cache();
 	mtbdd_applyp(left, 
 				 right,
 				 (uint64_t) &pci, 
@@ -1052,6 +1072,10 @@ void amaya_update_intersection_state(int* metastates, int* renamed_metastates, u
 
 void amaya_end_intersection() 
 {
+#ifdef AMAYA_COLLECT_STATS
+	printf("Pruned states: %u\n", STATS.intersection_states_pruned);
+#endif
+
 	delete intersection_state->intersection_state_pairs_numbers;
 	if (intersection_state->should_do_early_prunining) {
 		delete intersection_state->prune_final_states;
@@ -1062,4 +1086,71 @@ void amaya_end_intersection()
 
 void amaya_set_debugging(bool debug) {
 	DEBUG_ON = debug;
+}
+
+int* amaya_get_state_post_with_some_transition(
+		MTBDD mtbdd,
+		uint32_t* variables,
+		uint32_t variable_cnt,
+		uint8_t** out_symbols,
+		uint32_t* transition_cnt)
+{
+	LACE_ME;
+
+	// Create a MTBDD Cube containing all requred variables.
+	MTBDD variable_set = mtbdd_set_empty();
+	for (uint32_t i = 0; i < variable_cnt; i++) {
+		variable_set = mtbdd_set_add(variable_set, variables[i]);
+	}
+		
+	// Stores the tree path to the leaf
+	uint8_t* arr = (uint8_t*) malloc(sizeof(uint8_t) * variable_cnt);
+
+	MTBDD leaf = mtbdd_enum_first(mtbdd, variable_set, arr, NULL);
+
+	vector<int> reachable_states;
+	vector<uint8_t> transition_symbols;
+
+ 	while (leaf != mtbdd_false) {
+		auto tds = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
+		for (auto state : *tds->destination_set) {
+
+			// @Optimize: We use linear search over vector - there should be a relatively small number of states 
+			// 			  reachable from everystate, therefore it should be faster to use ordinary vector (chache lines)
+			bool state_already_located = false;
+			for (auto already_located_state : reachable_states) {
+				if (already_located_state == state) {
+					state_already_located = true;
+					break;
+				}
+			}
+
+			if (!state_already_located) {
+				reachable_states.push_back(state);
+				// Copy the transition symbol so that the Python side will have the information available 
+				// (this method is used in DFS) 
+				
+				for (uint32_t i = 0; i < variable_cnt; i++) {
+					transition_symbols.push_back(arr[i]);
+				}   	
+			}
+		}
+
+ 	    leaf = mtbdd_enum_next(mtbdd, variable_set, arr, NULL);
+ 	}
+
+	free(arr);
+
+	auto _out_symbols = (uint8_t*) malloc(sizeof(uint8_t) * transition_symbols.size());
+	for (uint32_t i = 0; i < transition_symbols.size(); i++) {
+		_out_symbols[i] = transition_symbols.at(i);
+	} 
+
+	*out_symbols = _out_symbols;
+	*transition_cnt = (uint32_t) reachable_states.size();
+	
+	auto _reachable_states = (int*) malloc(sizeof(int) * reachable_states.size());
+	for (uint32_t i = 0; i < reachable_states.size(); i++) _reachable_states[i] = reachable_states.at(i); 
+
+	return _reachable_states;
 }

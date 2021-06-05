@@ -25,6 +25,8 @@
 #ifndef AMAYA_MTBDD_H
 #define AMAYA_MTBDD_H
 
+// #define AMAYA_COLLECT_STATS
+
 // The upper 3 bits are used to identify operation.
 #define AMAYA_EXISTS_OPERATION_ID 		0x2000000
 #define AMAYA_UNION_OP_ID 				0x4000000
@@ -219,6 +221,32 @@ extern "C" {
 			int trapstate,
 			bool* had_effect
 			);
+	
+	/**
+	 * The complete-with-trapstate (CwT) operation is a subject of the "faulty" cache results 
+	 */
+	void amaya_begin_complete_with_trapstate();
+	void amaya_end_complete_with_trapstate();
+
+	/**
+	 * Walks the MTBDD building a set of reachable states encoded within the MTBDD. For
+	 * every located state also notes the transition symbol via which can the state be reached.
+	 * Every reachable state is presented in the result array max. 1 times (it is an array representation
+	 * of a set).
+	 *	
+	 * @param mtbdd 			The mtbdd for which the reachable states will be retrieved. 
+	 * @param variables			An array containing the indices of used variables.
+	 * @param variable_cnt		The number of variables in the variable array.
+	 * @param out_symbols		(OUT) Will contain transition symbols corresponting the returned states.
+	 * @param transition_cnt	(OUT) Will contain the number of states located.
+	 * @returns 				The array containing the located states.
+	 */
+	int* amaya_get_state_post_with_some_transition(
+			sylvan::MTBDD mtbdd,
+			uint32_t* variables,
+			uint32_t variable_cnt,
+			uint8_t** out_symbols,
+			uint32_t* transition_cnt);
 
 	void shutdown_machinery();
 	void init_machinery();
@@ -267,5 +295,20 @@ typedef struct {
 	std::unordered_set<int>* prune_final_states;
 } Intersection_State;
 
+typedef struct {
+	uint32_t intersection_states_pruned;
+} Amaya_Stats;
+
 void collect_mtbdd_leaves(sylvan::MTBDD root, std::set<sylvan::MTBDD>& dest);
+sylvan::MTBDD perform_mtbdd_completition_with_trapstate(
+		sylvan::MTBDD root, 
+		Complete_With_Trapstate_Op_Info *op_info);
+
+#ifdef AMAYA_COLLECT_STATS
+#define STATS_INC(field) do { field++; } while (0)
+#else
+#define STATS_INC(field)
+#endif
+
+
 #endif
