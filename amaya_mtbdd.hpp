@@ -248,6 +248,13 @@ extern "C" {
 			uint8_t** out_symbols,
 			uint32_t* transition_cnt);
 
+	sylvan::MTBDD* amaya_remove_states_from_transitions(
+			sylvan::MTBDD* transition_roots,
+			uint32_t transition_cnt,
+			int* states_to_remove,
+			uint32_t states_to_remove_cnt
+			);
+
 	void shutdown_machinery();
 	void init_machinery();
 }

@@ -338,6 +338,40 @@ TASK_IMPL_3(MTBDD, my_abstract_exists_op, MTBDD, a, MTBDD, b, int, k)
 	return u;
 }
 
+MTBDD remove_states_from_transition(MTBDD dd, const set<int>& states_to_remove) {
+	if (dd == mtbdd_false) return mtbdd_false;
+
+	if (mtbdd_isleaf(dd)) {
+		auto tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
+
+		auto new_tds = new Transition_Destination_Set(*tds); // Make leaf value copy.
+
+		for (auto state_to_be_removed : states_to_remove) {
+			bool should_be_removed = new_tds->destination_set->find(state_to_be_removed) != new_tds->destination_set->end();	
+			if (should_be_removed) {
+				new_tds->destination_set->erase(state_to_be_removed);
+			}
+		}
+
+		if (new_tds->destination_set->empty()) {
+			delete new_tds;
+			return mtbdd_false;
+		}
+		
+		return make_set_leaf(new_tds);
+	} else {
+		MTBDD low_root = mtbdd_getlow(dd);	
+		MTBDD high_root = mtbdd_gethigh(dd);	
+
+		MTBDD low_result = remove_states_from_transition(low_root, states_to_remove);
+		MTBDD high_result = remove_states_from_transition(high_root, states_to_remove);
+
+		//if (low_result == high_result) return low_result; // Skip variable
+		return mtbdd_makenode(mtbdd_getvar(dd), low_result, high_result);
+	}
+}
+
+
 
 void init_machinery() 
 {
@@ -1153,4 +1187,25 @@ int* amaya_get_state_post_with_some_transition(
 	for (uint32_t i = 0; i < reachable_states.size(); i++) _reachable_states[i] = reachable_states.at(i); 
 
 	return _reachable_states;
+}
+
+
+MTBDD* amaya_remove_states_from_transitions(
+	MTBDD* transition_roots,
+	uint32_t transition_cnt,
+	int* states_to_remove,
+	uint32_t states_to_remove_cnt)
+{
+	set<int> states_to_remove_set;
+	for (uint32_t i = 0; i < states_to_remove_cnt; i++) {
+		states_to_remove_set.insert(states_to_remove[i]);
+	}
+
+	auto mtbdds_after_removal = (MTBDD*) malloc(sizeof(MTBDD) * transition_cnt);
+	for (uint32_t i = 0; i < transition_cnt; i++) {
+		MTBDD patched_mtbdd = remove_states_from_transition(transition_roots[i], states_to_remove_set);
+		mtbdds_after_removal[i] = patched_mtbdd;
+	}
+
+	return mtbdds_after_removal;
 }
