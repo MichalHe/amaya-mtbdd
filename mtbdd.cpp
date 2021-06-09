@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <assert.h>
 #include <unordered_set>
+#include <lace.h>
 #include <utility>
 
 using namespace sylvan;
@@ -338,6 +339,35 @@ TASK_IMPL_3(MTBDD, my_abstract_exists_op, MTBDD, a, MTBDD, b, int, k)
 	return u;
 }
 
+TASK_DECL_2(MTBDD, remove_states_op, MTBDD, uint64_t);
+TASK_IMPL_2(MTBDD, remove_states_op, MTBDD, dd, uint64_t, param) {
+	if (dd == mtbdd_false) return mtbdd_false;
+
+	if (mtbdd_isleaf(dd)) {
+		// Param is ignored, instead use the global variable REMOVE_STATES_OP_PARAM
+		(void) param;
+
+		set<int>* states_to_remove = (set<int>*) (REMOVE_STATES_OP_PARAM);
+		auto tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
+
+		auto new_tds = new Transition_Destination_Set(*tds); // Make leaf value copy.
+		
+		for (auto state : *tds->destination_set) {
+			bool should_be_removed = states_to_remove->find(state) != states_to_remove->end();	
+			if (should_be_removed) new_tds->destination_set->erase(state);
+		}
+
+		if (new_tds->destination_set->empty()) {
+			delete new_tds;
+			return mtbdd_false;
+		}
+		
+		return make_set_leaf(new_tds);
+	}
+
+	return mtbdd_invalid;
+} 
+
 MTBDD remove_states_from_transition(MTBDD dd, const set<int>& states_to_remove) {
 	if (dd == mtbdd_false) return mtbdd_false;
 
@@ -371,6 +401,26 @@ MTBDD remove_states_from_transition(MTBDD dd, const set<int>& states_to_remove) 
 	}
 }
 
+TASK_2(MTBDD, remove_state_from_mtbdd_op, MTBDD, dd, uint64_t, param) {
+	if (dd == mtbdd_false) return mtbdd_false;
+	
+	if (mtbdd_isleaf(dd)) {
+		int state_to_remove = (int) param;
+		auto tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
+
+		auto new_tds = new Transition_Destination_Set(*tds); // Make leaf value copy.
+		new_tds->destination_set->erase(state_to_remove);
+
+		if (new_tds->destination_set->empty()) {
+			delete new_tds;
+			return mtbdd_false;
+		}
+		
+		return make_set_leaf(new_tds);
+	} else {
+		return mtbdd_invalid;
+	}
+};
 
 
 void init_machinery() 
@@ -460,9 +510,33 @@ MTBDD amaya_mtbdd_build_single_terminal(
 	return mtbdd;
 }
 
+TASK_DECL_2(MTBDD, complete_mtbdd_with_trapstate_op, MTBDD, uint64_t);
+TASK_IMPL_2(MTBDD, complete_mtbdd_with_trapstate_op, MTBDD, dd, uint64_t, param)
+{
+	// param is used just to avoid sylvan miss-cachces
+	if (dd == mtbdd_false) {
+		(void) param;
+		auto op_info = (Complete_With_Trapstate_Op_Info*) ADD_TRAPSTATE_OP_PARAM;
+
+		Transition_Destination_Set* tds = new Transition_Destination_Set();
+		tds->automaton_id = op_info->automaton_id;
+		tds->destination_set = new set<int>();
+		tds->destination_set->insert(op_info->trapstate);
+
+		op_info->had_effect = true;
+		return make_set_leaf(tds);
+
+	} else if (mtbdd_isleaf(dd)) {
+		// @TODO: Check that the complete with trapstate does have the same automaton ID as the node 
+		// being returned.
+		return dd;
+	}
+	return mtbdd_invalid;
+}
+
 
 MTBDD amaya_complete_mtbdd_with_trapstate(
-		MTBDD mtbdd, 
+		MTBDD dd, 
 		uint32_t automaton_id, 
 		int trapstate,
 		bool* had_effect) 
@@ -472,10 +546,11 @@ MTBDD amaya_complete_mtbdd_with_trapstate(
 	op_info.trapstate = trapstate;
 	op_info.automaton_id = automaton_id;
 	op_info.had_effect = false;
-
-
+	
+	ADD_TRAPSTATE_OP_PARAM = &op_info;
 	LACE_ME;
-	MTBDD result = perform_mtbdd_completition_with_trapstate(mtbdd, &op_info);
+	MTBDD result = mtbdd_uapply(dd, TASK(complete_mtbdd_with_trapstate_op), ADD_TRAPSTATE_OP_COUNTER);
+	ADD_TRAPSTATE_OP_COUNTER++;
 
 	if (DEBUG_ON) printf("Had the complete with trapstate effect? %s\n", (op_info.had_effect ? "Yes": "No"));
 	*had_effect = op_info.had_effect;
@@ -601,42 +676,6 @@ Transition_Destination_Set* _get_transition_target(
 	}
 }
 
-
-MTBDD perform_mtbdd_completition_with_trapstate(
-		MTBDD root, 
-		Complete_With_Trapstate_Op_Info *op_info) 
-{
-	if (root == mtbdd_false) {
-		Transition_Destination_Set* tds = new Transition_Destination_Set();
-		tds->automaton_id = op_info->automaton_id;
-		tds->destination_set = new set<int>();
-		tds->destination_set->insert(op_info->trapstate);
-
-		op_info->had_effect = true;
-		return make_set_leaf(tds);
-	} else if (mtbdd_isleaf(root)) {
-		// @TODO: Check that the complete with trapstate does have the same automaton ID as the node 
-		// being returned.
-		return root;
-	} else {
-		// Then the root is a binary node (some leaves might be mtbdd_false)
-		// @MemoryMangment: Push refs to the subtrees we are about to visit and then pop them.
-		MTBDD low_subtree = mtbdd_getlow(root);
-		MTBDD high_subtree = mtbdd_gethigh(root);
-
-		MTBDD low_subtree_patched = perform_mtbdd_completition_with_trapstate(low_subtree, op_info); 
-		MTBDD high_subtree_patched = perform_mtbdd_completition_with_trapstate(high_subtree, op_info); 
-
-		if (low_subtree == low_subtree_patched && high_subtree == high_subtree_patched) {
-			// No patching was performed down the tree, return it unchanged.
-			return root;
-		}
-		
-		uint32_t var = mtbdd_getvar(root);
-
-		return mtbdd_makenode(var, low_subtree_patched, high_subtree_patched);
-	}
-}
 
 void amaya_mtbdd_rename_states(
 		MTBDD* mtbdd_roots, 
@@ -1196,16 +1235,22 @@ MTBDD* amaya_remove_states_from_transitions(
 	int* states_to_remove,
 	uint32_t states_to_remove_cnt)
 {
+
+	auto mtbdds_after_removal = (MTBDD*) malloc(sizeof(MTBDD) * transition_cnt);
+	LACE_ME;
+
 	set<int> states_to_remove_set;
 	for (uint32_t i = 0; i < states_to_remove_cnt; i++) {
 		states_to_remove_set.insert(states_to_remove[i]);
 	}
 
-	auto mtbdds_after_removal = (MTBDD*) malloc(sizeof(MTBDD) * transition_cnt);
+	REMOVE_STATES_OP_PARAM = &states_to_remove_set;
 	for (uint32_t i = 0; i < transition_cnt; i++) {
-		MTBDD patched_mtbdd = remove_states_from_transition(transition_roots[i], states_to_remove_set);
-		mtbdds_after_removal[i] = patched_mtbdd;
+		MTBDD result_mtbdd = mtbdd_uapply(transition_roots[i], TASK(remove_states_op), REMOVE_STATES_OP_COUNTER);
+		mtbdds_after_removal[i] = result_mtbdd;
 	}
+
+	REMOVE_STATES_OP_COUNTER++;
 
 	return mtbdds_after_removal;
 }

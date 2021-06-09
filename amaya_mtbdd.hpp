@@ -307,9 +307,12 @@ typedef struct {
 } Amaya_Stats;
 
 void collect_mtbdd_leaves(sylvan::MTBDD root, std::set<sylvan::MTBDD>& dest);
-sylvan::MTBDD perform_mtbdd_completition_with_trapstate(
-		sylvan::MTBDD root, 
-		Complete_With_Trapstate_Op_Info *op_info);
+
+static void* 	REMOVE_STATES_OP_PARAM = NULL;
+static uint64_t REMOVE_STATES_OP_COUNTER = 0;
+
+static void* 	ADD_TRAPSTATE_OP_PARAM = NULL;
+static uint64_t ADD_TRAPSTATE_OP_COUNTER = (1LL << 32);
 
 #ifdef AMAYA_COLLECT_STATS
 #define STATS_INC(field) do { field++; } while (0)
