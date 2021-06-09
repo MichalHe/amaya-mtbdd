@@ -32,19 +32,35 @@
 #define AMAYA_UNION_OP_ID 				0x4000000
 #define AMAYA_INTERSECTION_OP_ID 		0x6000000
 
+#ifndef rotl64
+static inline uint64_t rotl64(uint64_t x, int8_t r) 
+{
+  return ((x << r) | (x >> (64 - r)));
+}
+#endif
+
 extern "C" {
+	typedef int64_t State;
+
 	static uint32_t CUR_PADDING_CLOSURE_ID = 64;
 
 	// Export constants (wrapped)
-	extern const sylvan::MTBDD w_mtbdd_true = sylvan::mtbdd_true;
+	extern const sylvan::MTBDD w_mtbdd_true  = sylvan::mtbdd_true;
 	extern const sylvan::MTBDD w_mtbdd_false = sylvan::mtbdd_false;
 
 
 	// Functions
-	sylvan::MTBDD amaya_unite_mtbdds(sylvan::MTBDD m1, sylvan::MTBDD m2, uint32_t automaton_id);
+	sylvan::MTBDD amaya_unite_mtbdds(
+			sylvan::MTBDD m1, 
+			sylvan::MTBDD m2,
+			uint32_t automaton_id);
+
 	sylvan::MTBDD amaya_project_variables_away(
-			sylvan::MTBDD m, uint32_t *variables, uint32_t var_count);
-	int* amaya_mtbdd_get_transition_target(
+			sylvan::MTBDD m, 
+			uint32_t *variables,
+			uint32_t var_count);
+
+	State* amaya_mtbdd_get_transition_target(
 			sylvan::MTBDD mtbdd, 
 			uint8_t* cube, 
 			uint32_t cube_size, 
@@ -57,20 +73,21 @@ extern "C" {
 		uint8_t*  transition_symbols,  // 2D array of size (variable_count) * transition_symbols_count
 		uint32_t  transition_symbols_count,
 		uint32_t  variable_count,
-		int* 	  destination_set,
+		State*    destination_set,
 		uint32_t  destination_set_size);
 
 	void amaya_mtbdd_rename_states(
 			sylvan::MTBDD* mtbdd_roots, 
-			uint32_t root_count,
-			int* names, // [(old, new), (old, new), (old, new)] 
-			uint32_t name_count);
+			uint32_t 	root_count,
+			State* 		state_name_pairs,  // [(old, new), (old, new), (old, new)] 
+			uint32_t 	state_name_pairs_cnt);
 
 	/**
 	 * @param leaf_ptrs 	If not NULL will point to an array containing pointers 
 	 * 						to transition destinations set of the leaves.
+	 * @returns 			Contents of leaves serialized into array: [leafA1, leafA2, ..., leafAN, leafB1, ...]
 	 */
-	int* amaya_mtbdd_get_leaves(
+	State* amaya_mtbdd_get_leaves(
 			sylvan::MTBDD root, 
 			uint32_t** leaf_sizes,	// OUT, Array containing the sizes of leaves inside dest
 			uint32_t*  leaf_cnt, 	// OUT, Number of leaves in the tree
@@ -85,8 +102,8 @@ extern "C" {
 	 * @param contents_size The length of the array.
 	 */
 	void amaya_replace_leaf_contents_with(
-			void *leaf_tds, 
-			int* new_contents, 
+			void* 	 leaf_tds, 
+			State* 	 new_leaf_contents, 
 			uint32_t contents_size);
 
 	/**
@@ -108,9 +125,9 @@ extern "C" {
 	 * @param post_size (out) The size of the returned array.
 	 * @returns array containing the post set.
 	 */
-	int* amaya_mtbdd_get_state_post(
-			sylvan::MTBDD m, 
-			uint32_t *post_size);
+	State* amaya_mtbdd_get_state_post(
+			sylvan::MTBDD  m, 
+			uint32_t* 	   post_size);
 
 	/**
 	 * Apply the padding closure to a state with transition function `left`, with successor's function `right`.
@@ -121,12 +138,12 @@ extern "C" {
 	 * @returns Boolean indicating whether the left mtbdd was modified (new transitions to final state were added).
 	 */
 	bool amaya_mtbdd_do_pad_closure(
-			int left_state,
-			sylvan::MTBDD left, 
-			int right_state,
-			sylvan::MTBDD right, 
-			int* final_states, 
-			uint32_t final_states_cnt);
+			State 			left_state,
+			sylvan::MTBDD 	left_dd, 
+			State 			right_state,
+			sylvan::MTBDD 	right_dd, 
+			State* 			final_states, 
+			uint32_t 		final_states_cnt);
 
 	/**
 	 * Debug function that allows to retrieve all paths inside the MTBDD and corresponding destinations.
@@ -140,12 +157,11 @@ extern "C" {
 	 */
 	uint8_t* amaya_mtbdd_get_transitions(
 			sylvan::MTBDD root,
-			uint32_t* vars,	
-			uint32_t var_count,
-			uint32_t* symbols_cnt,
-			int** dest_states,
-			uint32_t** dest_states_cnt
-			);
+			uint32_t* 	vars,	
+			uint32_t 	var_count,
+			uint32_t* 	symbols_cnt,
+			State** 	dest_states,
+			uint32_t** 	dest_states_cnt);
 
 	/**
 	 * Calculate the intersection of two mtbdds (Operation on leaves is set intersection).
@@ -159,11 +175,11 @@ extern "C" {
 	 * @returns A MTBDD that contains only transitions that are present in both given MTBDDs.
 	 */
 	sylvan::MTBDD amaya_mtbdd_intersection(
-		sylvan::MTBDD a, 
-		sylvan::MTBDD b,
-        uint32_t result_automaton_id, 
-        int** discovered_states,         // OUT
-        int*  discovered_states_cnt);    // OUT
+			sylvan::MTBDD a, 
+			sylvan::MTBDD b,
+			uint32_t 	result_automaton_id, 
+			State**  	discovered_states,         // OUT
+			uint32_t*  	discovered_states_cnt);    // OUT
 
 	
 	/**
@@ -171,9 +187,9 @@ extern "C" {
 	 * information about which intersection metastates (pairs) were mapped to which values.
 	 */
 	void amaya_begin_intersection(
-			bool should_do_early_prunining, 
-			int* prune_final_states, 
-			uint32_t final_states_cnt);
+			bool 		should_do_early_prunining, 
+			State* 		prune_final_states, 
+			uint32_t 	final_states_cnt);
 
 	/**
 	 * Updates the intersection state information by inserting provided metastates (flat 2d array)
@@ -184,9 +200,9 @@ extern "C" {
 	 * @param cnt 					Count of the metastates.
 	 */
 	void amaya_update_intersection_state(
-			int* metastates, 
-			int* renamed_metastates, 
-			uint32_t cnt);
+			State* 	 metastates, 
+			State* 	 renamed_metastates, 
+			uint32_t metastates_cnt);
 	/**
 	 * Marks the end of intersection and frees up resources.
 	 */
@@ -206,28 +222,21 @@ extern "C" {
 	 * @param out_metastates_cnt   		OUTPUT: The number of located metastates.
 	 * @returns The array containing serialized metastates in the order they were located in the given MTBDDs.
 	 */
-	int* amaya_rename_metastates_to_int(
-			sylvan::MTBDD* roots, 							// MTBDDs resulting from determinization
-			uint32_t root_cnt,								// Root count
-			int metastate_num_range_start,
-			uint32_t resulting_automaton_id,
-			uint32_t** out_metastates_sizes,
-			uint32_t*  out_metastates_cnt
-			);
+	State* amaya_rename_metastates_to_int(
+			sylvan::MTBDD* 	roots, 							// MTBDDs resulting from determinization
+			uint32_t 		root_cnt,
+			State 			start_numbering_metastates_from,
+			uint32_t 		resulting_automaton_id,
+			uint32_t** 		out_metastates_sizes,
+			uint32_t*  		out_metastates_cnt);
+
 
 	sylvan::MTBDD amaya_complete_mtbdd_with_trapstate(
 			sylvan::MTBDD mtbdd,
-			uint32_t automaton_id, 
-			int trapstate,
-			bool* had_effect
-			);
+			uint32_t 	automaton_id, 
+			State 		trapstate,
+			bool* 		had_effect);
 	
-	/**
-	 * The complete-with-trapstate (CwT) operation is a subject of the "faulty" cache results 
-	 */
-	void amaya_begin_complete_with_trapstate();
-	void amaya_end_complete_with_trapstate();
-
 	/**
 	 * Walks the MTBDD building a set of reachable states encoded within the MTBDD. For
 	 * every located state also notes the transition symbol via which can the state be reached.
@@ -241,18 +250,18 @@ extern "C" {
 	 * @param transition_cnt	(OUT) Will contain the number of states located.
 	 * @returns 				The array containing the located states.
 	 */
-	int* amaya_get_state_post_with_some_transition(
+	State* amaya_get_state_post_with_some_transition(
 			sylvan::MTBDD mtbdd,
-			uint32_t* variables,
-			uint32_t variable_cnt,
-			uint8_t** out_symbols,
-			uint32_t* transition_cnt);
+			uint32_t* 	variables,
+			uint32_t 	variable_cnt,
+			uint8_t** 	out_symbols,
+			uint32_t* 	transition_cnt);
 
 	sylvan::MTBDD* amaya_remove_states_from_transitions(
 			sylvan::MTBDD* transition_roots,
-			uint32_t transition_cnt,
-			int* states_to_remove,
-			uint32_t states_to_remove_cnt
+			uint32_t 	transition_cnt,
+			State* 		states_to_remove,
+			uint32_t 	states_to_remove_cnt
 			);
 
 	void shutdown_machinery();
@@ -261,12 +270,12 @@ extern "C" {
 
 class Transition_Destination_Set {
 public:
-	std::set<int>* destination_set;
+	std::set<State>* destination_set;
 	uint32_t automaton_id;
 
 	Transition_Destination_Set();
 	Transition_Destination_Set(const Transition_Destination_Set &other);
-	Transition_Destination_Set(uint32_t automaton_id, std::set<int>* destination_set);
+	Transition_Destination_Set(uint32_t automaton_id, std::set<State>* destination_set);
 	~Transition_Destination_Set();
 	void print_dest_states();
 };
@@ -278,28 +287,28 @@ Transition_Destination_Set* _get_transition_target(
 		uint32_t var_count);
 
 typedef struct {
-	bool had_effect;
-	int left_state; 	// For debug purposes
-	int right_state; 	// Actually used
-	uint32_t final_states_cnt;
-	int *final_states;
+	bool 		had_effect;
+	State 	    left_state; 	// For debug purposes
+	State       right_state; 	// Actually used
+	State*      final_states;
+	uint32_t    final_states_cnt;
 } Pad_Closure_Info;
 
 typedef struct {
-	uint32_t automaton_id;
-	int trapstate;
-	bool had_effect;
+	bool        had_effect;
+	uint32_t    automaton_id;
+	State       trapstate;
 } Complete_With_Trapstate_Op_Info;
 
 typedef struct {
-	uint32_t automaton_id;
-	std::vector<int>* discoveries; // Flat array of [metastate_left, metastate_right, state, ...]
+	uint32_t            automaton_id;
+	std::vector<State>* discoveries; // Flat array of [metastate_left_part, metastate_right_part, state, ...]
 } Intersection_Op_Info;
 
 typedef struct {
-	std::map<std::pair<int, int>, int>* intersection_state_pairs_numbers;
 	bool should_do_early_prunining;
-	std::unordered_set<int>* prune_final_states;
+	std::unordered_set<State>* prune_final_states;
+	std::map<std::pair<State, State>, State>* intersection_state_pairs_numbers;
 } Intersection_State;
 
 typedef struct {
