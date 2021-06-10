@@ -51,7 +51,14 @@ uint64_t 	ADD_TRAPSTATE_OP_COUNTER = (1LL << 32);
 uint32_t 	CUR_PADDING_CLOSURE_ID = 64;
 Intersection_State* intersection_state = NULL;
 
-TASK_IMPL_3(MTBDD, set_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64_t, param)
+/**
+ * Performs an intersection of two given transitions. When performing an intersection the states tuples
+ * that get created must be renamed to an integer right away (to be consistent with the overall design -
+ * states are always integers). This requires that the information about mapping metastates to corresponding
+ * integers will be persistent in between the intersection of individual transition MTBDDs. This is solved
+ * via intersection_state - a global variable.
+ */
+TASK_IMPL_3(MTBDD, transitions_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64_t, param)
 {
     MTBDD a = *pa, b = *pb;
     // Intersection with an empty set (mtbdd_false) is empty set (mtbdd_false)
@@ -118,7 +125,8 @@ TASK_IMPL_3(MTBDD, set_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64_t, para
                     already_discovered_intersection_states->insert(std::make_pair(metastate, state));
 
                     // Update the discoveries local for this intersection, so that the Python
-                    // side knows whats up.
+                    // side knows that we have discovered some new metastate and what number we assigned
+					// to it.
                     intersect_info->discoveries->push_back(left_state);
                     intersect_info->discoveries->push_back(right_state);
                     intersect_info->discoveries->push_back(state);
@@ -139,7 +147,10 @@ TASK_IMPL_3(MTBDD, set_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64_t, para
     return mtbdd_invalid;
 }
 
-TASK_IMPL_3(MTBDD, set_union, MTBDD *, pa, MTBDD *, pb, uint64_t, param)
+/**
+ * Unites the two transition MTBDDs.
+ */
+TASK_IMPL_3(MTBDD, transitions_union_op, MTBDD *, pa, MTBDD *, pb, uint64_t, param)
 {
     MTBDD a = *pa, b = *pb;
     if (a == mtbdd_false && b == mtbdd_false)
@@ -186,19 +197,27 @@ TASK_IMPL_3(MTBDD, set_union, MTBDD *, pa, MTBDD *, pb, uint64_t, param)
 	return sylvan::mtbdd_invalid;
 }
 
-TASK_IMPL_3(MTBDD, my_abstract_exists_op, MTBDD, a, MTBDD, b, int, k)
+/**
+ * ABOUT ABSTRACTIONS:
+ * Abstraction operation defines what should happen when a variable that should be projected
+ * away should happen with the subtrees (one for high, one for low) that should have 
+ * the previous variable as a parent.
+ *
+ * THIS OPERATOR:
+ * When projecting away an alphabet variable we perform union of the two MTBDD trees underneath.
+ *
+ */
+TASK_IMPL_3(MTBDD, project_variable_away_abstract_op, MTBDD, a, MTBDD, b, int, k)
 {
-    // Even if we skipped <k> levels in the mtbdd the k-times applied union()
-    //cout << "----- A ------ " << endl;
-    //mtbdd_fprintdot(stdout, a);
-    //cout << "----- B ------ " << endl;
-    //mtbdd_fprintdot(stdout, b);
-    MTBDD u = mtbdd_applyp(a, b, (uint64_t)-1, TASK(set_union), AMAYA_EXISTS_OPERATION_ID);
-    //cout << "----- Result: ------ " << endl;
-    //mtbdd_fprintdot(stdout, b);
+    MTBDD u = mtbdd_applyp(a, b, (uint64_t)-1, TASK(transitions_union_op), AMAYA_EXISTS_OPERATION_ID);
     return u;
 }
 
+/**
+ * NOTES:
+ * The param is actually not used, since the (const) param would cause the sylvan cache to return
+ * a result from some previous remove-states-op application.
+ */
 TASK_IMPL_2(MTBDD, remove_states_op, MTBDD, dd, uint64_t, param) {
 	if (dd == mtbdd_false) return mtbdd_false;
 
@@ -227,22 +246,27 @@ TASK_IMPL_2(MTBDD, remove_states_op, MTBDD, dd, uint64_t, param) {
 	return mtbdd_invalid;
 } 
 
-TASK_IMPL_2(MTBDD, complete_mtbdd_with_trapstate_op, MTBDD, dd, uint64_t, param)
+/**
+ * Completes the given transition MTBDD with trapstate.
+ *
+ * NOTE:
+ * The param is not used - sylvan cachce problems, see remove_states_op. Instead the information
+ * needed for the operation (like automaton ID and trapstate value) is passed via global variable
+ * ADD_TRAPSTATE_OP_PARAM. This should be used with combination with ADD_TRAPSTATE_OP_COUNTER to 
+ * achieve cache utilization only for the the current completition.
+ */
+TASK_IMPL_2(MTBDD, complete_transition_with_trapstate_op, MTBDD, dd, uint64_t, param)
 {
 	// param is used just to avoid sylvan miss-cachces
 	if (dd == mtbdd_false) {
-		cout << "Writting into had effect!" << endl;
 		(void) param;
 		auto op_info = (Complete_With_Trapstate_Op_Info*) ADD_TRAPSTATE_OP_PARAM;
 
 		Transition_Destination_Set* tds = new Transition_Destination_Set();
-		printf("About to dereference 0x%p\n", ADD_TRAPSTATE_OP_PARAM);
 		tds->automaton_id = op_info->automaton_id;
-		cout << "Done." << endl;
 		tds->destination_set = new set<State>();
 		tds->destination_set->insert(op_info->trapstate);
 
-		cout << "Writting into had effect!" << endl;
 		op_info->had_effect = true;
 		return make_set_leaf(tds);
 	} else if (mtbdd_isleaf(dd)) {
@@ -253,6 +277,11 @@ TASK_IMPL_2(MTBDD, complete_mtbdd_with_trapstate_op, MTBDD, dd, uint64_t, param)
 	return mtbdd_invalid;
 }
 
+/**
+ * Performs pad closure on the two given transitions. Information about which states are final
+ * and (out) information about whether the pad closure had any effect (the left transition was 
+ * modified) are passed via `op_param` (a pointer to Pad_Closure_Info struct).
+ */
 TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, op_param) {
 	MTBDD left = *p_left, right = *p_right;
     if (left == mtbdd_false) {

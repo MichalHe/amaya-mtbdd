@@ -13,7 +13,7 @@
 #define AMAYA_UNION_OP_ID 0x4000000
 #define AMAYA_INTERSECTION_OP_ID 0x6000000
 
-TASK_DECL_3(sylvan::MTBDD, set_intersection_op, sylvan::MTBDD *, sylvan::MTBDD *, uint64_t);
+TASK_DECL_3(sylvan::MTBDD, transitions_intersection_op, sylvan::MTBDD *, sylvan::MTBDD *, uint64_t);
 
 /**
  * The *abstraction* F definition.
@@ -22,12 +22,12 @@ TASK_DECL_3(sylvan::MTBDD, set_intersection_op, sylvan::MTBDD *, sylvan::MTBDD *
  * The final int is a number of variables that are missing when reaching a leaf in MTBDD, but there is 
  * still <k> number of variables in the variable set passed to abstract_apply.
  */
-TASK_DECL_3(sylvan::MTBDD, my_abstract_exists_op, sylvan::MTBDD, sylvan::MTBDD, int);
+TASK_DECL_3(sylvan::MTBDD, project_variable_away_abstract_op, sylvan::MTBDD, sylvan::MTBDD, int);
 TASK_DECL_3(sylvan::MTBDD, pad_closure_op, sylvan::MTBDD *, sylvan::MTBDD *, uint64_t);
-TASK_DECL_3(sylvan::MTBDD, set_union, sylvan::MTBDD *, sylvan::MTBDD *, uint64_t);
+TASK_DECL_3(sylvan::MTBDD, transitions_union_op, sylvan::MTBDD *, sylvan::MTBDD *, uint64_t);
 
 TASK_DECL_2(sylvan::MTBDD, remove_states_op, sylvan::MTBDD, uint64_t);
-TASK_DECL_2(sylvan::MTBDD, complete_mtbdd_with_trapstate_op, sylvan::MTBDD, uint64_t);
+TASK_DECL_2(sylvan::MTBDD, complete_transition_with_trapstate_op, sylvan::MTBDD, uint64_t);
 
 typedef struct
 {

@@ -127,7 +127,7 @@ MTBDD amaya_complete_mtbdd_with_trapstate(
 	LACE_ME;
 	ADD_TRAPSTATE_OP_PARAM = &op_info;
 	printf("Setting ADD_TRAPSTATE_OP_PARAM to address: 0x%p\n", &op_info);
-	MTBDD result = mtbdd_uapply(dd, TASK(complete_mtbdd_with_trapstate_op), ADD_TRAPSTATE_OP_COUNTER);
+	MTBDD result = mtbdd_uapply(dd, TASK(complete_transition_with_trapstate_op), ADD_TRAPSTATE_OP_COUNTER);
 	cout << "Done!" << endl;
 	ADD_TRAPSTATE_OP_COUNTER++;
 
@@ -453,7 +453,7 @@ MTBDD amaya_project_variables_away(MTBDD m, uint32_t *variables, uint32_t var_co
 	
 	// Do the projection itself.
 	LACE_ME;
-	MTBDD result = mtbdd_abstract(m, var_set, TASK(my_abstract_exists_op));
+	MTBDD result = mtbdd_abstract(m, var_set, TASK(project_variable_away_abstract_op));
 	
 	//mtbdd_fprintdot(stdout, result);
 	return result;
@@ -604,7 +604,7 @@ MTBDD amaya_mtbdd_intersection(
     intersect_info.discoveries = new vector<State>();
 
 	LACE_ME;
-	MTBDD result = mtbdd_applyp(a, b, (uint64_t) &intersect_info, TASK(set_intersection_op), AMAYA_INTERSECTION_OP_ID);
+	MTBDD result = mtbdd_applyp(a, b, (uint64_t) &intersect_info, TASK(transitions_intersection_op), AMAYA_INTERSECTION_OP_ID);
     
     
     if (!intersect_info.discoveries->empty()) {
@@ -629,7 +629,7 @@ MTBDD amaya_mtbdd_intersection(
 
 MTBDD amaya_unite_mtbdds(MTBDD m1, MTBDD m2, uint32_t automaton_id) {
 	LACE_ME;
-	MTBDD u = mtbdd_applyp(m1, m2, (uint64_t) automaton_id, TASK(set_union), AMAYA_UNION_OP_ID);
+	MTBDD u = mtbdd_applyp(m1, m2, (uint64_t) automaton_id, TASK(transitions_union_op), AMAYA_UNION_OP_ID);
 	return u;
 }
 
