@@ -1,53 +1,15 @@
-#include <assert.h>
-#include <cstring>
-#include <iterator>
-#include <sstream>
+#ifndef AMAYA_WRAPPER_H
+#define AMAYA_WRAPPER_H
+
+#include "base.hpp"
 #include <sylvan.h>
-#include <sylvan_bdd.h>
-#include <sylvan_common.h>
-#include <sylvan_gmp.h>
-#include <sylvan_mt.h>
-#include <sylvan_mtbdd.h>
-#include <sylvan_int.h>
-#include <sylvan_mtbdd_int.h>
-#include <sylvan_stats.h>
-
-#include <algorithm>
-#include <iostream>
-#include <set>
-#include <map>
-#include <utility>
-#include <vector>
-#include <sstream>
-#include <unordered_set>
-#include <string>
-
-#ifndef AMAYA_MTBDD_H
-#define AMAYA_MTBDD_H
-
-// #define AMAYA_COLLECT_STATS
-
-// The upper 3 bits are used to identify operation.
-#define AMAYA_EXISTS_OPERATION_ID 		0x2000000
-#define AMAYA_UNION_OP_ID 				0x4000000
-#define AMAYA_INTERSECTION_OP_ID 		0x6000000
-
-#ifndef rotl64
-static inline uint64_t rotl64(uint64_t x, int8_t r) 
-{
-  return ((x << r) | (x >> (64 - r)));
-}
-#endif
+#include <inttypes.h>
 
 extern "C" {
-	typedef int64_t State;
-
-	static uint32_t CUR_PADDING_CLOSURE_ID = 64;
 
 	// Export constants (wrapped)
 	extern const sylvan::MTBDD w_mtbdd_true  = sylvan::mtbdd_true;
 	extern const sylvan::MTBDD w_mtbdd_false = sylvan::mtbdd_false;
-
 
 	// Functions
 	sylvan::MTBDD amaya_unite_mtbdds(
@@ -268,66 +230,12 @@ extern "C" {
 	void init_machinery();
 }
 
-class Transition_Destination_Set {
-public:
-	std::set<State>* destination_set;
-	uint32_t automaton_id;
-
-	Transition_Destination_Set();
-	Transition_Destination_Set(const Transition_Destination_Set &other);
-	Transition_Destination_Set(uint32_t automaton_id, std::set<State>* destination_set);
-	~Transition_Destination_Set();
-	void print_dest_states();
-};
-
 Transition_Destination_Set* _get_transition_target(
 		sylvan::MTBDD root, 
 		uint32_t current_variable,
 		uint8_t* variable_assigments, 
 		uint32_t var_count);
 
-typedef struct {
-	bool 		had_effect;
-	State 	    left_state; 	// For debug purposes
-	State       right_state; 	// Actually used
-	State*      final_states;
-	uint32_t    final_states_cnt;
-} Pad_Closure_Info;
-
-typedef struct {
-	bool        had_effect;
-	uint32_t    automaton_id;
-	State       trapstate;
-} Complete_With_Trapstate_Op_Info;
-
-typedef struct {
-	uint32_t            automaton_id;
-	std::vector<State>* discoveries; // Flat array of [metastate_left_part, metastate_right_part, state, ...]
-} Intersection_Op_Info;
-
-typedef struct {
-	bool should_do_early_prunining;
-	std::unordered_set<State>* prune_final_states;
-	std::map<std::pair<State, State>, State>* intersection_state_pairs_numbers;
-} Intersection_State;
-
-typedef struct {
-	uint32_t intersection_states_pruned;
-} Amaya_Stats;
-
 void collect_mtbdd_leaves(sylvan::MTBDD root, std::set<sylvan::MTBDD>& dest);
-
-static void* 	REMOVE_STATES_OP_PARAM = NULL;
-static uint64_t REMOVE_STATES_OP_COUNTER = 0;
-
-static void* 	ADD_TRAPSTATE_OP_PARAM = NULL;
-static uint64_t ADD_TRAPSTATE_OP_COUNTER = (1LL << 32);
-
-#ifdef AMAYA_COLLECT_STATS
-#define STATS_INC(field) do { field++; } while (0)
-#else
-#define STATS_INC(field)
-#endif
-
 
 #endif

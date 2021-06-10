@@ -1,15 +1,22 @@
-#include "amaya_mtbdd.hpp"
+#include "wrapper.hpp"
+
 #include <algorithm>
+#include <sylvan.h>
 #include <sylvan_common.h>
 #include <sylvan_mtbdd.h>
-#include <sylvan_mtbdd_int.h>
 #include <unistd.h>
 #include <assert.h>
 #include <unordered_set>
 #include <lace.h>
 #include <utility>
+#include <iostream>
+
+#include "base.hpp"
+#include "custom_leaf.hpp"
+#include "operations.hpp"
 
 using namespace sylvan;
+
 using std::cout;
 using std::endl;
 using std::set;
@@ -19,321 +26,15 @@ using std::map;
 using std::pair;
 using std::unordered_set;
 
-
-static Intersection_State* intersection_state = NULL;
 static bool DEBUG_ON = false;
-static Amaya_Stats STATS = {0};
-static uint32_t mtbdd_leaf_type_set;
+extern uint64_t mtbdd_leaf_type_set;
 
-Transition_Destination_Set::Transition_Destination_Set() 
-{
-	this->destination_set = NULL;
-	this->automaton_id = 0;
-}
-
-Transition_Destination_Set::Transition_Destination_Set(const Transition_Destination_Set &other) 
-{
-    this->destination_set = new std::set<State>(*other.destination_set); // Do copy
-    this->automaton_id = other.automaton_id;
-}
-
-Transition_Destination_Set::Transition_Destination_Set(uint32_t automaton_id, std::set<State>* destination_set) 
-{
-	this->automaton_id = automaton_id;
-    this->destination_set = destination_set;
-}
-
-Transition_Destination_Set::~Transition_Destination_Set() 
-{
-	if (this->destination_set != NULL) {
-		delete this->destination_set;
-	}
-}
-
-void Transition_Destination_Set::print_dest_states() 
-{
-    int cnt = 1;
-    cout << "{";
-    for (auto state : *this->destination_set) {
-      cout << state;
-      if (cnt < this->destination_set->size()) {
-        cout << ", ";
-      }
-      ++cnt;
-    }
-    cout << "}" << endl;
-}
-
-
-MTBDD
-make_set_leaf(Transition_Destination_Set* value) {
-    MTBDD leaf = mtbdd_makeleaf(mtbdd_leaf_type_set, (uint64_t) value);
-    return leaf;
-}
-
-/**
- * Function is called when a new node is being inserted to the hash table.
- *
- * @param state_set_ptr 	Pointer to an old valid leaf value, which is being
- * copied to the hash table. This means that its a pointer to a poiter to a
- * vector.
- */
-static void mk_set_leaf(uint64_t *target_destination_set_ptr) 
-{
-    Transition_Destination_Set* original_tds = (Transition_Destination_Set *) *target_destination_set_ptr; 
-    Transition_Destination_Set* new_tds = new Transition_Destination_Set(*original_tds); // Copy construct
-
-    // Accorting to the GMP leaf implementation, it should suffice to just write
-    // the new value to the state_set_ptr.
-    *(Transition_Destination_Set **)target_destination_set_ptr = new_tds;
-}
-
-static void destroy_set_leaf(uint64_t leaf_value) 
-{
-    Transition_Destination_Set *tds = (Transition_Destination_Set *)leaf_value;
-    delete tds;
-}
-
-int set_leaf_equals(uint64_t a_ptr, uint64_t b_ptr) 
-{
-    Transition_Destination_Set* a_tds = (Transition_Destination_Set*) a_ptr;
-    Transition_Destination_Set* b_tds = (Transition_Destination_Set*) b_ptr;
-
-    if (a_tds->automaton_id == b_tds->automaton_id) {
-        if ((*a_tds->destination_set) == (*b_tds->destination_set)) {
-            return true;
-        };
-    }
-    return false;
-}
-
-static uint64_t set_leaf_hash(const uint64_t contents_ptr,
-                              const uint64_t seed) 
-{
-    Transition_Destination_Set* tds = (Transition_Destination_Set*) contents_ptr;
-    const uint64_t prime = 1099511628211;
-    uint64_t hash = seed;
-
-    for (auto i : *tds->destination_set) {
-        hash = hash ^ i;
-        hash = rotl64(hash, 47);
-        hash = hash * prime;
-    }
-	
-	// Hash the automaton id too
-	hash = hash ^ tds->automaton_id;
-	hash = rotl64(hash, 31);
-	hash = hash * prime;
-
-    return hash;
-}
-
-static char *set_leaf_to_str(int comp, uint64_t leaf_val, char *buf, size_t buflen){
-	(void) comp;
-	std::stringstream ss;
-	auto tds = (Transition_Destination_Set*) leaf_val;
-    ss << "#" <<tds->automaton_id << " ";
-	ss << "{";
-	uint32_t cnt = 1;
-	for (auto i : *tds->destination_set) {
-		ss << i;
-		if (cnt < tds->destination_set->size()) {
-			ss << ",";
-		}
-		cnt++;
-	}
-	ss << "}";
-
-	const std::string str(ss.str());
-	
-	// Does the resulting string fits into the provided buffer?
-	const size_t required_buf_size = str.size() + 1; // With nullbyte
-	if (required_buf_size <= buflen) {
-		const char *cstr = str.c_str();	
-		std::memcpy(buf, cstr, sizeof(char) * required_buf_size);
-		return buf;
-	} else {
-		char *new_buf = (char *) malloc(sizeof(char) * required_buf_size);
-		std::memcpy(new_buf, str.c_str(), sizeof(char) * required_buf_size);
-		return new_buf;
-	}
-}
-
-TASK_DECL_3(MTBDD, set_union, MTBDD*, MTBDD*, uint64_t);
-TASK_IMPL_3(MTBDD, set_union, MTBDD*, pa, MTBDD*, pb, uint64_t, param) 
-{
-  MTBDD a = *pa, b = *pb;
-  if (a == mtbdd_false && b == mtbdd_false) return mtbdd_false;
-
-  // When one leaf is empty set (false),
-  // the algorithm should return all reachable states for the other one
-  if (a == mtbdd_false) {
-    return b; 
-  }
-
-  if (b == mtbdd_false) {
-	return a; 
-  }
-  // If both are leaves, we calculate union
-  if (mtbdd_isleaf(a) && mtbdd_isleaf(b)) {
-    auto& tds_a = *((Transition_Destination_Set*) mtbdd_getvalue(a));
-    auto& tds_b = *((Transition_Destination_Set*) mtbdd_getvalue(b));
-		
-	// If the passed parameter is missing (-1) that means that we should derive it 
-	// from the leaves (TDS). This can happen when padding closure is performed, as
-	// the leaf automaton id is not modified.
-	if (param == -1) {
-		assert(tds_a.automaton_id == tds_b.automaton_id);
-		param = (uint32_t) tds_a.automaton_id;
-	}
-
-    std::set<State> *union_set = new std::set<State>();
-    std::set_union(
-            tds_a.destination_set->begin(), tds_a.destination_set->end(),
-            tds_b.destination_set->begin(), tds_b.destination_set->end(),
-            std::inserter(*union_set, union_set->begin()));
-
-    Transition_Destination_Set* union_tds = new Transition_Destination_Set((uint32_t) param, union_set);
-
-    MTBDD union_leaf = make_set_leaf(union_tds);  // Wrap the TDS with a MTBDD leaf.
-    return union_leaf;
-  }
-
-  // TODO: Perform pointer swap here, so the cache would be utilized
-  // (commutative).
-  // TODO: Utilize operation cache.
-  return mtbdd_invalid;
-}
-
-TASK_DECL_3(MTBDD, set_intersection_op, MTBDD *, MTBDD *, uint64_t);
-TASK_IMPL_3(MTBDD, set_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64_t, param) 
-{
-    MTBDD a = *pa, b = *pb;
-	// Intersection with an empty set (mtbdd_false) is empty set (mtbdd_false)
-    if (a == mtbdd_false || b == mtbdd_false) {
-        return mtbdd_false;
-    }
-
-    // If both are leaves calculate intersection
-    if (mtbdd_isleaf(a) && mtbdd_isleaf(b)) {
-		auto intersect_info = (Intersection_Op_Info*) param;
-
-        auto& tds_a = *((Transition_Destination_Set*) mtbdd_getvalue(a));
-        auto& tds_b = *((Transition_Destination_Set*) mtbdd_getvalue(b));
-
-        auto left_states  = tds_a.destination_set;  
-        auto right_states = tds_b.destination_set;  
-
-		if (left_states->empty() || right_states->empty()) {
-			return mtbdd_false;
-		}
-
-        // Calculate cross product
-        pair<State, State> metastate; 
-        State state;
-
-        auto intersection_leaf_states = new std::set<State>();
-		
-		auto already_discovered_intersection_states = intersection_state->intersection_state_pairs_numbers;
-
-        for (auto left_state : *left_states) {
-            for (auto right_state : *right_states) {
-                metastate = std::make_pair(left_state, right_state);
-                auto pos = already_discovered_intersection_states->find(metastate);
-                bool contains_metastate = (pos != already_discovered_intersection_states->end());
-                if (contains_metastate) {
-                    state = pos->second;
-                } else {
-                    // We have discovered a new state.
-					// Check (if early pruning is on) whether the state should be pruned.  
-					if (intersection_state->should_do_early_prunining) {
-						const bool is_left_in_pruned = (intersection_state->prune_final_states->find(left_state) != intersection_state->prune_final_states->end());
-						const bool is_right_in_pruned = (intersection_state->prune_final_states->find(right_state) != intersection_state->prune_final_states->end());
-						
-						// Pruning is performed only when exactly one of the states is in the pruned set
-						if (is_left_in_pruned != is_right_in_pruned) {
-							// The state should be pruned
-							STATS_INC(STATS.intersection_states_pruned);
-							continue;
-						}
-					}
-
-                    // Update the global intersection state, so in the future every such
-                    // state will get the same integer
-                    state = already_discovered_intersection_states->size();
-                    already_discovered_intersection_states->insert(std::make_pair(metastate, state));
-
-                    // Update the discoveries local for this intersection, so that the Python
-                    // side knows whats up.
-                    intersect_info->discoveries->push_back(left_state);
-                    intersect_info->discoveries->push_back(right_state);
-                    intersect_info->discoveries->push_back(state);
-                }
-
-                intersection_leaf_states->insert(state); 
-            }
-        }
-         
-        auto intersection_tds = new Transition_Destination_Set(intersect_info->automaton_id, intersection_leaf_states);
-        MTBDD intersection_leaf = make_set_leaf(intersection_tds);
-        return intersection_leaf;
-    }
-
-    // TODO: Perform pointer swap here, so the cache would be utilized
-    // (commutative).
-    // TODO: Utilize operation cache.
-    return mtbdd_invalid;
-}
-
-/**
- * The *abstraction* F definition.
- * Task returns a MTBDD. Task accepts two MTBDDs - left and right child (subtree) of a
- * node for variable <v> specified in variable set passed to abstract_apply with this operator.
- * The final int is a number of variables that are missing when reaching a leaf in MTBDD, but there is 
- * still <k> number of variables in the variable set passed to abstract_apply.
- */
-TASK_DECL_3(MTBDD, my_abstract_exists_op, MTBDD, MTBDD, int);
-TASK_IMPL_3(MTBDD, my_abstract_exists_op, MTBDD, a, MTBDD, b, int, k) 
-{
-	// Even if we skipped <k> levels in the mtbdd the k-times applied union()
-	//cout << "----- A ------ " << endl;
-	//mtbdd_fprintdot(stdout, a);
-	//cout << "----- B ------ " << endl;
-	//mtbdd_fprintdot(stdout, b);
-	MTBDD u = mtbdd_applyp(a, b, (uint64_t) -1, TASK(set_union), AMAYA_EXISTS_OPERATION_ID);
-	//cout << "----- Result: ------ " << endl;
-	//mtbdd_fprintdot(stdout, b);
-	return u;
-}
-
-TASK_DECL_2(MTBDD, remove_states_op, MTBDD, uint64_t);
-TASK_IMPL_2(MTBDD, remove_states_op, MTBDD, dd, uint64_t, param) {
-	if (dd == mtbdd_false) return mtbdd_false;
-
-	if (mtbdd_isleaf(dd)) {
-		// Param is ignored, instead use the global variable REMOVE_STATES_OP_PARAM
-		(void) param;
-
-		auto states_to_remove = (set<State>*) (REMOVE_STATES_OP_PARAM);
-		auto tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
-
-		auto new_tds = new Transition_Destination_Set(*tds); // Make leaf value copy.
-		
-		for (auto state : *tds->destination_set) {
-			bool should_be_removed = states_to_remove->find(state) != states_to_remove->end();	
-			if (should_be_removed) new_tds->destination_set->erase(state);
-		}
-
-		if (new_tds->destination_set->empty()) {
-			delete new_tds;
-			return mtbdd_false;
-		}
-		
-		return make_set_leaf(new_tds);
-	}
-
-	return mtbdd_invalid;
-} 
+extern void* 		REMOVE_STATES_OP_PARAM;
+extern uint64_t 	REMOVE_STATES_OP_COUNTER;
+extern void*		ADD_TRAPSTATE_OP_PARAM;
+extern uint64_t 	ADD_TRAPSTATE_OP_COUNTER;
+extern uint32_t 	CUR_PADDING_CLOSURE_ID;
+extern Intersection_State* intersection_state;
 
 void init_machinery() 
 {
@@ -411,30 +112,6 @@ MTBDD amaya_mtbdd_build_single_terminal(
 	return mtbdd;
 }
 
-TASK_DECL_2(MTBDD, complete_mtbdd_with_trapstate_op, MTBDD, uint64_t);
-TASK_IMPL_2(MTBDD, complete_mtbdd_with_trapstate_op, MTBDD, dd, uint64_t, param)
-{
-	// param is used just to avoid sylvan miss-cachces
-	if (dd == mtbdd_false) {
-		(void) param;
-		auto op_info = (Complete_With_Trapstate_Op_Info*) ADD_TRAPSTATE_OP_PARAM;
-
-		Transition_Destination_Set* tds = new Transition_Destination_Set();
-		tds->automaton_id = op_info->automaton_id;
-		tds->destination_set = new set<State>();
-		tds->destination_set->insert(op_info->trapstate);
-
-		op_info->had_effect = true;
-		return make_set_leaf(tds);
-	} else if (mtbdd_isleaf(dd)) {
-		// @TODO: Check that the complete with trapstate does have the same automaton ID as the node 
-		// being returned.
-		return dd;
-	}
-	return mtbdd_invalid;
-}
-
-
 MTBDD amaya_complete_mtbdd_with_trapstate(
 		MTBDD 	 dd, 
 		uint32_t automaton_id, 
@@ -447,44 +124,16 @@ MTBDD amaya_complete_mtbdd_with_trapstate(
 	op_info.automaton_id = automaton_id;
 	op_info.had_effect = false;
 	
-	ADD_TRAPSTATE_OP_PARAM = &op_info;
 	LACE_ME;
+	ADD_TRAPSTATE_OP_PARAM = &op_info;
+	printf("Setting ADD_TRAPSTATE_OP_PARAM to address: 0x%p\n", &op_info);
 	MTBDD result = mtbdd_uapply(dd, TASK(complete_mtbdd_with_trapstate_op), ADD_TRAPSTATE_OP_COUNTER);
+	cout << "Done!" << endl;
 	ADD_TRAPSTATE_OP_COUNTER++;
 
 	if (DEBUG_ON) printf("Had the complete with trapstate effect? %s\n", (op_info.had_effect ? "Yes": "No"));
 	*had_effect = op_info.had_effect;
 	return result;
-}
-
-State* amaya_mtbdd_get_transition_target(
-        MTBDD 		mtbdd, 
-        uint8_t* 	cube, 
-        uint32_t 	cube_size, 
-        uint32_t* 	result_size) 
-{
-
-	auto search_result_tds = _get_transition_target(mtbdd, 1, cube, cube_size);
-	if (search_result_tds == NULL)
-	{
-		*result_size = 0;
-		return NULL;
-	} else {
-		const uint32_t rs = search_result_tds->destination_set->size();
-		*result_size = rs;
-		auto result_arr = (State*) malloc(sizeof(uint32_t) * rs);
-		uint32_t i = 0;
-		for (auto state : *search_result_tds->destination_set) 
-		{
-			result_arr[i++] = state;
-		}
-		return result_arr;
-	}
-}
-
-void amaya_do_free(void *ptr)
-{
-	free(ptr);
 }
 
 Transition_Destination_Set* _get_transition_target(
@@ -575,6 +224,56 @@ Transition_Destination_Set* _get_transition_target(
 	}
 }
 
+State* amaya_mtbdd_get_transition_target(
+        MTBDD 		mtbdd, 
+        uint8_t* 	cube, 
+        uint32_t 	cube_size, 
+        uint32_t* 	result_size) 
+{
+
+	auto search_result_tds = _get_transition_target(mtbdd, 1, cube, cube_size);
+	if (search_result_tds == NULL)
+	{
+		*result_size = 0;
+		return NULL;
+	} else {
+		const uint32_t rs = search_result_tds->destination_set->size();
+		*result_size = rs;
+		auto result_arr = (State*) malloc(sizeof(uint32_t) * rs);
+		uint32_t i = 0;
+		for (auto state : *search_result_tds->destination_set) 
+		{
+			result_arr[i++] = state;
+		}
+		return result_arr;
+	}
+}
+
+void amaya_do_free(void *ptr)
+{
+	free(ptr);
+}
+
+
+void collect_mtbdd_leaves(MTBDD root, std::set<MTBDD>& dest)
+{
+	LACE_ME;
+	MTBDD support = mtbdd_support(root);
+	uint32_t support_size = mtbdd_set_count(support);
+		
+	// Stores the tree path to the leaf
+	uint8_t* arr = (uint8_t*) malloc(sizeof(uint8_t) * support_size);
+
+	MTBDD leaf = mtbdd_enum_first(root, support, arr, NULL);
+	
+ 	while (leaf != mtbdd_false)
+	{
+		dest.insert(leaf);
+ 	    leaf = mtbdd_enum_next(root, support, arr, NULL);
+ 	}
+
+	free(arr);
+}
 
 void amaya_mtbdd_rename_states(
 		MTBDD* 		mtbdd_roots, 
@@ -618,25 +317,6 @@ void amaya_mtbdd_rename_states(
 	}
 }
 
-void collect_mtbdd_leaves(MTBDD root, std::set<MTBDD>& dest)
-{
-	LACE_ME;
-	MTBDD support = mtbdd_support(root);
-	uint32_t support_size = mtbdd_set_count(support);
-		
-	// Stores the tree path to the leaf
-	uint8_t* arr = (uint8_t*) malloc(sizeof(uint8_t) * support_size);
-
-	MTBDD leaf = mtbdd_enum_first(root, support, arr, NULL);
-	
- 	while (leaf != mtbdd_false)
-	{
-		dest.insert(leaf);
- 	    leaf = mtbdd_enum_next(root, support, arr, NULL);
- 	}
-
-	free(arr);
-}
 
 State* amaya_mtbdd_get_leaves(
 		MTBDD root, 
@@ -802,60 +482,6 @@ State* amaya_mtbdd_get_state_post(MTBDD dd, uint32_t *post_size)
 
 	*post_size = state_post_set.size();
 	return result;
-}
-
-
-TASK_DECL_3(MTBDD, pad_closure_op, MTBDD *, MTBDD *, uint64_t);
-TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, op_param) {
-	MTBDD left = *p_left, right = *p_right;
-    if (left == mtbdd_false) {
-        return right; // Padding closure has no effect, when one mtbdd path leads to nothing
-    }
-    if (right == mtbdd_false) {
-        return left; // Same here
-    }
-    // If both are non-false leaves, we can try doing the actual padding closure
-    if (mtbdd_isleaf(left) && mtbdd_isleaf(right)) {
-        auto left_tds  = (Transition_Destination_Set*) mtbdd_getvalue(left);
-        auto right_tds = (Transition_Destination_Set*) mtbdd_getvalue(right);
-
-	    auto pci = (Pad_Closure_Info*) op_param;
-
-		// Check whether the transition destination state even leads the the right state (might not)
-		if (left_tds->destination_set->find(pci->right_state) == left_tds->destination_set->end()) {
-			// Does not lead to the right state, therefore cannot propagate padding.
-			return left; 
-		}
-
-	    bool is_final;
-	    for (State rs: *right_tds->destination_set)
-	    {
-			is_final = false;
-
-			// Is the current right state final?
-			for (uint32_t i = 0; i < pci->final_states_cnt; i++) {
-				if (rs == pci->final_states[i]) {
-					is_final = true;
-					break; // We have the information we required, we don't need to iterate further.
-				}
-			}
-			
-			if (is_final) {
-				const bool is_missing_from_left = left_tds->destination_set->find(rs) == left_tds->destination_set->end();
-				if (is_missing_from_left) {
-					// We've located a state that is final, and is not in left, pad closure adds it to the left states.
-					left_tds->destination_set->insert(rs); // The actual pad closure
-					pci->had_effect = true; // To utilize the python cache
-				}
-			}
-	    }
-
-		// The pad closure is in place modification 
-		// (no new MTBDD is created, only leaf states are modified)
-        return left;
-    }
-
-    return mtbdd_invalid;
 }
 
 
