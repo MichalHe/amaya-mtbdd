@@ -49,7 +49,7 @@ void init_machinery()
     // When the TASK parameter (the middle one) is set to be NULL, it does not spawn a new thread
     // and instead uses the current thread for all tasks (makes it possible to call from python)
     lace_startup(0, NULL, NULL); 
-    sylvan_set_sizes(1LL << 23, 1LL << 27, 1LL << 23, 1LL << 27);
+    sylvan_set_sizes(1LL << 24, 1LL << 28, 1LL << 24, 1LL << 28);
     sylvan_init_package();
     sylvan_init_mtbdd();
 
@@ -87,8 +87,8 @@ MTBDD amaya_mtbdd_build_single_terminal(
 	for (uint32_t i=1; i <= variable_count; i++) {
 		variables = mtbdd_set_add(variables, i); // Variables are numbered from 1
 	}
-    
 	// Construct the destination set
+	
 	auto leaf_state_set = new std::set<State>();
 	for (uint32_t i = 0; i < destination_set_size; i++) {
 		leaf_state_set->insert(destination_set[i]);
@@ -126,9 +126,7 @@ MTBDD amaya_complete_mtbdd_with_trapstate(
 	
 	LACE_ME;
 	ADD_TRAPSTATE_OP_PARAM = &op_info;
-	printf("Setting ADD_TRAPSTATE_OP_PARAM to address: 0x%p\n", &op_info);
 	MTBDD result = mtbdd_uapply(dd, TASK(complete_transition_with_trapstate_op), ADD_TRAPSTATE_OP_COUNTER);
-	cout << "Done!" << endl;
 	ADD_TRAPSTATE_OP_COUNTER++;
 
 	if (DEBUG_ON) printf("Had the complete with trapstate effect? %s\n", (op_info.had_effect ? "Yes": "No"));
