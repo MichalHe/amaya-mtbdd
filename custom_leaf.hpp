@@ -30,8 +30,4 @@ set_leaf_hash(const uint64_t contents_ptr, const uint64_t seed);
 char *
 set_leaf_to_str(int comp, uint64_t leaf_val, char *buf, size_t buflen);
 
-extern "C" {
-	static uint64_t mtbdd_leaf_type_set;
-}
-
 #endif

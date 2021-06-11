@@ -10,6 +10,8 @@
 #include <sstream>
 #include <sylvan.h>
 
+uint64_t mtbdd_leaf_type_set;
+
 sylvan::MTBDD
 make_set_leaf(Transition_Destination_Set* value) {
 	sylvan::MTBDD leaf = sylvan::mtbdd_makeleaf(mtbdd_leaf_type_set, (uint64_t) value);
