@@ -38,7 +38,7 @@ extern "C" {
 		State*    destination_set,
 		uint32_t  destination_set_size);
 
-	void amaya_mtbdd_rename_states(
+	sylvan::MTBDD* amaya_mtbdd_rename_states(
 			sylvan::MTBDD* mtbdd_roots, 
 			uint32_t 	root_count,
 			State* 		state_name_pairs,  // [(old, new), (old, new), (old, new)] 

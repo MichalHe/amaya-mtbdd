@@ -28,6 +28,7 @@ TASK_DECL_3(sylvan::MTBDD, transitions_union_op, sylvan::MTBDD *, sylvan::MTBDD 
 
 TASK_DECL_2(sylvan::MTBDD, remove_states_op, sylvan::MTBDD, uint64_t);
 TASK_DECL_2(sylvan::MTBDD, complete_transition_with_trapstate_op, sylvan::MTBDD, uint64_t);
+TASK_DECL_2(sylvan::MTBDD, rename_states_op, sylvan::MTBDD, uint64_t);
 
 typedef struct
 {
@@ -57,5 +58,10 @@ typedef struct
 	std::unordered_set<State> *prune_final_states;
 	std::map<std::pair<State, State>, State> *intersection_state_pairs_numbers;
 } Intersection_State;
+
+typedef struct
+{
+	std::map<State, State> *states_rename_map;
+} State_Rename_Op_Info;
 
 #endif

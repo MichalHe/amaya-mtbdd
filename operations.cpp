@@ -40,16 +40,21 @@ using sylvan::mtbdd_getvalue;
 using sylvan::mtbdd_invalid;
 using sylvan::mtbdd_applyp_CALL;
 
+extern uint64_t mtbdd_leaf_type_set;
+
 /**
  * Global variables:
  */
-
 void*		REMOVE_STATES_OP_PARAM = NULL;
 uint64_t 	REMOVE_STATES_OP_COUNTER = 0;
 void*		ADD_TRAPSTATE_OP_PARAM = NULL;
-uint64_t 	ADD_TRAPSTATE_OP_COUNTER = (1LL << 32);
 uint32_t 	CUR_PADDING_CLOSURE_ID = 64;
+
 Intersection_State* intersection_state = NULL;
+State_Rename_Op_Info *STATE_RENAME_OP_PARAM = NULL;
+
+uint64_t 	ADD_TRAPSTATE_OP_COUNTER = 	(1LL << 32);
+uint64_t 	STATE_RENAME_OP_COUNTER = (1LL << 33);
 
 /**
  * Performs an intersection of two given transitions. When performing an intersection the states tuples
@@ -332,4 +337,33 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
     }
 
     return mtbdd_invalid;
+}
+
+
+TASK_IMPL_2(MTBDD, rename_states_op, MTBDD, dd, uint64_t, param) {
+	if (dd == mtbdd_false) return mtbdd_false;
+
+	if (mtbdd_isleaf(dd)) {
+		(void) param;
+		auto state_rename_info = STATE_RENAME_OP_PARAM;
+		auto old_tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
+		auto new_tds = new Transition_Destination_Set();
+
+		new_tds->automaton_id = old_tds->automaton_id;
+		auto renamed_leaf_contents = new set<State>();
+		
+		for (auto state : *old_tds->destination_set) {
+			auto new_name_it = state_rename_info->states_rename_map->find(state);
+			assert(new_name_it != state_rename_info->states_rename_map->end());
+
+			auto new_state_name = new_name_it->second;
+			renamed_leaf_contents->insert(new_state_name);
+		}
+
+		new_tds->destination_set = renamed_leaf_contents;
+
+		return mtbdd_makeleaf(mtbdd_leaf_type_set, (uint64_t) new_tds);
+	}
+
+	return mtbdd_invalid;
 }

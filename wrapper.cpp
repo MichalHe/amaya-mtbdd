@@ -36,6 +36,9 @@ extern uint64_t 	ADD_TRAPSTATE_OP_COUNTER;
 extern uint32_t 	CUR_PADDING_CLOSURE_ID;
 extern Intersection_State* intersection_state;
 
+extern uint64_t 				STATE_RENAME_OP_COUNTER;
+extern State_Rename_Op_Info 	*STATE_RENAME_OP_PARAM;
+
 void init_machinery() 
 {
     int n_workers = 1;
@@ -49,7 +52,7 @@ void init_machinery()
     // When the TASK parameter (the middle one) is set to be NULL, it does not spawn a new thread
     // and instead uses the current thread for all tasks (makes it possible to call from python)
     lace_startup(0, NULL, NULL); 
-    sylvan_set_sizes(1LL << 24, 1LL << 28, 1LL << 24, 1LL << 28);
+    sylvan_set_sizes(1LL << 23, 1LL << 27, 1LL << 23, 1LL << 27);
     sylvan_init_package();
     sylvan_init_mtbdd();
 
@@ -273,46 +276,35 @@ void collect_mtbdd_leaves(MTBDD root, std::set<MTBDD>& dest)
 	free(arr);
 }
 
-void amaya_mtbdd_rename_states(
+MTBDD* amaya_mtbdd_rename_states(
 		MTBDD* 		mtbdd_roots, 
 		uint32_t 	root_count,
 		State* 		names, // [(old, new), (old, new), (old, new)] 
 		uint32_t 	name_count)
 {
-	State old_state_name, new_state_name;
+	State old_state, new_state;
 
-	 // No MTBDD interference can happen, since the leaves contain automaton_id, and therefore
-	 // each MTBDD has unique leaves.
-	std::set<MTBDD> leaves {};
-	for (uint32_t i = 0; i < root_count; i++) {
-		// This only inserts them into leaves, does not clear the container
-		collect_mtbdd_leaves(mtbdd_roots[i], leaves); 
-	}
-
-	if (leaves.empty()) {
-		return;
+	std::map<State, State> state_names_map;
+	for (uint32_t i = 0; i < name_count; i++) {
+		old_state = names[2*i];
+		new_state = names[2*i + 1];
+		state_names_map.insert(std::make_pair(old_state, new_state));
 	}
 	
-	for (auto leaf : leaves) {
+	State_Rename_Op_Info op_info = {0};
+	op_info.states_rename_map = &state_names_map;
+	STATE_RENAME_OP_PARAM = &op_info;	
 
-		auto tds = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
-		auto new_leaf_contents = new std::set<State>();
+	auto renamed_mtbdds = (MTBDD *) malloc(sizeof(MTBDD) * root_count);
+	assert(renamed_mtbdds != NULL);
 
-		for (uint32_t i = 0; i < name_count; i++) {
-
-			old_state_name = names[2*i];
-			new_state_name = names[2*i + 1];
-
-			bool is_in_leaf = (tds->destination_set->find(old_state_name) != tds->destination_set->end());
-
-			if (is_in_leaf) {
-				new_leaf_contents->insert(new_state_name);
-			}
-		}
-        
-		delete tds->destination_set;
-		tds->destination_set = new_leaf_contents;
+	LACE_ME;
+	for (uint32_t i = 0; i < root_count; i++) {
+		renamed_mtbdds[i] = mtbdd_uapply(mtbdd_roots[i], TASK(rename_states_op), STATE_RENAME_OP_COUNTER);
 	}
+	STATE_RENAME_OP_COUNTER += 1;
+
+	return renamed_mtbdds;
 }
 
 
