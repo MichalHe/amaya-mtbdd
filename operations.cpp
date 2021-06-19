@@ -52,9 +52,11 @@ uint32_t 	CUR_PADDING_CLOSURE_ID = 64;
 
 Intersection_State* intersection_state = NULL;
 State_Rename_Op_Info *STATE_RENAME_OP_PARAM = NULL;
+Transform_Metastates_To_Ints_State *TRANSFORM_METASTATES_TO_INTS_STATE = NULL;
 
-uint64_t 	ADD_TRAPSTATE_OP_COUNTER = 	(1LL << 32);
+uint64_t 	ADD_TRAPSTATE_OP_COUNTER = (1LL << 32);
 uint64_t 	STATE_RENAME_OP_COUNTER = (1LL << 33);
+uint64_t    TRANSFORM_METASTATES_TO_INTS_COUNTER = (1LL << 34);
 
 /**
  * Performs an intersection of two given transitions. When performing an intersection the states tuples
@@ -183,7 +185,7 @@ TASK_IMPL_3(MTBDD, transitions_union_op, MTBDD *, pa, MTBDD *, pb, uint64_t, par
         // the leaf automaton id is not modified.
         if (param == -1)
         {
-            assert(tds_a.automaton_id == tds_b.automaton_id);
+            //assert(tds_a.automaton_id == tds_b.automaton_id);
             param = (uint32_t)tds_a.automaton_id;
         }
 		
@@ -361,6 +363,44 @@ TASK_IMPL_2(MTBDD, rename_states_op, MTBDD, dd, uint64_t, param) {
 		}
 
 		new_tds->destination_set = renamed_leaf_contents;
+
+		return mtbdd_makeleaf(mtbdd_leaf_type_set, (uint64_t) new_tds);
+	}
+
+	return mtbdd_invalid;
+}
+
+
+TASK_IMPL_2(MTBDD, transform_metastates_to_ints_op, MTBDD, dd, uint64_t, param) {
+	if (dd == mtbdd_false) return mtbdd_false;
+
+	if (mtbdd_isleaf(dd)) {
+		(void) param;
+
+		auto transform_state = TRANSFORM_METASTATES_TO_INTS_STATE;
+		auto old_tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
+		auto new_tds = new Transition_Destination_Set();
+
+		new_tds->automaton_id = old_tds->automaton_id;
+
+		// We got here, because no leaf with the same value was found in the cache
+		State metastate_state_number = transform_state->first_available_state_number++; // Increment it right away
+
+		// @Warn: This relies on the fact that the state sets are represented in a canoical fashion - the std::set
+		// 		  keeps them sorted. That means that two metastates e.g {1, 2, 3} and {3, 2, 1} will get always hashed to the
+		// 		  same value --- Otherwise the same metastates would get more than 1 ID which would cause troubles.
+
+		auto transformed_leaf_contents = new set<State>();
+		transformed_leaf_contents->insert(metastate_state_number);
+		new_tds->destination_set = transformed_leaf_contents;
+
+		// Serialize the current metastate, so that the python side will get notified about the created mapping.
+		for (auto state : *old_tds->destination_set) {
+			transform_state->serialized_metastates->push_back(state);
+		}
+		
+		transform_state->metastates_sizes->push_back(old_tds->destination_set->size());	
+		transform_state->metastates_cnt += 1;
 
 		return mtbdd_makeleaf(mtbdd_leaf_type_set, (uint64_t) new_tds);
 	}

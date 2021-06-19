@@ -29,6 +29,7 @@ TASK_DECL_3(sylvan::MTBDD, transitions_union_op, sylvan::MTBDD *, sylvan::MTBDD 
 TASK_DECL_2(sylvan::MTBDD, remove_states_op, sylvan::MTBDD, uint64_t);
 TASK_DECL_2(sylvan::MTBDD, complete_transition_with_trapstate_op, sylvan::MTBDD, uint64_t);
 TASK_DECL_2(sylvan::MTBDD, rename_states_op, sylvan::MTBDD, uint64_t);
+TASK_DECL_2(sylvan::MTBDD, transform_metastates_to_ints_op, sylvan::MTBDD, uint64_t);
 
 typedef struct
 {
@@ -63,5 +64,13 @@ typedef struct
 {
 	std::map<State, State> *states_rename_map;
 } State_Rename_Op_Info;
+
+typedef struct
+{
+	std::vector<State>* serialized_metastates;
+	std::vector<uint64_t>* metastates_sizes;
+	uint64_t metastates_cnt;
+	State first_available_state_number;
+} Transform_Metastates_To_Ints_State;
 
 #endif

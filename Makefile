@@ -1,6 +1,6 @@
 CC=gcc
 CXX=g++
-CFLAGS=$(shell pkg-config --libs sylvan) -g -shared -fPIC
+CFLAGS=$(shell pkg-config --libs sylvan) -O2 -shared -fPIC
 
 amaya-mtbdd.so: wrapper.o operations.o custom_leaf.o base.o
 	$(CXX) $(CFLAGS) -o $@ $^

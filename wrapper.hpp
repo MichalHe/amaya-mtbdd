@@ -182,15 +182,17 @@ extern "C" {
 	 * @param resulting_automaton_id  	The ID of the resulting automaton.
 	 * @param out_metastates_sizes   	OUTPUT: The sized of the located metastates.
 	 * @param out_metastates_cnt   		OUTPUT: The number of located metastates.
-	 * @returns The array containing serialized metastates in the order they were located in the given MTBDDs.
+	 * @param out_serialized_metastates OUTPUT: The metastates located serialized one after another.
+	 * @returns The transformed mtbdds.
 	 */
-	State* amaya_rename_metastates_to_int(
-			sylvan::MTBDD* 	roots, 							// MTBDDs resulting from determinization
-			uint32_t 		root_cnt,
-			State 			start_numbering_metastates_from,
-			uint32_t 		resulting_automaton_id,
-			uint32_t** 		out_metastates_sizes,
-			uint32_t*  		out_metastates_cnt);
+	sylvan::MTBDD* amaya_rename_metastates_to_int(
+			sylvan::MTBDD* 		roots, 							// MTBDDs resulting from determinization
+			uint32_t 			root_cnt,						// Root count
+			State 				start_numbering_metastates_from,
+			uint32_t 			resulting_automaton_id,
+			State**				out_serialized_metastates,
+			uint64_t**			out_metastates_sizes,
+			uint64_t*			out_metastates_cnt);
 
 
 	sylvan::MTBDD amaya_complete_mtbdd_with_trapstate(

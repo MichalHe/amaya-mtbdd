@@ -39,6 +39,9 @@ extern Intersection_State* intersection_state;
 extern uint64_t 				STATE_RENAME_OP_COUNTER;
 extern State_Rename_Op_Info 	*STATE_RENAME_OP_PARAM;
 
+extern uint64_t    TRANSFORM_METASTATES_TO_INTS_COUNTER;
+extern Transform_Metastates_To_Ints_State *TRANSFORM_METASTATES_TO_INTS_STATE;
+
 VOID_TASK_0(gc_start)
 {
 	fprintf(stderr, "Sylvan - Starting garbage collection.\n");
@@ -373,6 +376,7 @@ State* amaya_mtbdd_get_leaves(
 
 void amaya_replace_leaf_contents_with(void *leaf_tds, State* new_contents, uint32_t contents_size)
 {
+	assert(false);
     auto tds = (Transition_Destination_Set*) leaf_tds;
     tds->destination_set->clear();
     for (uint32_t i = 0; i < contents_size; i++) {
@@ -380,59 +384,54 @@ void amaya_replace_leaf_contents_with(void *leaf_tds, State* new_contents, uint3
     }
 }
 
-State* amaya_rename_metastates_to_int(
+MTBDD* amaya_rename_metastates_to_int(
 		MTBDD* 		roots, 							// MTBDDs resulting from determinization
 		uint32_t 	root_cnt,						// Root count
 		State 		start_numbering_metastates_from,
 		uint32_t 	resulting_automaton_id,
-		uint32_t**	out_metastates_sizes,
-		uint32_t*	out_metastates_cnt)
+		State**		out_serialized_metastates,
+		uint64_t**	out_metastates_sizes,
+		uint64_t*	out_metastates_cnt)
 {
-
-	set<MTBDD> leaves;
-	for (uint32_t root_i = 0; root_i < root_cnt; root_i++) {
-		collect_mtbdd_leaves(roots[root_i], leaves);
-	}
-
-	uint32_t metastates_cnt = leaves.size();
-	uint32_t metastates_sizes_first_empty_i = 0;
-	auto metastates_sizes = (uint32_t *) malloc(metastates_cnt * sizeof(uint32_t));
-	assert(metastates_sizes != NULL);
-
-	vector<State> metastates_serialized;
-
-	for (auto leaf: leaves) {
-		auto leaf_contents = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
-
-		// Serialize the mapping so that the Python side will know what was mapped to what.
-		for (auto state : *leaf_contents->destination_set) {
-			metastates_serialized.push_back(state);
-		}
-
-		metastates_sizes[metastates_sizes_first_empty_i++] = leaf_contents->destination_set->size();
-		
-		// We need to convert the internal transition destination set into a sorted vector.
-		// @Warn: Currently we rely on the fact that we use std::set that stores the destination states
-		// 		  in a sorted manner (a balanced binary tree)
-		
-		// Do the actual renaming.
-		int metastate_num = start_numbering_metastates_from++;
-		leaf_contents->automaton_id = resulting_automaton_id;
-		leaf_contents->destination_set->clear();
-		leaf_contents->destination_set->insert(metastate_num);
-	} 
-
-	*out_metastates_sizes = metastates_sizes;
-	*out_metastates_cnt = leaves.size();
+	// Set up the tranform state
+	TRANSFORM_METASTATES_TO_INTS_STATE = (Transform_Metastates_To_Ints_State *) malloc(sizeof(Transform_Metastates_To_Ints_State));
+	TRANSFORM_METASTATES_TO_INTS_STATE->first_available_state_number = start_numbering_metastates_from;
+	TRANSFORM_METASTATES_TO_INTS_STATE->metastates_cnt = 0;
+	TRANSFORM_METASTATES_TO_INTS_STATE->metastates_sizes = new vector<uint64_t>();
+	TRANSFORM_METASTATES_TO_INTS_STATE->serialized_metastates = new vector<State>();
 	
-	auto metastates_serialized_arr = (State*) malloc(metastates_serialized.size() * sizeof(State));
-	assert(metastates_serialized_arr != NULL);
+	MTBDD *transformed_mtbdds = (MTBDD *) malloc(sizeof(MTBDD) * root_cnt);
+	assert(transformed_mtbdds);
 
-	for (uint32_t i = 0; i < metastates_serialized.size(); i++) {
-		metastates_serialized_arr[i] = metastates_serialized.at(i); 
+	LACE_ME;
+	for (uint32_t i = 0; i < root_cnt; i++) {
+		MTBDD transformed_mtbdd = mtbdd_uapply(roots[i], TASK(transform_metastates_to_ints_op), TRANSFORM_METASTATES_TO_INTS_COUNTER);
+		transformed_mtbdds[i] = transformed_mtbdd;
+		mtbdd_ref(transformed_mtbdd);
 	}
 
-	return metastates_serialized_arr;
+	TRANSFORM_METASTATES_TO_INTS_COUNTER += 1;
+
+	// Write values to the Python side.	
+	State* serialized_metastates = (State *) malloc(sizeof(State) * TRANSFORM_METASTATES_TO_INTS_STATE->serialized_metastates->size());
+	assert(serialized_metastates);
+	for (uint64_t i = 0; i < TRANSFORM_METASTATES_TO_INTS_STATE->serialized_metastates->size(); i++) {
+		serialized_metastates[i] = TRANSFORM_METASTATES_TO_INTS_STATE->serialized_metastates->at(i);
+	}
+	*out_serialized_metastates = serialized_metastates;
+	
+	uint64_t* metastate_sizes = (uint64_t*) malloc(sizeof(uint64_t) * TRANSFORM_METASTATES_TO_INTS_STATE->metastates_cnt);
+	assert(metastate_sizes);
+	for (uint64_t i = 0; i < TRANSFORM_METASTATES_TO_INTS_STATE->metastates_sizes->size(); i++) {
+		metastate_sizes[i] = TRANSFORM_METASTATES_TO_INTS_STATE->metastates_sizes->at(i);
+	}
+	*out_metastates_sizes = metastate_sizes;
+
+	*out_metastates_cnt = TRANSFORM_METASTATES_TO_INTS_STATE->metastates_cnt;
+
+	free(TRANSFORM_METASTATES_TO_INTS_STATE);
+	TRANSFORM_METASTATES_TO_INTS_STATE = NULL;
+	return transformed_mtbdds;
 }
 
 
@@ -674,7 +673,7 @@ void amaya_end_intersection()
     intersection_state = NULL;
 	
 	LACE_ME;
-	sylvan_gc();
+	//sylvan_gc();
 }
 
 void amaya_set_debugging(bool debug) {
