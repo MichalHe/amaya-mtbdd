@@ -39,11 +39,15 @@ extern Intersection_State* intersection_state;
 extern uint64_t 				STATE_RENAME_OP_COUNTER;
 extern State_Rename_Op_Info 	*STATE_RENAME_OP_PARAM;
 
+VOID_TASK_0(gc_start)
+{
+	fprintf(stderr, "Sylvan - Starting garbage collection.\n");
+}
+
 void init_machinery() 
 {
     int n_workers = 1;
-    size_t dequeue_size = 0;       // Auto select
-    size_t program_stack_size = 0; // Use default
+    size_t dequeue_size = 10000000;
 
     lace_init(n_workers, dequeue_size);
     //lace_startup(program_stack_size, TASK(_main), NULL);
@@ -51,10 +55,14 @@ void init_machinery()
     // THIS SEEMS TO BE THE SECRET
     // When the TASK parameter (the middle one) is set to be NULL, it does not spawn a new thread
     // and instead uses the current thread for all tasks (makes it possible to call from python)
+	const size_t stack_size = 1LL << 20;
     lace_startup(0, NULL, NULL); 
-    sylvan_set_sizes(1LL << 23, 1LL << 27, 1LL << 23, 1LL << 27);
+	sylvan_set_sizes(1LL << 26, 1LL << 26, 1LL << 20, 1LL << 20);
+	//sylvan_set_sizes(1LL << 24, 1LL << 28, 1LL << 24, 1LL << 28);
     sylvan_init_package();
     sylvan_init_mtbdd();
+	
+	//sylvan_gc_hook_pregc(TASK(gc_start));
 
   // Initialize my own sylvan type.
 
@@ -90,13 +98,14 @@ MTBDD amaya_mtbdd_build_single_terminal(
 	for (uint32_t i=1; i <= variable_count; i++) {
 		variables = mtbdd_set_add(variables, i); // Variables are numbered from 1
 	}
+
 	// Construct the destination set
 	
 	auto leaf_state_set = new std::set<State>();
 	for (uint32_t i = 0; i < destination_set_size; i++) {
 		leaf_state_set->insert(destination_set[i]);
 	}
-    
+
     Transition_Destination_Set* tds = new Transition_Destination_Set(automaton_id, leaf_state_set);
 	MTBDD leaf = make_set_leaf(tds);
 
@@ -104,7 +113,7 @@ MTBDD amaya_mtbdd_build_single_terminal(
 	// signature: mtbdd_cube(MTBDD variables, uint8_t *cube, MTBDD terminal)
 	// initial_cube = transition_symbols[0*variable_count + (0..variable_count)] (size: variable_count)
 	MTBDD mtbdd = mtbdd_cube(variables, transition_symbols, leaf);
-	
+
 	LACE_ME;
 	for (uint32_t i = 1; i < transition_symbols_count; i++) {
 		// Cube for this iteration:
@@ -294,13 +303,15 @@ MTBDD* amaya_mtbdd_rename_states(
 	State_Rename_Op_Info op_info = {0};
 	op_info.states_rename_map = &state_names_map;
 	STATE_RENAME_OP_PARAM = &op_info;	
-
+	
 	auto renamed_mtbdds = (MTBDD *) malloc(sizeof(MTBDD) * root_count);
 	assert(renamed_mtbdds != NULL);
 
 	LACE_ME;
 	for (uint32_t i = 0; i < root_count; i++) {
-		renamed_mtbdds[i] = mtbdd_uapply(mtbdd_roots[i], TASK(rename_states_op), STATE_RENAME_OP_COUNTER);
+		MTBDD result = mtbdd_uapply(mtbdd_roots[i], TASK(rename_states_op), STATE_RENAME_OP_COUNTER);
+		mtbdd_ref(result);
+		renamed_mtbdds[i] = result;
 	}
 	STATE_RENAME_OP_COUNTER += 1;
 
@@ -661,6 +672,9 @@ void amaya_end_intersection()
 	}
     free(intersection_state);
     intersection_state = NULL;
+	
+	LACE_ME;
+	sylvan_gc();
 }
 
 void amaya_set_debugging(bool debug) {
@@ -753,6 +767,7 @@ MTBDD* amaya_remove_states_from_transitions(
 	REMOVE_STATES_OP_PARAM = &states_to_remove_set;
 	for (uint32_t i = 0; i < transition_cnt; i++) {
 		MTBDD result_mtbdd = mtbdd_uapply(transition_roots[i], TASK(remove_states_op), REMOVE_STATES_OP_COUNTER);
+		mtbdd_ref(result_mtbdd);
 		mtbdds_after_removal[i] = result_mtbdd;
 	}
 
@@ -760,3 +775,26 @@ MTBDD* amaya_remove_states_from_transitions(
 
 	return mtbdds_after_removal;
 }
+
+void amaya_mtbdd_ref(MTBDD dd) 
+{
+	mtbdd_ref(dd);
+}
+
+void amaya_mtbdd_deref(MTBDD dd) 
+{
+	mtbdd_deref(dd);
+}
+
+void amaya_sylvan_gc()
+{
+	LACE_ME;
+	sylvan_gc();
+}
+
+void amaya_sylvan_try_performing_gc()
+{
+	LACE_ME;
+	sylvan_gc_test();	
+}
+

@@ -8,7 +8,7 @@
 extern "C" {
 
 	// Export constants (wrapped)
-	extern const sylvan::MTBDD w_mtbdd_true  = sylvan::mtbdd_true;
+	extern const sylvan::MTBDD w_mtbdd_true  = sylvan::mtbdd_true; 
 	extern const sylvan::MTBDD w_mtbdd_false = sylvan::mtbdd_false;
 
 	// Functions
@@ -225,6 +225,11 @@ extern "C" {
 			State* 		states_to_remove,
 			uint32_t 	states_to_remove_cnt
 			);
+
+	void amaya_mtbdd_ref(sylvan::MTBDD mtbdd);
+	void amaya_mtbdd_deref(sylvan::MTBDD mtbdd);
+	void amaya_sylvan_gc();
+	void amaya_sylvan_try_performing_gc();
 
 	void shutdown_machinery();
 	void init_machinery();

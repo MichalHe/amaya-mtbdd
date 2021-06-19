@@ -186,7 +186,7 @@ TASK_IMPL_3(MTBDD, transitions_union_op, MTBDD *, pa, MTBDD *, pb, uint64_t, par
             assert(tds_a.automaton_id == tds_b.automaton_id);
             param = (uint32_t)tds_a.automaton_id;
         }
-
+		
         std::set<State> *union_set = new std::set<State>();
         std::set_union(
             tds_a.destination_set->begin(), tds_a.destination_set->end(),
