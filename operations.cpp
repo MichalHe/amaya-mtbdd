@@ -50,6 +50,8 @@ uint64_t 	REMOVE_STATES_OP_COUNTER = 0;
 void*		ADD_TRAPSTATE_OP_PARAM = NULL;
 
 Intersection_State* intersection_state = NULL;
+uint64_t INTERSECTION_OP_COUNTER = (1LL << 35);
+
 State_Rename_Op_Info *STATE_RENAME_OP_PARAM = NULL;
 Transform_Metastates_To_Ints_State *TRANSFORM_METASTATES_TO_INTS_STATE = NULL;
 
@@ -145,7 +147,7 @@ TASK_IMPL_3(MTBDD, transitions_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64
             }
         }
 
-        auto intersection_tds = new Transition_Destination_Set(intersect_info->automaton_id, intersection_leaf_states);
+        auto intersection_tds = new Transition_Destination_Set(intersection_leaf_states);
         MTBDD intersection_leaf = make_set_leaf(intersection_tds);
         return intersection_leaf;
     }
@@ -185,11 +187,12 @@ TASK_IMPL_3(MTBDD, transitions_union_op, MTBDD *, pa, MTBDD *, pb, uint64_t, par
         // If the passed parameter is missing (-1) that means that we should derive it
         // from the leaves (TDS). This can happen when padding closure is performed, as
         // the leaf automaton id is not modified.
-        if (param == -1)
-        {
-            //assert(tds_a.automaton_id == tds_b.automaton_id);
-            param = (uint32_t)tds_a.automaton_id;
-        }
+
+		// @RefactorMe
+        //if (param == -1)
+        //{
+            //param = (uint32_t)tds_a.automaton_id;
+        //}
 		
         std::set<State> *union_set = new std::set<State>();
         std::set_union(
@@ -197,7 +200,7 @@ TASK_IMPL_3(MTBDD, transitions_union_op, MTBDD *, pa, MTBDD *, pb, uint64_t, par
             tds_b.destination_set->begin(), tds_b.destination_set->end(),
             std::inserter(*union_set, union_set->begin()));
 
-        Transition_Destination_Set *union_tds = new Transition_Destination_Set((uint32_t)param, union_set);
+        Transition_Destination_Set *union_tds = new Transition_Destination_Set(union_set);
 
         MTBDD union_leaf = make_set_leaf(union_tds); // Wrap the TDS with a MTBDD leaf.
         return union_leaf;
@@ -272,7 +275,8 @@ TASK_IMPL_2(MTBDD, complete_transition_with_trapstate_op, MTBDD, dd, uint64_t, p
 		auto op_info = (Complete_With_Trapstate_Op_Info*) ADD_TRAPSTATE_OP_PARAM;
 
 		Transition_Destination_Set* tds = new Transition_Destination_Set();
-		tds->automaton_id = op_info->automaton_id;
+		// RefactorMe
+		//tds->automaton_id = op_info->automaton_id;
 		tds->destination_set = new set<State>();
 		tds->destination_set->insert(op_info->trapstate);
 
@@ -344,7 +348,8 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
 		}
 
 		Transition_Destination_Set* new_leaf_contents = new Transition_Destination_Set();
-		new_leaf_contents->automaton_id = left_tds->automaton_id;
+		// @Refactoring
+		//new_leaf_contents->automaton_id = left_tds->automaton_id;
 
 		auto new_leaf_destination_set = new std::set<State>();
 		for (auto old_state : *left_tds->destination_set) new_leaf_destination_set->insert(old_state);
@@ -369,12 +374,23 @@ TASK_IMPL_2(MTBDD, rename_states_op, MTBDD, dd, uint64_t, param) {
 		auto old_tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
 		auto new_tds = new Transition_Destination_Set();
 
-		new_tds->automaton_id = old_tds->automaton_id;
+		// @Refactoring
+		//new_tds->automaton_id = old_tds->automaton_id;
 		auto renamed_leaf_contents = new set<State>();
 		
 		for (auto state : *old_tds->destination_set) {
 			auto new_name_it = state_rename_info->states_rename_map->find(state);
-			assert(new_name_it != state_rename_info->states_rename_map->end());
+
+			if (new_name_it == state_rename_info->states_rename_map->end()) {
+				printf("We have found a leaf state with no mapping for it??");
+				printf("State name: %lu\n", state);
+				printf("Available mappings:");
+				for (auto mapping : *state_rename_info->states_rename_map) {
+					printf("%lu --> %lu \n", mapping.first, mapping.second);
+				}
+
+				assert(false);
+			}
 
 			auto new_state_name = new_name_it->second;
 			renamed_leaf_contents->insert(new_state_name);
@@ -399,7 +415,8 @@ TASK_IMPL_2(MTBDD, transform_metastates_to_ints_op, MTBDD, dd, uint64_t, param) 
 		auto old_tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
 		auto new_tds = new Transition_Destination_Set();
 
-		new_tds->automaton_id = old_tds->automaton_id;
+		// @Refactoring
+		// new_tds->automaton_id = old_tds->automaton_id;
 
 		// We got here, because no leaf with the same value was found in the cache
 		State metastate_state_number = transform_state->first_available_state_number++; // Increment it right away

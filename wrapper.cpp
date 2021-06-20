@@ -36,6 +36,7 @@ extern void*		ADD_TRAPSTATE_OP_PARAM;
 extern uint64_t 	ADD_TRAPSTATE_OP_COUNTER;
 
 extern Intersection_State* intersection_state;
+extern uint64_t INTERSECTION_OP_COUNTER;
 
 extern uint64_t 				STATE_RENAME_OP_COUNTER;
 extern State_Rename_Op_Info 	*STATE_RENAME_OP_PARAM;
@@ -45,6 +46,8 @@ extern Transform_Metastates_To_Ints_State *TRANSFORM_METASTATES_TO_INTS_STATE;
 
 extern uint64_t 	PAD_CLOSURE_OP_COUNTER;
 extern Pad_Closure_Info *PAD_CLOSURE_OP_STATE;
+
+
 
 VOID_TASK_0(gc_start)
 {
@@ -64,7 +67,7 @@ void init_machinery()
     // and instead uses the current thread for all tasks (makes it possible to call from python)
 	const size_t stack_size = 1LL << 20;
     lace_startup(0, NULL, NULL); 
-	sylvan_set_sizes(1LL << 26, 1LL << 26, 1LL << 20, 1LL << 20);
+	sylvan_set_sizes(1LL << 27, 1LL << 26, 1LL << 26, 1LL << 20);
 	//sylvan_set_sizes(1LL << 24, 1LL << 28, 1LL << 24, 1LL << 28);
     sylvan_init_package();
     sylvan_init_mtbdd();
@@ -113,7 +116,7 @@ MTBDD amaya_mtbdd_build_single_terminal(
 		leaf_state_set->insert(destination_set[i]);
 	}
 
-    Transition_Destination_Set* tds = new Transition_Destination_Set(automaton_id, leaf_state_set);
+    Transition_Destination_Set* tds = new Transition_Destination_Set(leaf_state_set);
 	MTBDD leaf = make_set_leaf(tds);
 
 	// Construct the initial MTBDD, then add the rest of the symbols
@@ -146,7 +149,7 @@ MTBDD amaya_complete_mtbdd_with_trapstate(
 	LACE_ME;
 	ADD_TRAPSTATE_OP_PARAM = &op_info;
 	MTBDD result = mtbdd_uapply(dd, TASK(complete_transition_with_trapstate_op), ADD_TRAPSTATE_OP_COUNTER);
-	ADD_TRAPSTATE_OP_COUNTER++;
+	ADD_TRAPSTATE_OP_COUNTER += (1LL << 5);
 
 	if (DEBUG_ON) printf("Had the complete with trapstate effect? %s\n", (op_info.had_effect ? "Yes": "No"));
 	*had_effect = op_info.had_effect;
@@ -320,7 +323,7 @@ MTBDD* amaya_mtbdd_rename_states(
 		mtbdd_ref(result);
 		renamed_mtbdds[i] = result;
 	}
-	STATE_RENAME_OP_COUNTER += 1;
+	STATE_RENAME_OP_COUNTER += (1LL << 32);
 
 	return renamed_mtbdds;
 }
@@ -652,7 +655,9 @@ void amaya_mtbdd_change_automaton_id_for_leaves(
 
     for (auto leaf : leaves) {
         auto tds = (Transition_Destination_Set*) mtbdd_getvalue(leaf); 
-        tds->automaton_id = new_id;
+
+		// @Refactoring:
+        // tds->automaton_id = new_id;
     }
 }
 
@@ -668,8 +673,7 @@ MTBDD amaya_mtbdd_intersection(
     intersect_info.discoveries = new vector<State>();
 
 	LACE_ME;
-	MTBDD result = mtbdd_applyp(a, b, (uint64_t) &intersect_info, TASK(transitions_intersection_op), AMAYA_INTERSECTION_OP_ID);
-    
+	MTBDD result = mtbdd_applyp(a, b, (uint64_t) &intersect_info, TASK(transitions_intersection_op), INTERSECTION_OP_COUNTER);
     
     if (!intersect_info.discoveries->empty()) {
         auto discovered_states_arr = (State*) malloc(sizeof(State) * intersect_info.discoveries->size());
@@ -736,7 +740,7 @@ void amaya_end_intersection()
     free(intersection_state);
     intersection_state = NULL;
 	
-	LACE_ME;
+	INTERSECTION_OP_COUNTER += (3LL << 31);
 	//sylvan_gc();
 }
 

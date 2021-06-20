@@ -12,7 +12,6 @@
 
 #define AMAYA_EXISTS_OPERATION_ID 0x2000000
 #define AMAYA_UNION_OP_ID 0x4000000
-#define AMAYA_INTERSECTION_OP_ID 0x6000000
 
 TASK_DECL_3(sylvan::MTBDD, transitions_intersection_op, sylvan::MTBDD *, sylvan::MTBDD *, uint64_t);
 
