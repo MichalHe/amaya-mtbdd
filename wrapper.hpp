@@ -99,13 +99,11 @@ extern "C" {
 	 * @param final_states_cnt 	Number of states in the final_state array.
 	 * @returns Boolean indicating whether the left mtbdd was modified (new transitions to final state were added).
 	 */
-	bool amaya_mtbdd_do_pad_closure(
+	sylvan::MTBDD amaya_mtbdd_do_pad_closure(
 			State 			left_state,
 			sylvan::MTBDD 	left_dd, 
 			State 			right_state,
-			sylvan::MTBDD 	right_dd, 
-			State* 			final_states, 
-			uint32_t 		final_states_cnt);
+			sylvan::MTBDD 	right_dd);
 
 	/**
 	 * Debug function that allows to retrieve all paths inside the MTBDD and corresponding destinations.
@@ -227,6 +225,12 @@ extern "C" {
 			State* 		states_to_remove,
 			uint32_t 	states_to_remove_cnt
 			);
+
+	void amaya_begin_pad_closure(
+		State *final_states,
+		uint32_t final_states_cnt);
+
+	void amaya_end_pad_closure();
 
 	void amaya_mtbdd_ref(sylvan::MTBDD mtbdd);
 	void amaya_mtbdd_deref(sylvan::MTBDD mtbdd);

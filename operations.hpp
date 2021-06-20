@@ -6,6 +6,7 @@
 #include <utility>
 #include <map>
 #include <unordered_set>
+#include <unordered_map>
 
 #include <sylvan.h>
 
@@ -36,6 +37,9 @@ typedef struct
 	bool had_effect;
 	State left_state;  // For debug purposes
 	State right_state; // Actually used
+	
+	std::unordered_map<State, std::pair<sylvan::MTBDD, uint64_t>> *operation_id_cache;
+	uint64_t first_available_r_cache_id;
 	State *final_states;
 	uint32_t final_states_cnt;
 } Pad_Closure_Info;

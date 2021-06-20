@@ -10,6 +10,7 @@
 #include <lace.h>
 #include <utility>
 #include <iostream>
+#include <cstring>
 
 #include "base.hpp"
 #include "custom_leaf.hpp"
@@ -33,7 +34,7 @@ extern void* 		REMOVE_STATES_OP_PARAM;
 extern uint64_t 	REMOVE_STATES_OP_COUNTER;
 extern void*		ADD_TRAPSTATE_OP_PARAM;
 extern uint64_t 	ADD_TRAPSTATE_OP_COUNTER;
-extern uint32_t 	CUR_PADDING_CLOSURE_ID;
+
 extern Intersection_State* intersection_state;
 
 extern uint64_t 				STATE_RENAME_OP_COUNTER;
@@ -41,6 +42,9 @@ extern State_Rename_Op_Info 	*STATE_RENAME_OP_PARAM;
 
 extern uint64_t    TRANSFORM_METASTATES_TO_INTS_COUNTER;
 extern Transform_Metastates_To_Ints_State *TRANSFORM_METASTATES_TO_INTS_STATE;
+
+extern uint64_t 	PAD_CLOSURE_OP_COUNTER;
+extern Pad_Closure_Info *PAD_CLOSURE_OP_STATE;
 
 VOID_TASK_0(gc_start)
 {
@@ -485,36 +489,96 @@ State* amaya_mtbdd_get_state_post(MTBDD dd, uint32_t *post_size)
 }
 
 
-bool amaya_mtbdd_do_pad_closure(
+void amaya_begin_pad_closure(
+		State *final_states,
+		uint32_t final_states_cnt) 
+{
+	PAD_CLOSURE_OP_STATE = (Pad_Closure_Info*) malloc(sizeof(Pad_Closure_Info));	
+	assert(PAD_CLOSURE_OP_STATE != NULL);
+
+	State* final_states_cpy = (State*) malloc(sizeof(State) * final_states_cnt);	
+	assert(final_states_cpy != NULL);
+
+	std::memcpy(final_states_cpy, final_states, (sizeof(State) * final_states_cnt));
+
+	PAD_CLOSURE_OP_STATE->final_states = final_states_cpy;
+	PAD_CLOSURE_OP_STATE->final_states_cnt = final_states_cnt;
+	PAD_CLOSURE_OP_STATE->operation_id_cache = new std::unordered_map<State, std::pair<MTBDD, uint64_t>>();
+	PAD_CLOSURE_OP_STATE->first_available_r_cache_id = (1LL << 40);
+}
+
+void amaya_end_pad_closure()
+{
+	free(PAD_CLOSURE_OP_STATE->final_states);
+	delete PAD_CLOSURE_OP_STATE->operation_id_cache;
+	free(PAD_CLOSURE_OP_STATE);
+	PAD_CLOSURE_OP_STATE = NULL;
+
+	PAD_CLOSURE_OP_COUNTER += (1LL << 38);
+}
+
+
+MTBDD amaya_mtbdd_do_pad_closure(
 		State 		left_state, 
 		MTBDD 		left_dd,
 		State 		right_state, 
-		MTBDD 		right_dd, 
-		State* 		final_states, 
-		uint32_t 	final_states_cnt)
+		MTBDD 		right_dd)
 {
-	Pad_Closure_Info pci = {0};
-	pci.final_states = final_states;
-	pci.final_states_cnt = final_states_cnt;
-	pci.had_effect = false;
-
-	pci.right_state = right_state;
-	pci.left_state = left_state;
+	// @Note: When performing pad closure the finality of states does not change so the final states are constant.
+	// 		  This means that the operation really depends only on provided mtbdds, and not so much on the param. 
+	// 		  The only *problem* is that the same mtbdds (or their parts) might be created in different automata, but the
+	// 		  final states are different. ---> Provide transaction like interface.
 	
+	PAD_CLOSURE_OP_STATE->right_state = right_state;
+	PAD_CLOSURE_OP_STATE->left_state = left_state;
+	
+	// When we use the same R mtbdd **with the same r state** but with different L mtbbds we might reuse cache
+	// This means that operation parameters which control the cache selection process can be chosen in such a way 
+	// that every time we encounter the same R mtbdd the result from previous applications sharing the same R will
+	// be reused.
+	auto r_state_op_cache_it = PAD_CLOSURE_OP_STATE->operation_id_cache->find(right_state);
+	uint64_t r_op_cache_id;
+	if (r_state_op_cache_it != PAD_CLOSURE_OP_STATE->operation_id_cache->end()) {
+		// We have some cache for this r-state, check whether the r-mtbdd matches the stored one
+		// IF not, that means the mtbdd for r-state was already modified during pad closure (at a different time)
+		// And therefore new operation cachce needs to be "assigned"
+		auto r_cache_entry = r_state_op_cache_it->second;
+
+		if (r_cache_entry.first != right_dd) {
+			// The cache entry is not valid anymore
+			r_op_cache_id = PAD_CLOSURE_OP_STATE->first_available_r_cache_id;
+
+			PAD_CLOSURE_OP_STATE->operation_id_cache->insert(
+					std::make_pair(
+						right_state, 
+						std::make_pair(right_dd, r_op_cache_id)));
+
+			PAD_CLOSURE_OP_STATE->first_available_r_cache_id += 1;
+		} else {
+			r_op_cache_id = r_cache_entry.second;
+		}
+	} else {
+			// There is no cache entry, generate new one.
+			r_op_cache_id = PAD_CLOSURE_OP_STATE->first_available_r_cache_id;
+
+			PAD_CLOSURE_OP_STATE->operation_id_cache->insert(
+					std::make_pair(
+						right_state, 
+						std::make_pair(right_dd, r_op_cache_id)));
+
+			PAD_CLOSURE_OP_STATE->first_available_r_cache_id += 1;
+	}
 
 	LACE_ME;
-	//sylvan_clear_cache();
-	mtbdd_applyp(left_dd, 
-				 right_dd,
-				 (uint64_t) &pci, 
-				 TASK(pad_closure_op), 
-				 CUR_PADDING_CLOSURE_ID);
+	
+	MTBDD result =  mtbdd_applyp(
+			left_dd, 
+			right_dd,
+			r_op_cache_id, 			  // This allows using caches for the same R-state + R-MTBDD results
+			TASK(pad_closure_op), 
+			PAD_CLOSURE_OP_COUNTER);  // This identifies the overall padding closure being performed,
 
-	// Every padding closure that is performed (even repeated) should be treated
-	// as a unique operation --> so that the caching problems will not occur
-	CUR_PADDING_CLOSURE_ID += 4;
-
-	return pci.had_effect;
+	return result;
 }
 
 uint8_t* amaya_mtbdd_get_transitions(

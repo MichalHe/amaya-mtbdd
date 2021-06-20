@@ -48,11 +48,13 @@ extern uint64_t mtbdd_leaf_type_set;
 void*		REMOVE_STATES_OP_PARAM = NULL;
 uint64_t 	REMOVE_STATES_OP_COUNTER = 0;
 void*		ADD_TRAPSTATE_OP_PARAM = NULL;
-uint32_t 	CUR_PADDING_CLOSURE_ID = 64;
 
 Intersection_State* intersection_state = NULL;
 State_Rename_Op_Info *STATE_RENAME_OP_PARAM = NULL;
 Transform_Metastates_To_Ints_State *TRANSFORM_METASTATES_TO_INTS_STATE = NULL;
+
+Pad_Closure_Info *PAD_CLOSURE_OP_STATE = NULL;
+uint64_t 	PAD_CLOSURE_OP_COUNTER = 64;
 
 uint64_t 	ADD_TRAPSTATE_OP_COUNTER = (1LL << 32);
 uint64_t 	STATE_RENAME_OP_COUNTER = (1LL << 33);
@@ -292,17 +294,18 @@ TASK_IMPL_2(MTBDD, complete_transition_with_trapstate_op, MTBDD, dd, uint64_t, p
 TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, op_param) {
 	MTBDD left = *p_left, right = *p_right;
     if (left == mtbdd_false) {
-        return right; // Padding closure has no effect, when one mtbdd path leads to nothing
+        return mtbdd_false; // When the left leaf leads to nothing via some zeta0, we cannot propagate anything via this symbol
     }
     if (right == mtbdd_false) {
         return left; // Same here
     }
+
     // If both are non-false leaves, we can try doing the actual padding closure
     if (mtbdd_isleaf(left) && mtbdd_isleaf(right)) {
         auto left_tds  = (Transition_Destination_Set*) mtbdd_getvalue(left);
         auto right_tds = (Transition_Destination_Set*) mtbdd_getvalue(right);
 
-	    auto pci = (Pad_Closure_Info*) op_param;
+	    auto pci = PAD_CLOSURE_OP_STATE;
 
 		// Check whether the transition destination state even leads the the right state (might not)
 		if (left_tds->destination_set->find(pci->right_state) == left_tds->destination_set->end()) {
@@ -311,6 +314,11 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
 		}
 
 	    bool is_final;
+
+		// @Optimize: The final states reachable via r-mtbdd can be computed before and stored in the cache used, this way
+		// 			  the identifiaction process will be performed only once for every leaf.
+		std::vector<State> new_final_states_reachable_from_right_state;
+
 	    for (State rs: *right_tds->destination_set)
 	    {
 			is_final = false;
@@ -318,24 +326,34 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
 			// Is the current right state final?
 			for (uint32_t i = 0; i < pci->final_states_cnt; i++) {
 				if (rs == pci->final_states[i]) {
+					// @DeleteME
 					is_final = true;
 					break; // We have the information we required, we don't need to iterate further.
 				}
 			}
 			
 			if (is_final) {
-				const bool is_missing_from_left = left_tds->destination_set->find(rs) == left_tds->destination_set->end();
-				if (is_missing_from_left) {
-					// We've located a state that is final, and is not in left, pad closure adds it to the left states.
-					left_tds->destination_set->insert(rs); // The actual pad closure
-					pci->had_effect = true; // To utilize the python cache
+				if (left_tds->destination_set->find(rs) == left_tds->destination_set->end()) {
+					new_final_states_reachable_from_right_state.push_back(rs);
 				}
 			}
 	    }
 
-		// The pad closure is in place modification 
-		// (no new MTBDD is created, only leaf states are modified)
-        return left;
+		if (new_final_states_reachable_from_right_state.empty()) {
+			return left;  // No final states
+		}
+
+		Transition_Destination_Set* new_leaf_contents = new Transition_Destination_Set();
+		new_leaf_contents->automaton_id = left_tds->automaton_id;
+
+		auto new_leaf_destination_set = new std::set<State>();
+		for (auto old_state : *left_tds->destination_set) new_leaf_destination_set->insert(old_state);
+		for (auto final_state_added_by_pad_closure : new_final_states_reachable_from_right_state) {
+			new_leaf_destination_set->insert(final_state_added_by_pad_closure);
+		}
+		new_leaf_contents->destination_set = new_leaf_destination_set;
+		
+		return make_set_leaf(new_leaf_contents);
     }
 
     return mtbdd_invalid;
