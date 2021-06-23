@@ -54,21 +54,17 @@ int set_leaf_equals(uint64_t a_ptr, uint64_t b_ptr)
 	return false;
 }
 
-uint64_t set_leaf_hash(const uint64_t contents_ptr,
-                              const uint64_t seed)
+uint64_t set_leaf_hash(const uint64_t contents_ptr, const uint64_t seed)
 {
     Transition_Destination_Set *tds = (Transition_Destination_Set *)contents_ptr;
-    const uint64_t prime = 1099511628211;
-    uint64_t hash = seed;
 
-    for (auto i : *tds->destination_set)
-    {
-        hash = hash ^ i;
-        hash = rotl64(hash, 31);
-        hash = hash * prime;
-    }
+	unsigned long hash = seed;
 
-    return hash;
+	for (auto state : *tds->destination_set)
+		hash = state + (hash << 6) + (hash << 16) - hash;
+
+	return hash;
+
 }
 
 char *set_leaf_to_str(int comp, uint64_t leaf_val, char *buf, size_t buflen)
