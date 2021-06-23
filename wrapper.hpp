@@ -237,6 +237,8 @@ extern "C" {
 	void amaya_sylvan_gc();
 	void amaya_sylvan_try_performing_gc();
 
+	void amaya_sylvan_clear_cache();
+
 	void shutdown_machinery();
 	void init_machinery();
 }

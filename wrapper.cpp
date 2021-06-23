@@ -67,7 +67,9 @@ void init_machinery()
     // and instead uses the current thread for all tasks (makes it possible to call from python)
 	const size_t stack_size = 1LL << 20;
     lace_startup(0, NULL, NULL); 
-	sylvan_set_sizes(1LL << 27, 1LL << 26, 1LL << 26, 1LL << 20);
+
+	sylvan_set_limits(3LL*1024*1024*1024, 3, 5);
+	//sylvan_set_sizes(1LL << 27, 1LL << 26, 1LL << 26, 1LL << 20);
 	//sylvan_set_sizes(1LL << 24, 1LL << 28, 1LL << 24, 1LL << 28);
     sylvan_init_package();
     sylvan_init_mtbdd();
@@ -507,7 +509,7 @@ void amaya_begin_pad_closure(
 	PAD_CLOSURE_OP_STATE->final_states = final_states_cpy;
 	PAD_CLOSURE_OP_STATE->final_states_cnt = final_states_cnt;
 	PAD_CLOSURE_OP_STATE->operation_id_cache = new std::unordered_map<State, std::pair<MTBDD, uint64_t>>();
-	PAD_CLOSURE_OP_STATE->first_available_r_cache_id = (1LL << 40);
+	PAD_CLOSURE_OP_STATE->first_available_r_cache_id = (1LL << 33);
 }
 
 void amaya_end_pad_closure()
@@ -556,7 +558,7 @@ MTBDD amaya_mtbdd_do_pad_closure(
 						right_state, 
 						std::make_pair(right_dd, r_op_cache_id)));
 
-			PAD_CLOSURE_OP_STATE->first_available_r_cache_id += 1;
+			PAD_CLOSURE_OP_STATE->first_available_r_cache_id += (1LL << 10);
 		} else {
 			r_op_cache_id = r_cache_entry.second;
 		}
@@ -569,15 +571,18 @@ MTBDD amaya_mtbdd_do_pad_closure(
 						right_state, 
 						std::make_pair(right_dd, r_op_cache_id)));
 
-			PAD_CLOSURE_OP_STATE->first_available_r_cache_id += 1;
+			PAD_CLOSURE_OP_STATE->first_available_r_cache_id += (1LL << 10);
 	}
 
 	LACE_ME;
+	//sylvan_clear_cache();
+
+	PAD_CLOSURE_OP_COUNTER += (1LL << 38);
 	
 	MTBDD result =  mtbdd_applyp(
 			left_dd, 
 			right_dd,
-			r_op_cache_id, 			  // This allows using caches for the same R-state + R-MTBDD results
+			1LL, 			  // This allows using caches for the same R-state + R-MTBDD results
 			TASK(pad_closure_op), 
 			PAD_CLOSURE_OP_COUNTER);  // This identifies the overall padding closure being performed,
 
@@ -740,7 +745,7 @@ void amaya_end_intersection()
     free(intersection_state);
     intersection_state = NULL;
 	
-	INTERSECTION_OP_COUNTER += (3LL << 31);
+	INTERSECTION_OP_COUNTER += (5LL << 31);
 	//sylvan_gc();
 }
 
@@ -863,5 +868,11 @@ void amaya_sylvan_try_performing_gc()
 {
 	LACE_ME;
 	sylvan_gc_test();	
+}
+
+void amaya_sylvan_clear_cache() 
+{
+	LACE_ME;
+	sylvan_clear_cache();
 }
 
