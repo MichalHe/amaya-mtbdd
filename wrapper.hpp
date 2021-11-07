@@ -223,8 +223,22 @@ extern "C" {
 			sylvan::MTBDD* transition_roots,
 			uint32_t 	transition_cnt,
 			State* 		states_to_remove,
-			uint32_t 	states_to_remove_cnt
-			);
+			uint32_t 	states_to_remove_cnt);
+
+	/**
+	 * Retrives all leaves that are present in the leaves of given MTBDDs.
+	 * Debug method.
+	 *
+	 * @param mtbdds 			An array of MTBDDs whose leaves will be searched for states.
+	 * @param mtbdd_cnt  		The number of MTBDDs passed in.
+	 * @param out_states_cnt  	Output parameter - the number of found states.
+	 *
+	 * @returns An array of states present in the leaves of given MTBDDs.
+	 */
+	State* amaya_get_states_in_mtbdd_leaves(
+		sylvan::MTBDD* mtbdds,
+		uint32_t mtbdd_cnt,
+		uint32_t* out_state_cnt);
 
 	void amaya_begin_pad_closure(
 		State *final_states,

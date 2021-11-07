@@ -68,7 +68,7 @@ void init_machinery()
 	const size_t stack_size = 1LL << 20;
     lace_startup(0, NULL, NULL); 
 
-	sylvan_set_limits(3LL*1024*1024*1024, 3, 5);
+	sylvan_set_limits(500LL*1024*1024, 3, 5); // Allocate 100MB
 	//sylvan_set_sizes(1LL << 27, 1LL << 26, 1LL << 26, 1LL << 20);
 	//sylvan_set_sizes(1LL << 24, 1LL << 28, 1LL << 24, 1LL << 28);
     sylvan_init_package();
@@ -408,6 +408,7 @@ MTBDD* amaya_rename_metastates_to_int(
 	TRANSFORM_METASTATES_TO_INTS_STATE->metastates_cnt = 0;
 	TRANSFORM_METASTATES_TO_INTS_STATE->metastates_sizes = new vector<uint64_t>();
 	TRANSFORM_METASTATES_TO_INTS_STATE->serialized_metastates = new vector<State>();
+	TRANSFORM_METASTATES_TO_INTS_STATE->alias_map = new std::map<std::set<State>, State>();
 	
 	MTBDD *transformed_mtbdds = (MTBDD *) malloc(sizeof(MTBDD) * root_cnt);
 	assert(transformed_mtbdds);
@@ -438,6 +439,9 @@ MTBDD* amaya_rename_metastates_to_int(
 
 	*out_metastates_cnt = TRANSFORM_METASTATES_TO_INTS_STATE->metastates_cnt;
 
+	delete TRANSFORM_METASTATES_TO_INTS_STATE->metastates_sizes;
+	delete TRANSFORM_METASTATES_TO_INTS_STATE->serialized_metastates;
+	delete TRANSFORM_METASTATES_TO_INTS_STATE->alias_map;
 	free(TRANSFORM_METASTATES_TO_INTS_STATE);
 	TRANSFORM_METASTATES_TO_INTS_STATE = NULL;
 	return transformed_mtbdds;
@@ -848,12 +852,45 @@ MTBDD* amaya_remove_states_from_transitions(
 	return mtbdds_after_removal;
 }
 
-void amaya_mtbdd_ref(MTBDD dd) 
+State* amaya_get_states_in_mtbdd_leaves(
+	MTBDD* mtbdds,
+	uint32_t mtbdd_cnt,
+	uint32_t* out_state_cnt)
+{
+	// Garther a set of all unique leaves present in the given MTBDDs
+	std::set<MTBDD> mtbdd_leaves;
+	for (uint32_t i = 0; i < mtbdd_cnt; i++) {
+		collect_mtbdd_leaves(mtbdds[i], mtbdd_leaves);
+	}
+
+	// Gather unique states in the previously extraced leaves
+	std::set<State> states;
+	for (auto mtbdd_leaf : mtbdd_leaves) {
+		auto leaf_tds = (Transition_Destination_Set*) mtbdd_getvalue(mtbdd_leaf);
+		for (auto state : *leaf_tds->destination_set) {
+			states.insert(state);
+		}
+	}
+
+	State* out_states = (State*) malloc(states.size() * sizeof(State*));
+
+	uint32_t i = 0;
+	for (auto state : states) {
+		out_states[i++] = state;
+	}
+
+	*out_state_cnt = states.size();
+
+	return out_states;
+}
+
+
+void amaya_mtbdd_ref(MTBDD dd)
 {
 	mtbdd_ref(dd);
 }
 
-void amaya_mtbdd_deref(MTBDD dd) 
+void amaya_mtbdd_deref(MTBDD dd)
 {
 	mtbdd_deref(dd);
 }
@@ -867,10 +904,10 @@ void amaya_sylvan_gc()
 void amaya_sylvan_try_performing_gc()
 {
 	LACE_ME;
-	sylvan_gc_test();	
+	sylvan_gc_test();
 }
 
-void amaya_sylvan_clear_cache() 
+void amaya_sylvan_clear_cache()
 {
 	LACE_ME;
 	sylvan_clear_cache();
