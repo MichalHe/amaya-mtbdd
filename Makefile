@@ -3,7 +3,7 @@ CXX=g++
 CFLAGS=$(shell pkg-config --libs sylvan) -O2 -shared -fPIC
 
 amaya-mtbdd.so: wrapper.o operations.o custom_leaf.o base.o
-	$(CXX) $(CFLAGS) -o $@ $^
+	$(CXX) -o $@ $^ $(CFLAGS)
 
 wrapper.o: wrapper.cpp wrapper.hpp operations.hpp base.hpp custom_leaf.hpp 
 	$(CXX) -c wrapper.cpp $(CFLAGS) -o wrapper.o
