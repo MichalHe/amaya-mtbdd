@@ -374,8 +374,8 @@ TASK_IMPL_2(MTBDD, rename_states_op, MTBDD, dd, uint64_t, param) {
 		auto old_tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
 		auto new_tds = new Transition_Destination_Set();
 
-		// @Refactoring
-		//new_tds->automaton_id = old_tds->automaton_id;
+		// @Refactoring(codeboy): automaton_id is not used anymore, that is why it is commented out
+		// new_tds->automaton_id = old_tds->automaton_id;
 		auto renamed_leaf_contents = new set<State>();
 		
 		for (auto state : *old_tds->destination_set) {
@@ -386,7 +386,7 @@ TASK_IMPL_2(MTBDD, rename_states_op, MTBDD, dd, uint64_t, param) {
 				printf("State name: %lu\n", state);
 				printf("Available mappings:");
 				for (auto mapping : *state_rename_info->states_rename_map) {
-					printf("%lu --> %lu \n", mapping.first, mapping.second);
+					printf("(%lu, %lu)", mapping.first, mapping.second);
 				}
 
 				assert(false);
@@ -415,11 +415,21 @@ TASK_IMPL_2(MTBDD, transform_metastates_to_ints_op, MTBDD, dd, uint64_t, param) 
 		auto old_tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
 		auto new_tds = new Transition_Destination_Set();
 
-		// @Refactoring
+		// @Refactoring: this is commented because we do not use automaton_ids anymore
 		// new_tds->automaton_id = old_tds->automaton_id;
 
-		// We got here, because no leaf with the same value was found in the cache
-		State metastate_state_number = transform_state->first_available_state_number++; // Increment it right away
+		State metastate_state_number;
+		bool is_cache_miss = false;
+		auto iterator = transform_state->alias_map->find(*old_tds->destination_set);
+		if (iterator == transform_state->alias_map->end()) {
+			metastate_state_number = transform_state->first_available_state_number++;
+		} else {
+			// Cache entry for this leaf must have gotten evicted,
+			// we need to return the previously returned leaf with
+			// the same alias number.
+			is_cache_miss = true;
+			metastate_state_number = iterator->second;
+		}
 
 		// @Warn: This relies on the fact that the state sets are represented in a canoical fashion - the std::set
 		// 		  keeps them sorted. That means that two metastates e.g {1, 2, 3} and {3, 2, 1} will get always hashed to the
@@ -429,13 +439,17 @@ TASK_IMPL_2(MTBDD, transform_metastates_to_ints_op, MTBDD, dd, uint64_t, param) 
 		transformed_leaf_contents->insert(metastate_state_number);
 		new_tds->destination_set = transformed_leaf_contents;
 
-		// Serialize the current metastate, so that the python side will get notified about the created mapping.
-		for (auto state : *old_tds->destination_set) {
-			transform_state->serialized_metastates->push_back(state);
+		if (!is_cache_miss) {
+			// Serialize the current metastate, so that the python side will get notified about the created mapping.
+			for (auto state : *old_tds->destination_set) {
+				transform_state->serialized_metastates->push_back(state);
+			}
+
+			transform_state->metastates_sizes->push_back(old_tds->destination_set->size());
+			transform_state->metastates_cnt += 1;
+
+			transform_state->alias_map->insert(std::make_pair(*old_tds->destination_set, metastate_state_number));
 		}
-		
-		transform_state->metastates_sizes->push_back(old_tds->destination_set->size());	
-		transform_state->metastates_cnt += 1;
 
 		return mtbdd_makeleaf(mtbdd_leaf_type_set, (uint64_t) new_tds);
 	}

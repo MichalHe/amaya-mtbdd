@@ -70,6 +70,7 @@ typedef struct
 
 typedef struct
 {
+	std::map<std::set<State>, State>* alias_map;
 	std::vector<State>* serialized_metastates;
 	std::vector<uint64_t>* metastates_sizes;
 	uint64_t metastates_cnt;
