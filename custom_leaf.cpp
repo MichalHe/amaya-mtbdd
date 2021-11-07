@@ -14,14 +14,14 @@ uint64_t mtbdd_leaf_type_set;
 
 sylvan::MTBDD
 make_set_leaf(Transition_Destination_Set* value) {
-	sylvan::MTBDD leaf = sylvan::mtbdd_makeleaf(mtbdd_leaf_type_set, (uint64_t) value);
+    sylvan::MTBDD leaf = sylvan::mtbdd_makeleaf(mtbdd_leaf_type_set, (uint64_t) value);
     return leaf;
 }
 
 /**
  * Function is called when a new node is being inserted to the hash table.
  *
- * @param state_set_ptr 	Pointer to an old valid leaf value, which is being
+ * @param state_set_ptr     Pointer to an old valid leaf value, which is being
  * copied to the hash table. This means that its a pointer to a poiter to a
  * vector.
  */
@@ -46,25 +46,28 @@ int set_leaf_equals(uint64_t a_ptr, uint64_t b_ptr)
     Transition_Destination_Set *a_tds = (Transition_Destination_Set *)a_ptr;
     Transition_Destination_Set *b_tds = (Transition_Destination_Set *)b_ptr;
 
-	//if (a_tds->automaton_id == b_tds->automaton_id)
-	if ((*a_tds->destination_set) == (*b_tds->destination_set))
-	{
-		return true;
-	};
-	return false;
+    //if (a_tds->automaton_id == b_tds->automaton_id)
+    if ((*a_tds->destination_set) == (*b_tds->destination_set))
+    {
+        return true;
+    };
+    return false;
 }
 
 uint64_t set_leaf_hash(const uint64_t contents_ptr, const uint64_t seed)
 {
     Transition_Destination_Set *tds = (Transition_Destination_Set *)contents_ptr;
 
-	unsigned long hash = seed;
+    const uint64_t prime = 1099511628211;
+    uint64_t hash = seed;
 
-	for (auto state : *tds->destination_set)
-		hash = state + (hash << 6) + (hash << 16) - hash;
+    for (auto state : *tds->destination_set) {
+        hash = hash ^ state;
+        hash = rotl64(hash, 47);
+        hash = hash * prime;
+    }
 
-	return hash;
-
+    return hash ^ (hash >> 32);
 }
 
 char *set_leaf_to_str(int comp, uint64_t leaf_val, char *buf, size_t buflen)
