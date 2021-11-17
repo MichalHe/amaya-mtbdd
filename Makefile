@@ -1,21 +1,28 @@
-CC=gcc
 CXX=g++
-CFLAGS=$(shell pkg-config --libs sylvan) -O2 -shared -fPIC
+CXXLIBS=$(shell pkg-config --libs sylvan)
+CXXFLAGS=-O2 -shared -fPIC
 
-amaya-mtbdd.so: wrapper.o operations.o custom_leaf.o base.o
-	$(CXX) -o $@ $^ $(CFLAGS)
+.PHONY := clean
 
-wrapper.o: wrapper.cpp wrapper.hpp operations.hpp base.hpp custom_leaf.hpp 
-	$(CXX) -c wrapper.cpp $(CFLAGS) -o wrapper.o
+shared-lib: build build/amaya-mtbdd.so
 
-operations.o: operations.cpp operations.hpp base.hpp
-	$(CXX) -c operations.cpp $(CFLAGS) -o operations.o
+build/amaya-mtbdd.so: build/wrapper.o build/operations.o build/custom_leaf.o build/base.o
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(CXXLIBS)
 
-custom_leaf.o: custom_leaf.cpp custom_leaf.hpp base.hpp
-	$(CXX) -c custom_leaf.cpp $(CFLAGS) -o custom_leaf.o
+build/wrapper.o: src/wrapper.cpp include/wrapper.hpp include/operations.hpp include/base.hpp include/custom_leaf.hpp 
+	$(CXX) -c $(CXXFLAGS) src/wrapper.cpp -o build/wrapper.o
 
-base.o: base.cpp base.hpp
-	$(CXX) -c base.cpp $(CFLAGS) -o base.o
+build/operations.o: src/operations.cpp include/operations.hpp include/base.hpp
+	$(CXX) -c $(CXXFLAGS) src/operations.cpp -o build/operations.o
+
+build/custom_leaf.o: src/custom_leaf.cpp include/custom_leaf.hpp include/base.hpp
+	$(CXX) -c $(CXXFLAGS) src/custom_leaf.cpp -o build/custom_leaf.o
+
+build/base.o: src/base.cpp include/base.hpp
+	$(CXX) -c $(CXXFLAGS) src/base.cpp -o build/base.o
+
+build:
+	-mkdir build
 
 clean:
 	rm base.o custom_leaf.o operations.o wrapper.o amaya-mtbdd.so

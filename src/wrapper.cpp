@@ -1,4 +1,7 @@
-#include "wrapper.hpp"
+#include "../include/wrapper.hpp"
+#include "../include/base.hpp"
+#include "../include/custom_leaf.hpp"
+#include "../include/operations.hpp"
 
 #include <algorithm>
 #include <sylvan.h>
@@ -11,10 +14,6 @@
 #include <utility>
 #include <iostream>
 #include <cstring>
-
-#include "base.hpp"
-#include "custom_leaf.hpp"
-#include "operations.hpp"
 
 using namespace sylvan;
 
