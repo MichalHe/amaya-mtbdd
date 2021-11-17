@@ -149,6 +149,7 @@ TASK_IMPL_3(MTBDD, transitions_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64
 
         auto intersection_tds = new Transition_Destination_Set(intersection_leaf_states);
         MTBDD intersection_leaf = make_set_leaf(intersection_tds);
+		delete intersection_tds;
         return intersection_leaf;
     }
 
@@ -203,6 +204,7 @@ TASK_IMPL_3(MTBDD, transitions_union_op, MTBDD *, pa, MTBDD *, pb, uint64_t, par
         Transition_Destination_Set *union_tds = new Transition_Destination_Set(union_set);
 
         MTBDD union_leaf = make_set_leaf(union_tds); // Wrap the TDS with a MTBDD leaf.
+		delete union_tds;
         return union_leaf;
     }
 
@@ -252,7 +254,9 @@ TASK_IMPL_2(MTBDD, remove_states_op, MTBDD, dd, uint64_t, param) {
 			return mtbdd_false;
 		}
 		
-		return make_set_leaf(new_tds);
+		MTBDD leaf = make_set_leaf(new_tds);
+		delete new_tds;
+		return leaf;
 	}
 
 	return mtbdd_invalid;
@@ -281,7 +285,9 @@ TASK_IMPL_2(MTBDD, complete_transition_with_trapstate_op, MTBDD, dd, uint64_t, p
 		tds->destination_set->insert(op_info->trapstate);
 
 		op_info->had_effect = true;
-		return make_set_leaf(tds);
+		MTBDD leaf =  make_set_leaf(tds);
+		delete tds;
+		return leaf;
 	} else if (mtbdd_isleaf(dd)) {
 		// @TODO: Check that the complete with trapstate does have the same automaton ID as the node 
 		// being returned.
@@ -358,7 +364,9 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
 		}
 		new_leaf_contents->destination_set = new_leaf_destination_set;
 		
-		return make_set_leaf(new_leaf_contents);
+		MTBDD leaf = make_set_leaf(new_leaf_contents);
+		delete new_leaf_contents;
+		return leaf;
     }
 
     return mtbdd_invalid;
@@ -451,7 +459,9 @@ TASK_IMPL_2(MTBDD, transform_metastates_to_ints_op, MTBDD, dd, uint64_t, param) 
 			transform_state->alias_map->insert(std::make_pair(*old_tds->destination_set, metastate_state_number));
 		}
 
-		return mtbdd_makeleaf(mtbdd_leaf_type_set, (uint64_t) new_tds);
+		MTBDD leaf = make_set_leaf(new_tds);
+		delete new_tds;
+		return leaf;
 	}
 
 	return mtbdd_invalid;
