@@ -241,6 +241,7 @@ extern "C" {
 		uint32_t* out_state_cnt);
 
 	void amaya_begin_pad_closure(
+        State new_final_state,
 		State *final_states,
 		uint32_t final_states_cnt);
 

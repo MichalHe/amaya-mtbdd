@@ -498,19 +498,25 @@ State* amaya_mtbdd_get_state_post(MTBDD dd, uint32_t *post_size)
 
 
 void amaya_begin_pad_closure(
+        State new_final_state,
 		State *final_states,
 		uint32_t final_states_cnt) 
 {
 	PAD_CLOSURE_OP_STATE = (Pad_Closure_Info*) malloc(sizeof(Pad_Closure_Info));	
 	assert(PAD_CLOSURE_OP_STATE != NULL);
 
+    // Make a copy of the final states, because they will be deallocated after
+    // the Python function returns
 	State* final_states_cpy = (State*) malloc(sizeof(State) * final_states_cnt);	
 	assert(final_states_cpy != NULL);
 
 	std::memcpy(final_states_cpy, final_states, (sizeof(State) * final_states_cnt));
-
-	PAD_CLOSURE_OP_STATE->final_states = final_states_cpy;
+    
+    PAD_CLOSURE_OP_STATE->new_final_state  = new_final_state;
+	PAD_CLOSURE_OP_STATE->final_states     = final_states_cpy;
 	PAD_CLOSURE_OP_STATE->final_states_cnt = final_states_cnt;
+
+    // TODO: Is the cache even operational?
 	PAD_CLOSURE_OP_STATE->operation_id_cache = new std::unordered_map<State, std::pair<MTBDD, uint64_t>>();
 	PAD_CLOSURE_OP_STATE->first_available_r_cache_id = (1LL << 33);
 }
