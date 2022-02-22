@@ -506,11 +506,15 @@ void amaya_begin_pad_closure(
 	assert(PAD_CLOSURE_OP_STATE != NULL);
 
     // Make a copy of the final states, because they will be deallocated after
-    // the Python function returns
-	State* final_states_cpy = (State*) malloc(sizeof(State) * final_states_cnt);	
+    // the Python function returns. The +1 is for the new_final_state.
+	State* final_states_cpy = (State*) malloc(sizeof(State) * (final_states_cnt + 1));
 	assert(final_states_cpy != NULL);
 
 	std::memcpy(final_states_cpy, final_states, (sizeof(State) * final_states_cnt));
+
+    // Treat new_final_state as if it was already present in the automaton, so that
+    // no reallocs will need to happen during the pad closure
+    final_states_cpy[final_states_cnt] = new_final_state;
     
     PAD_CLOSURE_OP_STATE->new_final_state  = new_final_state;
 	PAD_CLOSURE_OP_STATE->final_states     = final_states_cpy;
