@@ -153,8 +153,7 @@ TASK_IMPL_3(MTBDD, transitions_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64
         return intersection_leaf;
     }
 
-    // TODO: Perform pointer swap here, so the cache would be utilized
-    // (commutative).
+    // TODO: Perform pointer swap here, so the cache would be utilized (operation is commutative).
     // TODO: Utilize operation cache.
     return mtbdd_invalid;
 }
@@ -296,31 +295,50 @@ TASK_IMPL_2(MTBDD, complete_transition_with_trapstate_op, MTBDD, dd, uint64_t, p
 	return mtbdd_invalid;
 }
 
+
+inline bool contains_final_state(Pad_Closure_Info* pci, Transition_Destination_Set* tds)
+{
+    for (State current_post_state: *tds->destination_set) {
+        for (uint32_t i = 0; i < pci->final_states_cnt; i++) {
+            if (current_post_state == pci->final_states[i]) 
+                return true;
+        }
+    }
+    return false;
+}
+
+
 /**
  * Performs pad closure on the two given transitions. Information about which states are final
  * and (out) information about whether the pad closure had any effect (the left transition was 
  * modified) are passed via `op_param` (a pointer to Pad_Closure_Info struct).
  */
-TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, op_param) {
+TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, op_param) 
+{
 	MTBDD left = *p_left, right = *p_right;
+
     if (left == mtbdd_false) {
-        return mtbdd_false; // When the left leaf leads to nothing via some zeta0, we cannot propagate anything via this symbol
-    }
-    if (right == mtbdd_false) {
-        return left; // Same here
+        // The pre-state (left) leads to nothing, nothing can be propagated
+        return mtbdd_false; 
     }
 
-    // If both are non-false leaves, we can try doing the actual padding closure
+    if (right == mtbdd_false) {
+        // The state (right) leads to nothing, nothing can be propagated
+        // Return the unmodified left leaf (no change)
+        return left;
+    }
+
     if (mtbdd_isleaf(left) && mtbdd_isleaf(right)) {
+        // Both are leaves, do the actual padding closure
         auto left_tds  = (Transition_Destination_Set*) mtbdd_getvalue(left);
         auto right_tds = (Transition_Destination_Set*) mtbdd_getvalue(right);
 
 	    auto pci = PAD_CLOSURE_OP_STATE;
 
-		// Check whether the transition destination state even leads the the right state (might not)
+		// Check whether the MTBDD of the pre-state (left) even leads to the current state (right)
 		if (left_tds->destination_set->find(pci->right_state) == left_tds->destination_set->end()) {
-			// Does not lead to the right state, therefore cannot propagate padding.
-			return left; 
+			// Does not lead to the current state, therefore, the saturation property was not broken (here) 
+			return left;
 		}
 
 	    bool is_final;
@@ -329,43 +347,43 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
 		// 			  the identifiaction process will be performed only once for every leaf.
 		std::vector<State> new_final_states_reachable_from_right_state;
 
-	    for (State rs: *right_tds->destination_set)
-	    {
-			is_final = false;
+        // Check whether any final state is present in the post of the current state
+        bool is_final_reachable_from_current = contains_final_state(pci, right_tds);
 
-			// Is the current right state final?
-			for (uint32_t i = 0; i < pci->final_states_cnt; i++) {
-				if (rs == pci->final_states[i]) {
-					// @DeleteME
-					is_final = true;
-					break; // We have the information we required, we don't need to iterate further.
-				}
-			}
-			
-			if (is_final) {
-				if (left_tds->destination_set->find(rs) == left_tds->destination_set->end()) {
-					new_final_states_reachable_from_right_state.push_back(rs);
-				}
-			}
-	    }
+        if (!is_final_reachable_from_current) {
+            // If there is no final state in the post of the current state
+            // the saturation cannot be broken here
+            return left; // No propagation
+        }
 
-		if (new_final_states_reachable_from_right_state.empty()) {
-			return left;  // No final states
-		}
-
+        // Some final state is reachable from the current state via the current symbol
+        // Check that some final state is reachable from the pre-state aswell, otherwise
+        // the saturation property is broken
+        bool is_final_reachable_from_pre = contains_final_state(pci, left_tds);
+        
+        if (is_final_reachable_from_pre) {
+            // Some final state is reachable from both the pre-state, and the current state
+            // the saturation property is satisfied.
+            return left;  // Nothing to propagate
+        }
+            
+        // The saturation property is broken, fix it by adding the new final 
+        // state to the pre-state (left) TDS 
 		Transition_Destination_Set* new_leaf_contents = new Transition_Destination_Set();
-		// @Refactoring
-		//new_leaf_contents->automaton_id = left_tds->automaton_id;
 
+		// @Refactoring
+		// new_leaf_contents->automaton_id = left_tds->automaton_id;
+        
+        // Make new state set from the original leaf + add the new final state
 		auto new_leaf_destination_set = new std::set<State>();
-		for (auto old_state : *left_tds->destination_set) new_leaf_destination_set->insert(old_state);
-		for (auto final_state_added_by_pad_closure : new_final_states_reachable_from_right_state) {
-			new_leaf_destination_set->insert(final_state_added_by_pad_closure);
-		}
+		for (auto original_state: *left_tds->destination_set) new_leaf_destination_set->insert(original_state);
+        new_leaf_destination_set->insert(pci->new_final_state);
+
 		new_leaf_contents->destination_set = new_leaf_destination_set;
 		
 		MTBDD leaf = make_set_leaf(new_leaf_contents);
 		delete new_leaf_contents;
+
 		return leaf;
     }
 
