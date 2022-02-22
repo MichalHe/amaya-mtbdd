@@ -25,4 +25,4 @@ build:
 	-mkdir build
 
 clean:
-	rm base.o custom_leaf.o operations.o wrapper.o amaya-mtbdd.so
+	rm build/*
