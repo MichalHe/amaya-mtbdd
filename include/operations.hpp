@@ -33,7 +33,6 @@ TASK_DECL_2(sylvan::MTBDD, transform_metastates_to_ints_op, sylvan::MTBDD, uint6
 
 typedef struct
 {
-	bool had_effect;
     State new_final_state;      // Final state to be added if the saturation property is broken
 	State left_state;           // For debug purposes
 	State right_state;          // Actually used

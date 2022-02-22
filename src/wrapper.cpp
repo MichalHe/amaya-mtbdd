@@ -548,7 +548,7 @@ MTBDD amaya_mtbdd_do_pad_closure(
 	// 		  final states are different. ---> Provide transaction like interface.
 	
 	PAD_CLOSURE_OP_STATE->right_state = right_state;
-	PAD_CLOSURE_OP_STATE->left_state = left_state;
+	PAD_CLOSURE_OP_STATE->left_state  = left_state;
 	
 	// When we use the same R mtbdd **with the same r state** but with different L mtbbds we might reuse cache
 	// This means that operation parameters which control the cache selection process can be chosen in such a way 
@@ -559,7 +559,7 @@ MTBDD amaya_mtbdd_do_pad_closure(
 	if (r_state_op_cache_it != PAD_CLOSURE_OP_STATE->operation_id_cache->end()) {
 		// We have some cache for this r-state, check whether the r-mtbdd matches the stored one
 		// IF not, that means the mtbdd for r-state was already modified during pad closure (at a different time)
-		// And therefore new operation cachce needs to be "assigned"
+		// And therefore new operation chache needs to be "assigned"
 		auto r_cache_entry = r_state_op_cache_it->second;
 
 		if (r_cache_entry.first != right_dd) {
@@ -595,9 +595,9 @@ MTBDD amaya_mtbdd_do_pad_closure(
 	MTBDD result =  mtbdd_applyp(
 			left_dd, 
 			right_dd,
-			1LL, 			  // This allows using caches for the same R-state + R-MTBDD results
+			1LL, 			         // This allows using caches for the same R-state + R-MTBDD results
 			TASK(pad_closure_op), 
-			PAD_CLOSURE_OP_COUNTER);  // This identifies the overall padding closure being performed,
+			PAD_CLOSURE_OP_COUNTER); // This identifies the overall padding closure being performed,
 
 	return result;
 }

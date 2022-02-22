@@ -97,7 +97,8 @@ extern "C" {
 	 * @param right 		The transitions of a state that has some transitions leading to the final state.
 	 * @param final_states 		Pointer to an array containing the final states of the automaton.
 	 * @param final_states_cnt 	Number of states in the final_state array.
-	 * @returns Boolean indicating whether the left mtbdd was modified (new transitions to final state were added).
+	 * @returns The newly created MTBDD. If the MTBDD has the same value as the left_dd, 
+     *          then the pad_closure had no effect.
 	 */
 	sylvan::MTBDD amaya_mtbdd_do_pad_closure(
 			State 			left_state,
