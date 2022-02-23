@@ -518,7 +518,7 @@ void amaya_begin_pad_closure(
     
     PAD_CLOSURE_OP_STATE->new_final_state  = new_final_state;
 	PAD_CLOSURE_OP_STATE->final_states     = final_states_cpy;
-	PAD_CLOSURE_OP_STATE->final_states_cnt = final_states_cnt;
+	PAD_CLOSURE_OP_STATE->final_states_cnt = final_states_cnt + 1; // Include the new one aswell
 
     // TODO: Is the cache even operational?
 	PAD_CLOSURE_OP_STATE->operation_id_cache = new std::unordered_map<State, std::pair<MTBDD, uint64_t>>();
