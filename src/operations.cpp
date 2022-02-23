@@ -341,12 +341,6 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
 			return left;
 		}
 
-	    bool is_final;
-
-		// @Optimize: The final states reachable via r-mtbdd can be computed before and stored in the cache used, this way
-		// 			  the identifiaction process will be performed only once for every leaf.
-		std::vector<State> new_final_states_reachable_from_right_state;
-
         // Check whether any final state is present in the post of the current state
         bool is_final_reachable_from_current = contains_final_state(pci, right_tds);
 
