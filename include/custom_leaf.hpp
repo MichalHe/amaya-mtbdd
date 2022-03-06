@@ -6,6 +6,8 @@
 #include <sylvan.h>
 #include "base.hpp"
 
+extern uint64_t mtbdd_leaf_type_set;
+
 #ifndef rotl64
 static inline uint64_t rotl64(uint64_t x, int8_t r)
 {

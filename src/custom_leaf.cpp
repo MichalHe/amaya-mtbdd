@@ -30,8 +30,7 @@ void mk_set_leaf(uint64_t *target_destination_set_ptr)
     Transition_Destination_Set *original_tds = (Transition_Destination_Set *)*target_destination_set_ptr;
     Transition_Destination_Set *new_tds = new Transition_Destination_Set(*original_tds); // Copy construct
 
-    // Accorting to the GMP leaf implementation, it should suffice to just write
-    // the new value to the state_set_ptr.
+    // Accorting to the GMP leaf implementation, it should suffice to just write the new value to the state_set_ptr.
     *(Transition_Destination_Set **)target_destination_set_ptr = new_tds;
 }
 

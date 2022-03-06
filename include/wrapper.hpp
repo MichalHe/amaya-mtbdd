@@ -8,8 +8,8 @@
 extern "C" {
 
 	// Export constants (wrapped)
-	extern const sylvan::MTBDD w_mtbdd_true  = sylvan::mtbdd_true; 
-	extern const sylvan::MTBDD w_mtbdd_false = sylvan::mtbdd_false;
+	const sylvan::MTBDD w_mtbdd_true  = sylvan::mtbdd_true; 
+	const sylvan::MTBDD w_mtbdd_false = sylvan::mtbdd_false;
 
 	// Functions
 	sylvan::MTBDD amaya_unite_mtbdds(
