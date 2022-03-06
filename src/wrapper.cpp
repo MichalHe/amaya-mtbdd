@@ -1,6 +1,7 @@
 #include "../include/wrapper.hpp"
 #include "../include/base.hpp"
 #include "../include/custom_leaf.hpp"
+#include "../include/hopcroft_leaf.hpp"
 #include "../include/operations.hpp"
 
 #include <algorithm>
@@ -27,7 +28,6 @@ using std::pair;
 using std::unordered_set;
 
 static bool DEBUG_ON = false;
-extern uint64_t mtbdd_leaf_type_set;
 
 extern void* 		REMOVE_STATES_OP_PARAM;
 extern uint64_t 	REMOVE_STATES_OP_COUNTER;
@@ -75,14 +75,21 @@ void init_machinery()
 	
 	//sylvan_gc_hook_pregc(TASK(gc_start));
 
-  // Initialize my own sylvan type.
-
+    // Initialize leaf type for leaves containing sets - represents outgoing transition from a state
     mtbdd_leaf_type_set = sylvan_mt_create_type();
     sylvan_mt_set_hash(mtbdd_leaf_type_set, set_leaf_hash);
     sylvan_mt_set_equals(mtbdd_leaf_type_set, set_leaf_equals);
     sylvan_mt_set_create(mtbdd_leaf_type_set, mk_set_leaf);
     sylvan_mt_set_destroy(mtbdd_leaf_type_set, destroy_set_leaf);
     sylvan_mt_set_to_str(mtbdd_leaf_type_set, set_leaf_to_str);
+
+    // Initialize leave type for efficient hopcroft minimization 
+    mtbdd_leaf_type_hopcroft = sylvan_mt_create_type();
+    sylvan_mt_set_hash(mtbdd_leaf_type_hopcroft,    hopcroft_leaf_hash);
+    sylvan_mt_set_equals(mtbdd_leaf_type_hopcroft,  hopcroft_leaf_equals);
+    sylvan_mt_set_create(mtbdd_leaf_type_hopcroft,  hopcroft_leaf_create);
+    sylvan_mt_set_destroy(mtbdd_leaf_type_hopcroft, hopcroft_leaf_destroy);
+    sylvan_mt_set_to_str(mtbdd_leaf_type_hopcroft,  hopcroft_leaf_to_str);
 }
 
 void shutdown_machinery() 
