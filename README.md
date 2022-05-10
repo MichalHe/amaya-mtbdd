@@ -24,7 +24,7 @@ After `Sylvan` has been built and installed:
 git clone git@github.com:MichalHe/amaya-mtbdd.git
 cd amaya-mtbdd
 make
-ln -s <AMAYA_REPO>/amaya-mtbdd.so build/amaya-mtbdd.so
+ln -s <AMAYA_REPO>/amaya/amaya-mtbdd.so build/amaya-mtbdd.so
 ```
 
 ## How does it work
