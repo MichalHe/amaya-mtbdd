@@ -5,6 +5,7 @@
 #include <vector>
 #include <utility>
 #include <map>
+#include <string>
 #include <unordered_set>
 #include <unordered_map>
 
@@ -19,7 +20,7 @@ TASK_DECL_3(sylvan::MTBDD, transitions_intersection_op, sylvan::MTBDD *, sylvan:
  * The *abstraction* F definition.
  * Task returns a MTBDD. Task accepts two MTBDDs - left and right child (subtree) of a
  * node for variable <v> specified in variable set passed to abstract_apply with this operator.
- * The final int is a number of variables that are missing when reaching a leaf in MTBDD, but there is 
+ * The final int is a number of variables that are missing when reaching a leaf in MTBDD, but there is
  * still <k> number of variables in the variable set passed to abstract_apply.
  */
 TASK_DECL_3(sylvan::MTBDD, project_variable_away_abstract_op, sylvan::MTBDD, sylvan::MTBDD, int);
@@ -36,7 +37,7 @@ typedef struct
     State new_final_state;      // Final state to be added if the saturation property is broken
 	State left_state;           // For debug purposes
 	State right_state;          // Actually used
-	
+
 	std::unordered_map<State, std::pair<sylvan::MTBDD, uint64_t>> *operation_id_cache;
 	uint64_t first_available_r_cache_id;
 	State *final_states;
@@ -76,5 +77,17 @@ typedef struct
 	uint64_t metastates_cnt;
 	State first_available_state_number;
 } Transform_Metastates_To_Ints_State;
+
+struct NFA minimize_hopcroft(struct NFA& nfa);
+
+
+// NFA operations
+void nfa_print_transitions(struct NFA& nfa);
+
+std::pair<std::set<State>, std::set<State>>
+fragment_dest_states_using_partition(const std::set<State>& dest_states, const std::set<State>& partition);
+
+template<typename C>
+std::string states_to_str(const C& states);
 
 #endif

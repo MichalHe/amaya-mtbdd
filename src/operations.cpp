@@ -21,12 +21,15 @@
 #include <iostream>
 #include <vector>
 #include <map>
+#include <string>
+#include <sstream>
 
 using std::cout;
 using std::endl;
 using std::set;
 using std::vector;
 using std::stringstream;
+using std::string;
 using std::map;
 using std::pair;
 using std::unordered_set;
@@ -39,6 +42,10 @@ using sylvan::mtbdd_isleaf;
 using sylvan::mtbdd_getvalue;
 using sylvan::mtbdd_invalid;
 using sylvan::mtbdd_applyp_CALL;
+using sylvan::mtbdd_support_CALL;
+using sylvan::mtbdd_enum_first;
+using sylvan::mtbdd_enum_next;
+using sylvan::mtbdd_set_count;
 
 extern uint64_t mtbdd_leaf_type_set;
 
@@ -193,7 +200,7 @@ TASK_IMPL_3(MTBDD, transitions_union_op, MTBDD *, pa, MTBDD *, pb, uint64_t, par
         //{
             //param = (uint32_t)tds_a.automaton_id;
         //}
-		
+
         std::set<State> *union_set = new std::set<State>();
         std::set_union(
             tds_a.destination_set->begin(), tds_a.destination_set->end(),
@@ -213,7 +220,7 @@ TASK_IMPL_3(MTBDD, transitions_union_op, MTBDD *, pa, MTBDD *, pb, uint64_t, par
 /**
  * ABOUT ABSTRACTIONS:
  * Abstraction operation defines what should happen when a variable that should be projected
- * away should happen with the subtrees (one for high, one for low) that should have 
+ * away should happen with the subtrees (one for high, one for low) that should have
  * the previous variable as a parent.
  *
  * THIS OPERATOR:
@@ -242,9 +249,9 @@ TASK_IMPL_2(MTBDD, remove_states_op, MTBDD, dd, uint64_t, param) {
 		auto tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
 
 		auto new_tds = new Transition_Destination_Set(*tds); // Make leaf value copy.
-		
+
 		for (auto state : *tds->destination_set) {
-			bool should_be_removed = states_to_remove->find(state) != states_to_remove->end();	
+			bool should_be_removed = states_to_remove->find(state) != states_to_remove->end();
 			if (should_be_removed) new_tds->destination_set->erase(state);
 		}
 
@@ -252,14 +259,14 @@ TASK_IMPL_2(MTBDD, remove_states_op, MTBDD, dd, uint64_t, param) {
 			delete new_tds;
 			return mtbdd_false;
 		}
-		
+
 		MTBDD leaf = make_set_leaf(new_tds);
 		delete new_tds;
 		return leaf;
 	}
 
 	return mtbdd_invalid;
-} 
+}
 
 /**
  * Completes the given transition MTBDD with trapstate.
@@ -267,7 +274,7 @@ TASK_IMPL_2(MTBDD, remove_states_op, MTBDD, dd, uint64_t, param) {
  * NOTE:
  * The param is not used - sylvan cachce problems, see remove_states_op. Instead the information
  * needed for the operation (like automaton ID and trapstate value) is passed via global variable
- * ADD_TRAPSTATE_OP_PARAM. This should be used with combination with ADD_TRAPSTATE_OP_COUNTER to 
+ * ADD_TRAPSTATE_OP_PARAM. This should be used with combination with ADD_TRAPSTATE_OP_COUNTER to
  * achieve cache utilization only for the the current completition.
  */
 TASK_IMPL_2(MTBDD, complete_transition_with_trapstate_op, MTBDD, dd, uint64_t, param)
@@ -288,7 +295,7 @@ TASK_IMPL_2(MTBDD, complete_transition_with_trapstate_op, MTBDD, dd, uint64_t, p
 		delete tds;
 		return leaf;
 	} else if (mtbdd_isleaf(dd)) {
-		// @TODO: Check that the complete with trapstate does have the same automaton ID as the node 
+		// @TODO: Check that the complete with trapstate does have the same automaton ID as the node
 		// being returned.
 		return dd;
 	}
@@ -300,7 +307,7 @@ inline bool contains_final_state(Pad_Closure_Info* pci, Transition_Destination_S
 {
     for (State current_post_state: *tds->destination_set) {
         for (uint32_t i = 0; i < pci->final_states_cnt; i++) {
-            if (current_post_state == pci->final_states[i]) 
+            if (current_post_state == pci->final_states[i])
                 return true;
         }
     }
@@ -310,16 +317,16 @@ inline bool contains_final_state(Pad_Closure_Info* pci, Transition_Destination_S
 
 /**
  * Performs pad closure on the two given transitions. Information about which states are final
- * and (out) information about whether the pad closure had any effect (the left transition was 
+ * and (out) information about whether the pad closure had any effect (the left transition was
  * modified) are passed via `op_param` (a pointer to Pad_Closure_Info struct).
  */
-TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, op_param) 
+TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, op_param)
 {
 	MTBDD left = *p_left, right = *p_right;
 
     if (left == mtbdd_false) {
         // The pre-state (left) leads to nothing, nothing can be propagated
-        return mtbdd_false; 
+        return mtbdd_false;
     }
 
     if (right == mtbdd_false) {
@@ -337,7 +344,7 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
 
 		// Check whether the MTBDD of the pre-state (left) even leads to the current state (right)
 		if (left_tds->destination_set->find(pci->right_state) == left_tds->destination_set->end()) {
-			// Does not lead to the current state, therefore, the saturation property was not broken (here) 
+			// Does not lead to the current state, therefore, the saturation property was not broken (here)
 			return left;
 		}
 
@@ -354,27 +361,27 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
         // Check that some final state is reachable from the pre-state aswell, otherwise
         // the saturation property is broken
         bool is_final_reachable_from_pre = contains_final_state(pci, left_tds);
-        
+
         if (is_final_reachable_from_pre) {
             // Some final state is reachable from both the pre-state, and the current state
             // the saturation property is satisfied.
             return left;  // Nothing to propagate
         }
-            
-        // The saturation property is broken, fix it by adding the new final 
-        // state to the pre-state (left) TDS 
+
+        // The saturation property is broken, fix it by adding the new final
+        // state to the pre-state (left) TDS
 		Transition_Destination_Set* new_leaf_contents = new Transition_Destination_Set();
 
 		// @Refactoring
 		// new_leaf_contents->automaton_id = left_tds->automaton_id;
-        
+
         // Make new state set from the original leaf + add the new final state
 		auto new_leaf_destination_set = new std::set<State>();
 		for (auto original_state: *left_tds->destination_set) new_leaf_destination_set->insert(original_state);
         new_leaf_destination_set->insert(pci->new_final_state);
 
 		new_leaf_contents->destination_set = new_leaf_destination_set;
-		
+
 		MTBDD leaf = make_set_leaf(new_leaf_contents);
 		delete new_leaf_contents;
 
@@ -397,7 +404,7 @@ TASK_IMPL_2(MTBDD, rename_states_op, MTBDD, dd, uint64_t, param) {
 		// @Refactoring(codeboy): automaton_id is not used anymore, that is why it is commented out
 		// new_tds->automaton_id = old_tds->automaton_id;
 		auto renamed_leaf_contents = new set<State>();
-		
+
 		for (auto state : *old_tds->destination_set) {
 			auto new_name_it = state_rename_info->states_rename_map->find(state);
 
@@ -477,4 +484,244 @@ TASK_IMPL_2(MTBDD, transform_metastates_to_ints_op, MTBDD, dd, uint64_t, param) 
 	}
 
 	return mtbdd_invalid;
+}
+
+
+template<typename C>
+std::string states_to_str(C const& states) {
+    std::stringstream partition_str;
+
+    partition_str << "{";
+    if (!states.empty()) {
+        auto state_it = states.begin();
+        partition_str << *(state_it++);
+        for (; state_it != states.end(); ++state_it) {
+            partition_str << ", " << *state_it;
+        }
+    }
+    partition_str << "}";
+
+    return partition_str.str();
+}
+
+
+std::string nfa_to_str(struct NFA& nfa) {
+    std::stringstream nfa_str; 
+    nfa_str << "NFA:" << std::endl
+            << "> States:         " << states_to_str(nfa.states) << std::endl
+            << "> Final states:   " << states_to_str(nfa.final_states) << std::endl
+            << "> Initial states: " << states_to_str(nfa.initial_states) << std::endl;
+    return nfa_str.str();
+}
+
+std::pair<std::set<State>, std::set<State>>
+fragment_dest_states_using_partition(const std::set<State>& dest_states, const std::set<State>& partition)
+{
+    std::set<State> intersection, difference;
+    
+    std::set_intersection(dest_states.begin(), dest_states.end(),
+                          partition.begin(), partition.end(),
+                          std::inserter(intersection, intersection.begin()));
+
+    // @Optimize: Do not compute the difference if we know that intersection is the same as dest_states
+    std::set_difference(partition.begin(), partition.end(),
+                        intersection.begin(), intersection.end(),
+                        std::inserter(difference, difference.begin()));
+
+    return {intersection, difference};
+}
+
+struct NFA minimize_hopcroft(struct NFA& nfa)
+{
+    LACE_ME;
+    
+    // Create initial partitions
+    std::set<State> nonfinal_states_ordered;
+    std::set_difference(nfa.states.begin(), nfa.states.end(),
+                        nfa.final_states.begin(), nfa.final_states.end(),
+                        std::inserter(nonfinal_states_ordered, nonfinal_states_ordered.begin()));
+
+    std::vector<std::set<State>> partitions_to_check {nfa.final_states, nonfinal_states_ordered};
+
+    std::set<std::set<State>> existing_partitions {nfa.final_states, nonfinal_states_ordered};
+    
+    
+    uint8_t path_in_mtbdd_to_leaf[nfa.var_count];
+
+    // Refine partitions untill fixpoint
+    while (!partitions_to_check.empty()) {
+        auto current_partition = partitions_to_check.back();
+        partitions_to_check.pop_back();
+
+        // Compute MTBDD encoding all outgoing transitions of the current partition
+        MTBDD partition_mtbdd = mtbdd_false;
+        for (auto state : current_partition){
+            MTBDD mtbdd_for_current_partition_component = nfa.transitions[state];
+
+            partition_mtbdd = mtbdd_applyp(partition_mtbdd,
+                                           mtbdd_for_current_partition_component,
+                                           (uint64_t) 0,
+                                           TASK(transitions_union_op),
+                                           AMAYA_UNION_OP_ID);
+        }
+
+        // Iterate over all leaves of the created MTBDD. Every such a leaf represents a single post set over a symbol
+        // given implicitly by the path in the MTBDD.
+        MTBDD    support      = mtbdd_support(partition_mtbdd);
+        uint32_t support_size = mtbdd_set_count(support);
+
+        MTBDD leaf = mtbdd_enum_first(partition_mtbdd, support, path_in_mtbdd_to_leaf, NULL);
+
+        while (leaf != mtbdd_false) {
+            // See whether the states reachable via this symbol belong to one equivalence class
+            Transition_Destination_Set* leaf_contents = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
+
+            // If the entire partition leads to one state it cannot be fragmented using this single state
+            if (leaf_contents->destination_set->size() == 1) {
+                leaf = mtbdd_enum_next(partition_mtbdd, support, path_in_mtbdd_to_leaf, NULL);
+                continue;
+            }
+
+            // Check if the entire destination set belongs to same equivalence class, or we need to fragment it
+            for (auto existing_partition: existing_partitions) {
+                // @Optimize: Pass in references to sets - reuse them, and avoid needless allocations
+                auto fragment = fragment_dest_states_using_partition(*leaf_contents->destination_set, existing_partition);
+                if (fragment.first.size() == leaf_contents->destination_set->size() || fragment.first.size() == 0) {
+#if DEBUG
+                    std::cout << "Unable to fragment " << states_to_str(*leaf_contents->destination_set)
+                              << " using partition " << states_to_str(existing_partition)
+                              << std::endl;
+#endif
+                    
+                } else {
+#if DEBUG
+                    std::cout << "Fragmenting " << states_to_str(*leaf_contents->destination_set)
+                              << " with partition " << states_to_str(existing_partition)
+                              << std::endl;
+#endif
+                    // @Optimize: For now, we compute fragments of the current partition iteratively. Instead, we should keep the information
+                    //            about what state led to a component of the destination set in the MTBDD
+                    
+                    std::set<State> fragment_leading_to_partition, fragment_not_leading_to_partition;
+                    
+                    // Compute the fragments
+                    for (auto state: current_partition) {
+                        MTBDD state_mtbdd = nfa.transitions[state];
+                        uint64_t path_index = 0; 
+                        while (!mtbdd_isleaf(state_mtbdd)) {
+                            assert(path_in_mtbdd_to_leaf[path_index] != 2);
+                            if (path_in_mtbdd_to_leaf[path_index]) state_mtbdd = sylvan::mtbdd_gethigh(state_mtbdd);
+                            else state_mtbdd = sylvan::mtbdd_getlow(state_mtbdd);
+                        }
+                        Transition_Destination_Set* tds = (Transition_Destination_Set*) sylvan::mtbdd_getvalue(state_mtbdd);
+                        State dest_state = *(tds->destination_set->begin());
+
+                        if (existing_partition.find(dest_state) != existing_partition.end()) {
+                            fragment_leading_to_partition.insert(state); 
+                        } else {
+                            fragment_not_leading_to_partition.insert(state); 
+                        }
+                    }
+#if DEBUG
+                    std::cout << "Fragmented " << states_to_str(current_partition) << " into " << states_to_str(fragment_leading_to_partition)
+                              << " (states leading to current partition) and " << states_to_str(fragment_not_leading_to_partition) 
+                              << " (states not leading to current partition)" << std::endl;
+#endif
+
+                    // Update the overall partitions with the fragments
+                    existing_partitions.erase(current_partition);
+                    existing_partitions.insert(fragment_leading_to_partition);
+                    existing_partitions.insert(fragment_not_leading_to_partition);
+                    
+                    // We cannot check only smaller of the two fragments - imagine a situation where we produce a smaller fragment with only one state - that means we never fragment bigger the partition 
+                    auto smaller_fragment = fragment_leading_to_partition.size() < fragment_not_leading_to_partition.size() ? fragment_leading_to_partition : fragment_not_leading_to_partition;
+                    if (std::find(partitions_to_check.begin(), partitions_to_check.end(), fragment_leading_to_partition) == partitions_to_check.end()) {
+                        partitions_to_check.push_back(fragment_leading_to_partition);
+                    }
+
+                    if (std::find(partitions_to_check.begin(), partitions_to_check.end(), fragment_not_leading_to_partition) == partitions_to_check.end()) {
+                        partitions_to_check.push_back(fragment_not_leading_to_partition);
+                    }
+
+                    break;
+                }
+            }
+
+            leaf = mtbdd_enum_next(partition_mtbdd, support, path_in_mtbdd_to_leaf, NULL);
+        }
+    }
+
+#if DEBUG
+    std::cout << "Fixpoint found. Partitions:" << std::endl;
+    for (auto partition: existing_partitions) {
+        std::cout << " - " << states_to_str(partition) << std::endl;
+    }
+#endif
+   
+    // Construct the NFA with states resulting from condensation according to computed eq. partitions
+    NFA result_nfa;
+    result_nfa.vars      = nfa.vars;
+    result_nfa.var_count = nfa.var_count;
+    
+    State initial_state = *nfa.initial_states.begin();  // It is an DFA, therefore there is only one final state
+    uint64_t partition_index = 0;
+    
+    // We have to assign state numbers to equivalence classes beforehand, so we can construct transition MTBDDs when creating the result nfa  
+    std::map<std::set<State>, State> partition_to_state_index;
+    for (auto partition: existing_partitions) {
+        partition_to_state_index[partition] = partition_index; 
+        result_nfa.transitions[partition_index] = mtbdd_false;
+        ++partition_index;
+    }
+
+    partition_index = 0;
+    for (auto partition: existing_partitions) {
+        result_nfa.states.insert(partition_index);
+        
+        State some_state = *partition.begin();
+        if (nfa.final_states.find(some_state) != nfa.final_states.end())
+            result_nfa.final_states.insert(partition_index);
+        
+        if (partition.find(initial_state) != partition.end())
+            result_nfa.initial_states.insert(partition_index);
+        
+        // Compute transitions - create MTBDD of this partition
+        MTBDD mtbdd_for_current_partition_index = result_nfa.transitions[partition_index];
+        MTBDD mtbdd_for_some_state              = nfa.transitions[some_state];
+        MTBDD leaf                              = mtbdd_enum_first(mtbdd_for_some_state, nfa.vars, path_in_mtbdd_to_leaf, NULL);
+
+        while (leaf != mtbdd_false) {
+            Transition_Destination_Set* tds = (Transition_Destination_Set*) mtbdd_getvalue(leaf); 
+            State tds_state = *tds->destination_set->begin(); 
+            
+            bool dest_partition_found = false;  // Debug
+            for (auto dest_partition: existing_partitions) {
+                if (dest_partition.find(tds_state) != dest_partition.end()) {
+                    dest_partition_found = true;    
+                    
+                    State dest_partition_index = partition_to_state_index[dest_partition];
+
+                    // Create a MTBDD encoding only the transition to the state resulting from condensing the partition in which was the state located
+                    Transition_Destination_Set tds;
+                    tds.destination_set = new std::set<State>{dest_partition_index};
+
+                    MTBDD leaf  = sylvan::mtbdd_makeleaf(mtbdd_leaf_type_set, (uint64_t) &tds);
+                    MTBDD mtbdd = sylvan::mtbdd_cube(nfa.vars, path_in_mtbdd_to_leaf, leaf);
+                    
+                    // Add the created MTBDD to the other transitions originating in the current state
+                    mtbdd_for_current_partition_index = mtbdd_applyp(mtbdd_for_current_partition_index, mtbdd, (uint64_t) 0, TASK(transitions_union_op), AMAYA_UNION_OP_ID);
+                    
+                    break;
+                }
+            }
+
+            assert(dest_partition_found);
+
+            leaf = mtbdd_enum_next(mtbdd_for_some_state, nfa.vars, path_in_mtbdd_to_leaf, NULL);
+        } 
+        result_nfa.transitions[partition_index] = mtbdd_for_current_partition_index;
+
+        ++partition_index;
+    }
+    return result_nfa;
 }
