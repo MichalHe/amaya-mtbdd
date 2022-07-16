@@ -929,58 +929,67 @@ void amaya_sylvan_clear_cache()
 	sylvan_clear_cache();
 }
 
-void amaya_minimize_hopcroft(
-        State*   automaton_states,
-        uint64_t automaton_state_count,
-        State*   automaton_final_states,
-        uint64_t automaton_final_state_count,
-        MTBDD*   mtbdds                         // An mtbdd for every state
-        )
+struct Serialized_DFA* amaya_minimize_hopcroft(struct Serialized_DFA* serialized_dfa) 
 {
-    LACE_ME;
+    // Deserialize the DFA
+    struct NFA dfa = {
+        .states = {},
+        .final_states = {},
+        .initial_states = {serialized_dfa->initial_state},
+        .transitions = {},
+        .vars = sylvan::mtbdd_set_empty(),
+        .var_count = serialized_dfa->var_count
+    };
 
-    // @TODO: Move this inside the library, so we can test it
-    std::vector<State> states(automaton_state_count);
-    for (uint64_t i = 0; i < automaton_state_count; i++) states.push_back(automaton_states[i]);
-    std::sort(states.begin(), states.end());
-
-    std::vector<State> final_states(automaton_final_state_count);
-    for (uint64_t i = 0; i < automaton_final_state_count; i++) final_states.push_back(automaton_final_states[i]);
-    std::sort(final_states.begin(), final_states.end());
-
-    std::vector<State> nonfinal_states(automaton_state_count - automaton_final_state_count);
-    std::set_intersection(states.begin(), states.end(), final_states.begin(), final_states.end(), std::back_inserter(nonfinal_states));
-
-    std::vector<std::vector<State>> partitions_to_check {final_states, nonfinal_states};
-
-    uint64_t* state_to_mtbdd_index_table = new uint64_t[automaton_state_count];
-
-    while (!partitions_to_check.empty()) {
-        auto partition = partitions_to_check.back();
-        partitions_to_check.pop_back();
-
-        // Compute MTBDD encoding all outgoing transitions of the current partition
-        MTBDD partition_mtbdd = mtbdd_false;
-        for (auto state : partition){
-            uint64_t mtbdd_index_for_current_state = state_to_mtbdd_index_table[state];
-            partition_mtbdd = mtbdd_applyp(partition_mtbdd, mtbdd_index_for_current_state, (uint64_t) 0, TASK(transitions_union_op), AMAYA_UNION_OP_ID);
-        }
-
-        // Iterate over all leaves of the created MTBDD. Every such a leaf represents a single post set over a symbol
-        // given implicitly by the path in the MTBDD.
-        // @TODO: Do we have/want to construct the support?
-        MTBDD support = mtbdd_support(partition_mtbdd);
-        uint32_t support_size = mtbdd_set_count(support);
-
-        uint8_t* path_in_mtbdd_to_leaf = (uint8_t*) malloc(sizeof(uint8_t) * support_size);
-
-        MTBDD leaf = mtbdd_enum_first(partition_mtbdd, support, path_in_mtbdd_to_leaf, NULL);
-
-        while (leaf != mtbdd_false)
-        {
-            leaf = mtbdd_enum_next(partition_mtbdd, support, path_in_mtbdd_to_leaf, NULL);
-        }
-
-        free(path_in_mtbdd_to_leaf);
+    for (uint64_t i = 0; i < serialized_dfa->state_count; i++){
+        dfa.states.insert(serialized_dfa->states[i]);
+        dfa.transitions[serialized_dfa->states[i]] = serialized_dfa->mtbdds[i];
     }
+
+    for (uint64_t i = 0; i < serialized_dfa->final_state_count; i++) dfa.final_states.insert(serialized_dfa->final_states[i]);
+
+    for (uint64_t i = 0; i < serialized_dfa->var_count; i++)
+        dfa.vars = sylvan::mtbdd_set_add(dfa.vars, serialized_dfa->vars[i]);
+    
+    struct NFA minimized_dfa = minimize_hopcroft(dfa);
+    
+    struct Serialized_DFA* output_dfa = (struct Serialized_DFA*) malloc(sizeof(struct Serialized_DFA));
+    assert(output_dfa != nullptr);
+
+    set<State>::iterator state_it;
+    uint64_t i = 0;
+    
+    output_dfa->states = (State*) malloc(sizeof(State) * minimized_dfa.states.size()); 
+    assert(output_dfa->states != nullptr);
+    for (state_it = minimized_dfa.states.begin(), i = 0;
+         state_it != minimized_dfa.states.end();
+         state_it++, i++) {
+        output_dfa->states[i] = *state_it;
+    }
+    output_dfa->state_count = minimized_dfa.states.size(); 
+
+    output_dfa->final_states = (State*) malloc(sizeof(State) * minimized_dfa.final_states.size()); 
+    assert(output_dfa->final_states != nullptr);
+    for (state_it = minimized_dfa.final_states.begin(), i = 0;
+         state_it != minimized_dfa.final_states.end();
+         state_it++, i++) {
+        output_dfa->final_states[i] = *state_it;
+    }
+    output_dfa->final_state_count = minimized_dfa.final_states.size(); 
+
+    output_dfa->initial_state = *minimized_dfa.initial_states.begin();
+    
+    output_dfa->mtbdds = (sylvan::MTBDD*) malloc(sizeof(sylvan::MTBDD) * minimized_dfa.states.size());
+
+    i = 0;
+    for (State state: minimized_dfa.states) {
+        output_dfa->mtbdds[i] = minimized_dfa.transitions[state];
+        i++;
+    }
+
+    output_dfa->vars = serialized_dfa->vars;
+    output_dfa->var_count = serialized_dfa->var_count;
+
+    return output_dfa;
 }
+

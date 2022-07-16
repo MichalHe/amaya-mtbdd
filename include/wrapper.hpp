@@ -5,8 +5,18 @@
 #include <sylvan.h>
 #include <inttypes.h>
 
-extern "C" {
+struct Serialized_DFA {
+    State*          states;
+    uint64_t        state_count;
+    State           initial_state;
+    State*          final_states;
+    uint64_t        final_state_count;
+    sylvan::MTBDD*  mtbdds;
+    uint64_t*       vars;
+    uint64_t        var_count;
+};
 
+extern "C" {
 	// Export constants (wrapped)
 	const sylvan::MTBDD w_mtbdd_true  = sylvan::mtbdd_true; 
 	const sylvan::MTBDD w_mtbdd_false = sylvan::mtbdd_false;
@@ -246,17 +256,20 @@ extern "C" {
 		State *final_states,
 		uint32_t final_states_cnt);
 
+    struct Serialized_DFA* amaya_minimize_hopcroft(struct Serialized_DFA* serialized_dfa);
+
 	void amaya_end_pad_closure();
 
 	void amaya_mtbdd_ref(sylvan::MTBDD mtbdd);
 	void amaya_mtbdd_deref(sylvan::MTBDD mtbdd);
 	void amaya_sylvan_gc();
 	void amaya_sylvan_try_performing_gc();
-
+    
 	void amaya_sylvan_clear_cache();
 
 	void shutdown_machinery();
 	void init_machinery();
+
 }
 
 Transition_Destination_Set* _get_transition_target(

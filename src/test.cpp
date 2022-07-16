@@ -51,7 +51,8 @@ inline MTBDD mtbdd_union(MTBDD a, MTBDD b)
 enum Test_Result try_matching_expected_transitions_onto_dfa(
         struct NFA& dfa,
         vector<Transition>& expected_transitions,
-        struct Report& report)
+        struct Report& report,
+        const std::string error_prexix)
 {
     vector<Transition> transitions = nfa_unpack_transitions(dfa);
 
@@ -60,7 +61,7 @@ enum Test_Result try_matching_expected_transitions_onto_dfa(
         str_stream << "Invalid number of transitions: expected=" << expected_transitions.size() << ", actual=" << transitions.size();
         report.errors.push_back(str_stream.str());
     }
-    
+
     // Note that there is no order enforced on how are state numbers assigned to the computed equivalence classes.
     // Therefore, we have build the potential isomorphism while testing
     const State uninit_isomorphism = dfa.states.size();
@@ -88,7 +89,8 @@ enum Test_Result try_matching_expected_transitions_onto_dfa(
         // Handle no matching transition found
         if (transitions_iter == transitions.end()) {
             stringstream str_stream;
-            str_stream << "Expected transition was not present in the minimized automaton: "
+            str_stream << error_prexix
+                       << "Expected transition was not present in the minimized automaton: "
                        << transition_to_str(expected_transition);
             report.errors.push_back(str_stream.str());
             return TEST_RESULT_FAIL;
@@ -171,15 +173,15 @@ enum Test_Result test_minimize_hopcroft(struct Report& report)
         {.origin = 2, .destination = 2, .symbols = {0}},
         {.origin = 2, .destination = 2, .symbols = {1}},
     };
-    
-    return try_matching_expected_transitions_onto_dfa(minimized_dfa, expected_transitions, report);
+
+    return try_matching_expected_transitions_onto_dfa(minimized_dfa, expected_transitions, report, "Minimization#1 ");
 }
 
 
 enum Test_Result test_minimize_hopcroft2(struct Report& report) {
     BDDSET vars = sylvan::mtbdd_set_empty();
     vars = sylvan::mtbdd_set_add(vars, 1);
-    
+
     vector<uint8_t> symbols[] = {{0}, {1}};  // a=0, b=1
 
     // q0 = 0, ...., q4 = 4
@@ -199,7 +201,7 @@ enum Test_Result test_minimize_hopcroft2(struct Report& report) {
     };
 
     auto minimized_dfa = minimize_hopcroft(dfa);
-    
+
     if (minimized_dfa.states.size() != 4) {
         stringstream str_stream;
         str_stream << "Minimization #2: Automaton has unexpected number of states. #states=" << minimized_dfa.states.size();
@@ -220,7 +222,7 @@ enum Test_Result test_minimize_hopcroft2(struct Report& report) {
         report.errors.push_back(str_stream.str());
         return TEST_RESULT_FAIL;
     }
-    
+
     // 0 = {q0, q2}, 1 = {q1}, 2 = {q3}, 2 = {q4}
     vector<Transition> expected_transitions = {
         {.origin = 0, .destination = 1, symbols[0]},
@@ -232,9 +234,9 @@ enum Test_Result test_minimize_hopcroft2(struct Report& report) {
         {.origin = 3, .destination = 1, symbols[0]},
         {.origin = 3, .destination = 0, symbols[1]},
     };
-    
-    try_matching_expected_transitions_onto_dfa(minimized_dfa, expected_transitions, report);
-    
+
+    try_matching_expected_transitions_onto_dfa(minimized_dfa, expected_transitions, report, "Minimization#2 ");
+
     return TEST_RESULT_OK;
 }
 
@@ -281,10 +283,10 @@ enum Test_Result test_unpack_nfa_transitions(struct Report& report)
         stringstream str_stream;
         str_stream << "Unpack transitions: #expected_transitions != #actual_transitions: "
                    << expected_transitions.size() << " != " << transitions.size();
-        report.errors.push_back(str_stream.str()); 
+        report.errors.push_back(str_stream.str());
         return TEST_RESULT_FAIL;
     }
-    
+
     bool any_transition_not_found_in_expected_transitions = false;
     for (auto transition: transitions) {
         bool expected_transition_found = false;
@@ -298,7 +300,7 @@ enum Test_Result test_unpack_nfa_transitions(struct Report& report)
             any_transition_not_found_in_expected_transitions = true;
         }
     }
-    
+
     if (any_transition_not_found_in_expected_transitions) return TEST_RESULT_FAIL;
     return TEST_RESULT_OK;
 }
@@ -310,10 +312,10 @@ int main()
     LACE_ME;
 
     struct Report report = {.errors = {}};
-    uint64_t overall_result = TEST_RESULT_OK;  
+    uint64_t overall_result = TEST_RESULT_OK;
 
-    overall_result |= test_minimize_hopcroft2(report);
     overall_result |= test_minimize_hopcroft(report);
+    overall_result |= test_minimize_hopcroft2(report);
     overall_result |= test_unpack_nfa_transitions(report);
 
     if (report.errors.size() > 0) {

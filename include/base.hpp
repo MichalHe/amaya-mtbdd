@@ -1,7 +1,7 @@
 #ifndef AMAYA_BASE_H
 #define AMAYA_BASE_H
 
-#define DEBUG 0
+#define DEBUG 1
 
 #include <vector>
 #include <set>
@@ -46,6 +46,7 @@ struct Transition {
     State destination;
     std::vector<uint8_t> symbols;
 };
+
 
 std::vector<struct Transition> nfa_unpack_transitions(struct NFA& nfa);
 std::string transition_to_str(const struct Transition& transition);
