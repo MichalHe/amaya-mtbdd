@@ -743,7 +743,13 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
             mtbdd_for_current_partition_index = mtbdd_applyp(mtbdd_for_current_partition_index, dest_mtbdd, (uint64_t) 0, TASK(transitions_union_op), AMAYA_UNION_OP_ID);
 
             // Check whether we have already explored the destination partition
-            if (!was_dest_partition_explored) partitions_to_add_to_minimized_dfa.insert(tds_partition_ptr);
+            if (!was_dest_partition_explored) {
+                partitions_to_add_to_minimized_dfa.insert(tds_partition_ptr);
+            } else {
+#if DEBUG
+                std::cout << "Reachable partition " << states_to_str(*tds_partition_ptr) << " aka " << tds_state << " was already explored." << std::endl;
+#endif
+            }
 
             leaf = mtbdd_enum_next(mtbdd_for_some_state, nfa.vars, path_in_mtbdd_to_leaf, NULL);
         }
