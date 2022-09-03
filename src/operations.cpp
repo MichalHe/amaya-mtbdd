@@ -60,19 +60,19 @@ Intersection_State* intersection_state = NULL;
 uint64_t INTERSECTION_OP_COUNTER = (1LL << 35);
 
 State_Rename_Op_Info *STATE_RENAME_OP_PARAM = NULL;
-Transform_Metastates_To_Ints_State *TRANSFORM_METASTATES_TO_INTS_STATE = NULL;
+Transform_Macrostates_To_Ints_State *TRANSFORM_MACROSTATES_TO_INTS_STATE = NULL;
 
 Pad_Closure_Info *PAD_CLOSURE_OP_STATE = NULL;
 uint64_t 	PAD_CLOSURE_OP_COUNTER = 64;
 
 uint64_t 	ADD_TRAPSTATE_OP_COUNTER = (1LL << 32);
 uint64_t 	STATE_RENAME_OP_COUNTER = (1LL << 33);
-uint64_t    TRANSFORM_METASTATES_TO_INTS_COUNTER = (1LL << 34);
+uint64_t    TRANSFORM_MACROSTATES_TO_INTS_COUNTER = (1LL << 34);
 
 /**
  * Performs an intersection of two given transitions. When performing an intersection the states tuples
  * that get created must be renamed to an integer right away (to be consistent with the overall design -
- * states are always integers). This requires that the information about mapping metastates to corresponding
+ * states are always integers). This requires that the information about mapping macrostates to corresponding
  * integers will be persistent in between the intersection of individual transition MTBDDs. This is solved
  * via intersection_state - a global variable.
  */
@@ -102,7 +102,7 @@ TASK_IMPL_3(MTBDD, transitions_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64
         }
 
         // Calculate cross product
-		std::pair<State, State> metastate;
+		std::pair<State, State> macrostate;
         State state;
 
         auto intersection_leaf_states = new std::set<State>();
@@ -113,10 +113,10 @@ TASK_IMPL_3(MTBDD, transitions_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64
         {
             for (auto right_state : *right_states)
             {
-                metastate = std::make_pair(left_state, right_state);
-                auto pos = already_discovered_intersection_states->find(metastate);
-                bool contains_metastate = (pos != already_discovered_intersection_states->end());
-                if (contains_metastate)
+                macrostate = std::make_pair(left_state, right_state);
+                auto pos = already_discovered_intersection_states->find(macrostate);
+                bool contains_macrostate = (pos != already_discovered_intersection_states->end());
+                if (contains_macrostate)
                 {
                     state = pos->second;
                 }
@@ -140,10 +140,10 @@ TASK_IMPL_3(MTBDD, transitions_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64
                     // Update the global intersection state, so in the future every such
                     // state will get the same integer
                     state = already_discovered_intersection_states->size();
-                    already_discovered_intersection_states->insert(std::make_pair(metastate, state));
+                    already_discovered_intersection_states->insert(std::make_pair(macrostate, state));
 
                     // Update the discoveries local for this intersection, so that the Python
-                    // side knows that we have discovered some new metastate and what number we assigned
+                    // side knows that we have discovered some new macrostate and what number we assigned
 					// to it.
                     intersect_info->discoveries->push_back(left_state);
                     intersect_info->discoveries->push_back(right_state);
@@ -432,50 +432,50 @@ TASK_IMPL_2(MTBDD, rename_states_op, MTBDD, dd, uint64_t, param) {
 }
 
 
-TASK_IMPL_2(MTBDD, transform_metastates_to_ints_op, MTBDD, dd, uint64_t, param) {
+TASK_IMPL_2(MTBDD, transform_macrostates_to_ints_op, MTBDD, dd, uint64_t, param) {
 	if (dd == mtbdd_false) return mtbdd_false;
 
 	if (mtbdd_isleaf(dd)) {
 		(void) param;
 
-		auto transform_state = TRANSFORM_METASTATES_TO_INTS_STATE;
+		auto transform_state = TRANSFORM_MACROSTATES_TO_INTS_STATE;
 		auto old_tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
 		auto new_tds = new Transition_Destination_Set();
 
 		// @Refactoring: this is commented because we do not use automaton_ids anymore
 		// new_tds->automaton_id = old_tds->automaton_id;
 
-		State metastate_state_number;
+		State macrostate_state_number;
 		bool is_cache_miss = false;
 		auto iterator = transform_state->alias_map->find(*old_tds->destination_set);
 		if (iterator == transform_state->alias_map->end()) {
-			metastate_state_number = transform_state->first_available_state_number++;
+			macrostate_state_number = transform_state->first_available_state_number++;
 		} else {
 			// Cache entry for this leaf must have gotten evicted,
 			// we need to return the previously returned leaf with
 			// the same alias number.
 			is_cache_miss = true;
-			metastate_state_number = iterator->second;
+			macrostate_state_number = iterator->second;
 		}
 
 		// @Warn: This relies on the fact that the state sets are represented in a canoical fashion - the std::set
-		// 		  keeps them sorted. That means that two metastates e.g {1, 2, 3} and {3, 2, 1} will get always hashed to the
-		// 		  same value --- Otherwise the same metastates would get more than 1 ID which would cause troubles.
+		// 		  keeps them sorted. That means that two macrostates e.g {1, 2, 3} and {3, 2, 1} will get always hashed to the
+		// 		  same value --- Otherwise the same macrostates would get more than 1 ID which would cause troubles.
 
 		auto transformed_leaf_contents = new set<State>();
-		transformed_leaf_contents->insert(metastate_state_number);
+		transformed_leaf_contents->insert(macrostate_state_number);
 		new_tds->destination_set = transformed_leaf_contents;
 
 		if (!is_cache_miss) {
-			// Serialize the current metastate, so that the python side will get notified about the created mapping.
+			// Serialize the current macrostate, so that the python side will get notified about the created mapping.
 			for (auto state : *old_tds->destination_set) {
-				transform_state->serialized_metastates->push_back(state);
+				transform_state->serialized_macrostates->push_back(state);
 			}
 
-			transform_state->metastates_sizes->push_back(old_tds->destination_set->size());
-			transform_state->metastates_cnt += 1;
+			transform_state->macrostates_sizes->push_back(old_tds->destination_set->size());
+			transform_state->macrostates_cnt += 1;
 
-			transform_state->alias_map->insert(std::make_pair(*old_tds->destination_set, metastate_state_number));
+			transform_state->alias_map->insert(std::make_pair(*old_tds->destination_set, macrostate_state_number));
 		}
 
 		MTBDD leaf = make_set_leaf(new_tds);
@@ -634,13 +634,22 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
                               << " (states leading to current partition) and " << states_to_str(fragment_not_leading_to_partition)
                               << " (states not leading to current partition)" << std::endl;
 #endif
+                    
+                    if (!fragment_not_leading_to_partition.size() || !fragment_leading_to_partition.size()) {
+                        // One of the fragments is empty - the current_partition could not been fragmented
+#if DEBUG
+                        std::cout << "One of the fragments is empty - we failed unable to further fragment the partition." << std::endl;
+#endif
+                        continue;
+                    }
 
                     // Update the overall partitions with the fragments
                     existing_partitions.erase(current_partition);
                     existing_partitions.insert(fragment_leading_to_partition);
                     existing_partitions.insert(fragment_not_leading_to_partition);
 
-                    // We cannot check only smaller of the two fragments - imagine a situation where we produce a smaller fragment with only one state - that means we never fragment bigger the partition
+                    // We cannot check only smaller of the two fragments - imagine a situation where we produce a smaller fragment
+                    // with only one state - that means we never fragment the bigger partition
                     auto smaller_fragment = fragment_leading_to_partition.size() < fragment_not_leading_to_partition.size() ? fragment_leading_to_partition : fragment_not_leading_to_partition;
                     if (std::find(partitions_to_check.begin(), partitions_to_check.end(), fragment_leading_to_partition) == partitions_to_check.end()) {
                         partitions_to_check.push_back(fragment_leading_to_partition);

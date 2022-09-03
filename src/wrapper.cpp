@@ -40,8 +40,8 @@ extern uint64_t INTERSECTION_OP_COUNTER;
 extern uint64_t 				STATE_RENAME_OP_COUNTER;
 extern State_Rename_Op_Info 	*STATE_RENAME_OP_PARAM;
 
-extern uint64_t    TRANSFORM_METASTATES_TO_INTS_COUNTER;
-extern Transform_Metastates_To_Ints_State *TRANSFORM_METASTATES_TO_INTS_STATE;
+extern uint64_t    TRANSFORM_MACROSTATES_TO_INTS_COUNTER;
+extern Transform_Macrostates_To_Ints_State *TRANSFORM_MACROSTATES_TO_INTS_STATE;
 
 extern uint64_t 	PAD_CLOSURE_OP_COUNTER;
 extern Pad_Closure_Info *PAD_CLOSURE_OP_STATE;
@@ -399,57 +399,57 @@ void amaya_replace_leaf_contents_with(void *leaf_tds, State* new_contents, uint3
     }
 }
 
-MTBDD* amaya_rename_metastates_to_int(
+MTBDD* amaya_rename_macrostates_to_int(
 		MTBDD* 		roots, 							// MTBDDs resulting from determinization
 		uint32_t 	root_cnt,						// Root count
-		State 		start_numbering_metastates_from,
+		State 		start_numbering_macrostates_from,
 		uint32_t 	resulting_automaton_id,
-		State**		out_serialized_metastates,
-		uint64_t**	out_metastates_sizes,
-		uint64_t*	out_metastates_cnt)
+		State**		out_serialized_macrostates,
+		uint64_t**	out_macrostates_sizes,
+		uint64_t*	out_macrostates_cnt)
 {
 	// Set up the tranform state
-	TRANSFORM_METASTATES_TO_INTS_STATE = (Transform_Metastates_To_Ints_State *) malloc(sizeof(Transform_Metastates_To_Ints_State));
-	TRANSFORM_METASTATES_TO_INTS_STATE->first_available_state_number = start_numbering_metastates_from;
-	TRANSFORM_METASTATES_TO_INTS_STATE->metastates_cnt = 0;
-	TRANSFORM_METASTATES_TO_INTS_STATE->metastates_sizes = new vector<uint64_t>();
-	TRANSFORM_METASTATES_TO_INTS_STATE->serialized_metastates = new vector<State>();
-	TRANSFORM_METASTATES_TO_INTS_STATE->alias_map = new std::map<std::set<State>, State>();
+	TRANSFORM_MACROSTATES_TO_INTS_STATE = (Transform_Macrostates_To_Ints_State *) malloc(sizeof(Transform_Macrostates_To_Ints_State));
+	TRANSFORM_MACROSTATES_TO_INTS_STATE->first_available_state_number = start_numbering_macrostates_from;
+	TRANSFORM_MACROSTATES_TO_INTS_STATE->macrostates_cnt = 0;
+	TRANSFORM_MACROSTATES_TO_INTS_STATE->macrostates_sizes = new vector<uint64_t>();
+	TRANSFORM_MACROSTATES_TO_INTS_STATE->serialized_macrostates = new vector<State>();
+	TRANSFORM_MACROSTATES_TO_INTS_STATE->alias_map = new std::map<std::set<State>, State>();
 
 	MTBDD *transformed_mtbdds = (MTBDD *) malloc(sizeof(MTBDD) * root_cnt);
 	assert(transformed_mtbdds);
 
 	LACE_ME;
 	for (uint32_t i = 0; i < root_cnt; i++) {
-		MTBDD transformed_mtbdd = mtbdd_uapply(roots[i], TASK(transform_metastates_to_ints_op), TRANSFORM_METASTATES_TO_INTS_COUNTER);
+		MTBDD transformed_mtbdd = mtbdd_uapply(roots[i], TASK(transform_macrostates_to_ints_op), TRANSFORM_MACROSTATES_TO_INTS_COUNTER);
 		transformed_mtbdds[i] = transformed_mtbdd;
 		mtbdd_ref(transformed_mtbdd);
 	}
 
-	TRANSFORM_METASTATES_TO_INTS_COUNTER += 1;
+	TRANSFORM_MACROSTATES_TO_INTS_COUNTER += 1;
 
 	// Write values to the Python side.
-	State* serialized_metastates = (State *) malloc(sizeof(State) * TRANSFORM_METASTATES_TO_INTS_STATE->serialized_metastates->size());
-	assert(serialized_metastates);
-	for (uint64_t i = 0; i < TRANSFORM_METASTATES_TO_INTS_STATE->serialized_metastates->size(); i++) {
-		serialized_metastates[i] = TRANSFORM_METASTATES_TO_INTS_STATE->serialized_metastates->at(i);
+	State* serialized_macrostates = (State *) malloc(sizeof(State) * TRANSFORM_MACROSTATES_TO_INTS_STATE->serialized_macrostates->size());
+	assert(serialized_macrostates);
+	for (uint64_t i = 0; i < TRANSFORM_MACROSTATES_TO_INTS_STATE->serialized_macrostates->size(); i++) {
+		serialized_macrostates[i] = TRANSFORM_MACROSTATES_TO_INTS_STATE->serialized_macrostates->at(i);
 	}
-	*out_serialized_metastates = serialized_metastates;
+	*out_serialized_macrostates = serialized_macrostates;
 
-	uint64_t* metastate_sizes = (uint64_t*) malloc(sizeof(uint64_t) * TRANSFORM_METASTATES_TO_INTS_STATE->metastates_cnt);
-	assert(metastate_sizes);
-	for (uint64_t i = 0; i < TRANSFORM_METASTATES_TO_INTS_STATE->metastates_sizes->size(); i++) {
-		metastate_sizes[i] = TRANSFORM_METASTATES_TO_INTS_STATE->metastates_sizes->at(i);
+	uint64_t* macrostate_sizes = (uint64_t*) malloc(sizeof(uint64_t) * TRANSFORM_MACROSTATES_TO_INTS_STATE->macrostates_cnt);
+	assert(macrostate_sizes);
+	for (uint64_t i = 0; i < TRANSFORM_MACROSTATES_TO_INTS_STATE->macrostates_sizes->size(); i++) {
+		macrostate_sizes[i] = TRANSFORM_MACROSTATES_TO_INTS_STATE->macrostates_sizes->at(i);
 	}
-	*out_metastates_sizes = metastate_sizes;
+	*out_macrostates_sizes = macrostate_sizes;
 
-	*out_metastates_cnt = TRANSFORM_METASTATES_TO_INTS_STATE->metastates_cnt;
+	*out_macrostates_cnt = TRANSFORM_MACROSTATES_TO_INTS_STATE->macrostates_cnt;
 
-	delete TRANSFORM_METASTATES_TO_INTS_STATE->metastates_sizes;
-	delete TRANSFORM_METASTATES_TO_INTS_STATE->serialized_metastates;
-	delete TRANSFORM_METASTATES_TO_INTS_STATE->alias_map;
-	free(TRANSFORM_METASTATES_TO_INTS_STATE);
-	TRANSFORM_METASTATES_TO_INTS_STATE = NULL;
+	delete TRANSFORM_MACROSTATES_TO_INTS_STATE->macrostates_sizes;
+	delete TRANSFORM_MACROSTATES_TO_INTS_STATE->serialized_macrostates;
+	delete TRANSFORM_MACROSTATES_TO_INTS_STATE->alias_map;
+	free(TRANSFORM_MACROSTATES_TO_INTS_STATE);
+	TRANSFORM_MACROSTATES_TO_INTS_STATE = NULL;
 	return transformed_mtbdds;
 }
 
@@ -746,13 +746,13 @@ void amaya_begin_intersection(
 	}
 }
 
-void amaya_update_intersection_state(State* metastates, State* renamed_metastates, uint32_t cnt)
+void amaya_update_intersection_state(State* macrostates, State* renamed_macrostates, uint32_t cnt)
 {
     for (uint32_t i = 0; i < cnt; i++) {
-        const auto metastate = std::make_pair(metastates[2*i], metastates[2*i + 1]);
+        const auto macrostate = std::make_pair(macrostates[2*i], macrostates[2*i + 1]);
         intersection_state
 			->intersection_state_pairs_numbers
-			->insert(std::make_pair(metastate, renamed_metastates[i]));
+			->insert(std::make_pair(macrostate, renamed_macrostates[i]));
     }
 }
 

@@ -30,7 +30,7 @@ TASK_DECL_3(sylvan::MTBDD, transitions_union_op, sylvan::MTBDD *, sylvan::MTBDD 
 TASK_DECL_2(sylvan::MTBDD, remove_states_op, sylvan::MTBDD, uint64_t);
 TASK_DECL_2(sylvan::MTBDD, complete_transition_with_trapstate_op, sylvan::MTBDD, uint64_t);
 TASK_DECL_2(sylvan::MTBDD, rename_states_op, sylvan::MTBDD, uint64_t);
-TASK_DECL_2(sylvan::MTBDD, transform_metastates_to_ints_op, sylvan::MTBDD, uint64_t);
+TASK_DECL_2(sylvan::MTBDD, transform_macrostates_to_ints_op, sylvan::MTBDD, uint64_t);
 
 typedef struct
 {
@@ -54,7 +54,7 @@ typedef struct
 typedef struct
 {
 	uint32_t automaton_id;
-	std::vector<State> *discoveries; // Flat array of [metastate_left_part, metastate_right_part, state, ...]
+	std::vector<State> *discoveries; // Flat array of [macrostate_left_part, macrostate_right_part, state, ...]
 } Intersection_Op_Info;
 
 typedef struct
@@ -72,11 +72,11 @@ typedef struct
 typedef struct
 {
 	std::map<std::set<State>, State>* alias_map;
-	std::vector<State>* serialized_metastates;
-	std::vector<uint64_t>* metastates_sizes;
-	uint64_t metastates_cnt;
+	std::vector<State>* serialized_macrostates;
+	std::vector<uint64_t>* macrostates_sizes;
+	uint64_t macrostates_cnt;
 	State first_available_state_number;
-} Transform_Metastates_To_Ints_State;
+} Transform_Macrostates_To_Ints_State;
 
 struct NFA minimize_hopcroft(struct NFA& nfa);
 

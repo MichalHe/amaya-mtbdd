@@ -140,8 +140,8 @@ extern "C" {
 	 * @param b 				Other transition MTBDD
 	 * @param new_automaton_id 	Automaton ID for the created intersect leaves.
 	 *
-	 * @param discovered_states 		Flat array of discovered metastates and their generated int.
-	 * 									[metastate_left, metastate_right, state_int ...]
+	 * @param discovered_states 		Flat array of discovered macrostates and their generated int.
+	 * 									[macrostate_left, macrostate_right, state_int ...]
 	 * @param discovered_states_cnt 	Discovered_states count (size/3).
 	 * @returns A MTBDD that contains only transitions that are present in both given MTBDDs.
 	 */
@@ -155,7 +155,7 @@ extern "C" {
 	
 	/**
 	 * Marks the beginning of intersection. Setups global std::map that holds
-	 * information about which intersection metastates (pairs) were mapped to which values.
+	 * information about which intersection macrostates (pairs) were mapped to which values.
 	 */
 	void amaya_begin_intersection(
 			bool 		should_do_early_prunining, 
@@ -163,17 +163,17 @@ extern "C" {
 			uint32_t 	final_states_cnt);
 
 	/**
-	 * Updates the intersection state information by inserting provided metastates (flat 2d array)
+	 * Updates the intersection state information by inserting provided macrostates (flat 2d array)
 	 * and their corresponding mappings into intersection state.
 	 *
-	 * @param metastates  			Flattened 2D array containing the intersection metastates (always a pair)
-	 * @param renamed_metastates  	Renamed metastates.
-	 * @param cnt 					Count of the metastates.
+	 * @param macrostates  			Flattened 2D array containing the intersection macrostates (always a pair)
+	 * @param renamed_macrostates  	Renamed macrostates.
+	 * @param cnt 					Count of the macrostates.
 	 */
 	void amaya_update_intersection_state(
-			State* 	 metastates, 
-			State* 	 renamed_metastates, 
-			uint32_t metastates_cnt);
+			State* 	 macrostates, 
+			State* 	 renamed_macrostates, 
+			uint32_t macrostates_cnt);
 	/**
 	 * Marks the end of intersection and frees up resources.
 	 */
@@ -184,24 +184,24 @@ extern "C" {
 	void amaya_do_free(void *ptr);
 
 	/** 
-	 * Renames the metastates that are contained withing the roots of mtbdds resulting 
+	 * Renames the macrostates that are contained withing the roots of mtbdds resulting 
 	 * from the determinization procedure some automaton.
 	 * @param roots 					The roots of the MTBDDs that were created during the determinization procedure.  
 	 * @param root_cnt  				The number of given MTBDDs. 
 	 * @param resulting_automaton_id  	The ID of the resulting automaton.
-	 * @param out_metastates_sizes   	OUTPUT: The sized of the located metastates.
-	 * @param out_metastates_cnt   		OUTPUT: The number of located metastates.
-	 * @param out_serialized_metastates OUTPUT: The metastates located serialized one after another.
+	 * @param out_macrostates_sizes   	OUTPUT: The sized of the located macrostates.
+	 * @param out_macrostates_cnt   		OUTPUT: The number of located macrostates.
+	 * @param out_serialized_macrostates OUTPUT: The macrostates located serialized one after another.
 	 * @returns The transformed mtbdds.
 	 */
-	sylvan::MTBDD* amaya_rename_metastates_to_int(
+	sylvan::MTBDD* amaya_rename_macrostates_to_int(
 			sylvan::MTBDD* 		roots, 							// MTBDDs resulting from determinization
 			uint32_t 			root_cnt,						// Root count
-			State 				start_numbering_metastates_from,
+			State 				start_numbering_macrostates_from,
 			uint32_t 			resulting_automaton_id,
-			State**				out_serialized_metastates,
-			uint64_t**			out_metastates_sizes,
-			uint64_t*			out_metastates_cnt);
+			State**				out_serialized_macrostates,
+			uint64_t**			out_macrostates_sizes,
+			uint64_t*			out_macrostates_cnt);
 
 
 	sylvan::MTBDD amaya_complete_mtbdd_with_trapstate(
