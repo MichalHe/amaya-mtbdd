@@ -14,6 +14,7 @@
 
 #include <unistd.h>
 #include <assert.h>
+#include <stdio.h>
 
 #include <algorithm>
 #include <unordered_set>
@@ -514,6 +515,34 @@ std::string nfa_to_str(struct NFA& nfa) {
     return nfa_str.str();
 }
 
+
+void write_mtbdd_dot_to_tmp_file(const std::string& filename, sylvan::MTBDD mtbdd)
+{
+    std::string output_path = "/tmp/" + filename;
+    auto output_file_handle = fopen(output_path.c_str(), "w");
+    sylvan::mtbdd_fprintdot(output_file_handle, mtbdd);
+    fclose(output_file_handle);
+}
+
+template<typename T>
+std::string array_to_str(T* array, const uint64_t array_size)
+{
+    stringstream string_stream;
+    string_stream << "[";
+    if (!array_size) {
+        string_stream << "]";
+        return string_stream.str();
+    }
+
+    string_stream << (uint64_t) array[0];
+    for (uint64_t i = 1; i < array_size; i++) {
+        string_stream << "," << (uint64_t) array[i];
+    }
+    string_stream << "]";
+    return string_stream.str();
+}
+
+
 std::pair<std::set<State>, std::set<State>>
 fragment_dest_states_using_partition(const std::set<State>& dest_states, const std::set<State>& partition)
 {
@@ -524,12 +553,60 @@ fragment_dest_states_using_partition(const std::set<State>& dest_states, const s
                           std::inserter(intersection, intersection.begin()));
 
     // @Optimize: Do not compute the difference if we know that intersection is the same as dest_states
-    std::set_difference(partition.begin(), partition.end(),
+    std::set_difference(dest_states.begin(), dest_states.end(),
                         intersection.begin(), intersection.end(),
                         std::inserter(difference, difference.begin()));
 
     return {intersection, difference};
 }
+
+
+inline bool should_explore_partition(std::vector<std::set<State>>& to_explore,
+                                     std::set<std::set<State>>& known_partitions,
+                                     std::set<State>& new_partition)
+{
+    bool is_partition_in_to_explore = std::find(to_explore.begin(), to_explore.end(), new_partition) != to_explore.end();
+    // bool is_partition_known = known_partitions.find(new_partition) != known_partitions.end();
+    return !is_partition_in_to_explore; // !is_partition_known;
+}
+
+inline sylvan::MTBDD traverse_mtbdd_along_variables(sylvan::MTBDD mtbdd, uint32_t* vars, uint64_t var_count, uint8_t* path)
+{
+    // We have to do a more careful traversal, as we generate path in the overall MTBDD for the partition
+    // (union of all MTBDDs for the states in the partition), therefore, the MTBDD `mtbdd` for state
+    // or the overall MTBDD might have different variables as don't care.
+    auto top_mtbdd_var = sylvan::mtbdd_getvar(mtbdd);
+    uint64_t var_index = 0;
+    while (var_index < var_count && !sylvan::mtbdd_isleaf(mtbdd)) {
+        if (top_mtbdd_var == vars[var_index]) {
+            switch (path[var_index]) {
+                case 0:
+                    mtbdd = sylvan::mtbdd_getlow(mtbdd);
+                    break;
+                case 1:
+                    mtbdd = sylvan::mtbdd_gethigh(mtbdd);
+                    break;
+                default:
+                    // Overall MTBDD is don't-care for this variable, but the state MTBDD cares. As the overall
+                    // MTBDD is a union of all state MTBDDs, if it is a don't care for some variable, then it means
+                    // that the same subtrees have been the result of the union operation. Therefore, does not matter
+                    // which way we go in the state MTBDD, as long as we have a consistent decision strategy in all
+                    // state MTBDDs. Using a consistent strategy means that in an individual state MTBDD we might reach
+                    // a different leaf as when using some other strategy, however, as the subtrees in the overall MTBDD
+                    // are the same, there must exist other state(s) from the partition, that will contribute with the missing
+                    // destination states.
+                    mtbdd = sylvan::mtbdd_getlow(mtbdd);
+                    break;
+            }
+            top_mtbdd_var = sylvan::mtbdd_getvar(mtbdd);
+        }
+        var_index++;
+    }
+
+    assert(mtbdd_isleaf(mtbdd));
+    return mtbdd;
+}
+
 
 struct NFA minimize_hopcroft(struct NFA& nfa)
 {
@@ -545,19 +622,20 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
 #endif
 
     std::vector<std::set<State>> partitions_to_check {nfa.final_states, nonfinal_states_ordered};
-
     std::set<std::set<State>> existing_partitions {nfa.final_states, nonfinal_states_ordered};
 
-
     uint8_t path_in_mtbdd_to_leaf[nfa.var_count];
+    uint32_t vars_to_check[nfa.var_count];
+    sylvan::mtbdd_set_to_array(nfa.vars, vars_to_check);
 
     // Refine partitions untill fixpoint
     while (!partitions_to_check.empty()) {
         auto current_partition = partitions_to_check.back();
+        bool was_current_partition_fragmented = false;
         partitions_to_check.pop_back();
 
 #if DEBUG
-        std::cout << "Processing partition: " << states_to_str(current_partition) << std::endl;
+        std::cout << "Processing partition: " << states_to_str(current_partition) << "(size :: " << current_partition.size() << ")" << std::endl;
 #endif
 
         // Compute MTBDD encoding all outgoing transitions of the current partition
@@ -574,18 +652,15 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
 
         // Iterate over all leaves of the created MTBDD. Every such a leaf represents a single post set over a symbol
         // given implicitly by the path in the MTBDD.
-        MTBDD    support      = mtbdd_support(partition_mtbdd);
-        uint32_t support_size = mtbdd_set_count(support);
+        MTBDD leaf = mtbdd_enum_first(partition_mtbdd, nfa.vars, path_in_mtbdd_to_leaf, NULL);
 
-        MTBDD leaf = mtbdd_enum_first(partition_mtbdd, support, path_in_mtbdd_to_leaf, NULL);
-
-        while (leaf != mtbdd_false) {
-            // See whether the states reachable via this symbol belong to one equivalence class
+        while (leaf != mtbdd_false && !was_current_partition_fragmented) {
+            // See whether the states reachable via this symbol belong to the same equivalence class
             Transition_Destination_Set* leaf_contents = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
 
             // If the entire partition leads to one state it cannot be fragmented using this single state
             if (leaf_contents->destination_set->size() == 1) {
-                leaf = mtbdd_enum_next(partition_mtbdd, support, path_in_mtbdd_to_leaf, NULL);
+                leaf = mtbdd_enum_next(partition_mtbdd, nfa.vars, path_in_mtbdd_to_leaf, NULL);
                 continue;
             }
 
@@ -593,34 +668,24 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
             for (auto existing_partition: existing_partitions) {
                 // @Optimize: Pass in references to sets - reuse them, and avoid needless allocations
                 auto fragment = fragment_dest_states_using_partition(*leaf_contents->destination_set, existing_partition);
-                if (fragment.first.size() == leaf_contents->destination_set->size() || fragment.first.size() == 0) {
-#if DEBUG
-                    std::cout << "Unable to fragment " << states_to_str(*leaf_contents->destination_set)
-                              << " using partition " << states_to_str(existing_partition)
-                              << std::endl;
-#endif
+                auto dest_states_from_existing_partition = fragment.first;
+                auto dest_states_not_from_existing_partition = fragment.second;
 
-                } else {
-#if DEBUG
-                    std::cout << "Fragmenting " << states_to_str(*leaf_contents->destination_set)
-                              << " with partition " << states_to_str(existing_partition)
-                              << std::endl;
-#endif
+                if (dest_states_from_existing_partition.size() && dest_states_not_from_existing_partition.size()) {
                     // @Optimize: For now, we compute fragments of the current partition iteratively. Instead, we should keep the information
                     //            about what state led to a component of the destination set in the MTBDD
 
                     std::set<State> fragment_leading_to_partition, fragment_not_leading_to_partition;
 
-                    // Compute the fragments
+                    // Iterate over the states in current partition and divide them into those that lead to the existing partition, and those that do not
                     for (auto state: current_partition) {
                         MTBDD state_mtbdd = nfa.transitions[state];
-                        uint64_t path_index = 0;
-                        while (!mtbdd_isleaf(state_mtbdd)) {
-                            assert(path_in_mtbdd_to_leaf[path_index] != 2);
-                            if (path_in_mtbdd_to_leaf[path_index]) state_mtbdd = sylvan::mtbdd_gethigh(state_mtbdd);
-                            else state_mtbdd = sylvan::mtbdd_getlow(state_mtbdd);
-                        }
+
+                        state_mtbdd = traverse_mtbdd_along_variables(state_mtbdd, vars_to_check, nfa.var_count, path_in_mtbdd_to_leaf);
+
                         Transition_Destination_Set* tds = (Transition_Destination_Set*) sylvan::mtbdd_getvalue(state_mtbdd);
+
+                        assert(tds->destination_set->size() == 1);  // We should be dealing with complete DFAs
                         State dest_state = *(tds->destination_set->begin());
 
                         if (existing_partition.find(dest_state) != existing_partition.end()) {
@@ -629,41 +694,32 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
                             fragment_not_leading_to_partition.insert(state);
                         }
                     }
+
+
 #if DEBUG
-                    std::cout << "Fragmented " << states_to_str(current_partition) << " into " << states_to_str(fragment_leading_to_partition)
-                              << " (states leading to current partition) and " << states_to_str(fragment_not_leading_to_partition)
-                              << " (states not leading to current partition)" << std::endl;
+                    assert(fragment_not_leading_to_partition.size());
+                    assert(fragment_leading_to_partition.size());
 #endif
-                    
-                    if (!fragment_not_leading_to_partition.size() || !fragment_leading_to_partition.size()) {
-                        // One of the fragments is empty - the current_partition could not been fragmented
-#if DEBUG
-                        std::cout << "One of the fragments is empty - we failed unable to further fragment the partition." << std::endl;
-#endif
-                        continue;
-                    }
 
                     // Update the overall partitions with the fragments
                     existing_partitions.erase(current_partition);
                     existing_partitions.insert(fragment_leading_to_partition);
                     existing_partitions.insert(fragment_not_leading_to_partition);
 
-                    // We cannot check only smaller of the two fragments - imagine a situation where we produce a smaller fragment
-                    // with only one state - that means we never fragment the bigger partition
-                    auto smaller_fragment = fragment_leading_to_partition.size() < fragment_not_leading_to_partition.size() ? fragment_leading_to_partition : fragment_not_leading_to_partition;
-                    if (std::find(partitions_to_check.begin(), partitions_to_check.end(), fragment_leading_to_partition) == partitions_to_check.end()) {
+                    if (should_explore_partition(partitions_to_check, existing_partitions, fragment_leading_to_partition)) {
                         partitions_to_check.push_back(fragment_leading_to_partition);
                     }
 
-                    if (std::find(partitions_to_check.begin(), partitions_to_check.end(), fragment_not_leading_to_partition) == partitions_to_check.end()) {
+                    if (should_explore_partition(partitions_to_check, existing_partitions, fragment_not_leading_to_partition)) {
                         partitions_to_check.push_back(fragment_not_leading_to_partition);
                     }
 
+                    was_current_partition_fragmented = true;
                     break;
                 }
             }
 
-            leaf = mtbdd_enum_next(partition_mtbdd, support, path_in_mtbdd_to_leaf, NULL);
+            leaf = mtbdd_enum_next(partition_mtbdd, nfa.vars, path_in_mtbdd_to_leaf, NULL);
         }
     }
 
@@ -764,6 +820,8 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
         }
         result_nfa.transitions[partition_index] = mtbdd_for_current_partition_index;
     }
+#if DEBUG
     std::cout << "Result has #states=" << result_nfa.states.size() << std::endl;
+#endif
     return result_nfa;
 }

@@ -1,7 +1,7 @@
 #ifndef AMAYA_BASE_H
 #define AMAYA_BASE_H
 
-#define DEBUG 1
+#define DEBUG 0
 
 #include <vector>
 #include <set>
