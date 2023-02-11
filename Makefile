@@ -4,6 +4,9 @@ CXXFLAGS=-O2 -shared -fPIC -g
 
 .PHONY := clean
 
+lazy: build src/lazy.cpp include/lazy.hpp include/base.hpp
+	$(CXX) -g --std=c++20 -o $@ src/lazy.cpp $(CXXLIBS)
+
 shared-lib: build build/amaya-mtbdd.so
 
 build/amaya-mtbdd.so: build/wrapper.o build/operations.o build/custom_leaf.o build/hopcroft_leaf.o build/base.o
