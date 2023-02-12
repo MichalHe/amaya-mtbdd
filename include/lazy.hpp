@@ -71,6 +71,7 @@ struct Variable_Bound_Analysis_Result {
     /* unordered_set<u64> vars_with_both_bounds; */
     bool has_var_with_both_bounds;
     vector<Variable_Bounds> bounds;
+    vector<vector<u64>> congruences_per_var;
 };
 
 struct Conjuction_State;

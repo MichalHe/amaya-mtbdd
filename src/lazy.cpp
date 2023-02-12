@@ -209,8 +209,9 @@ std::ostream& operator<<(std::ostream& output, const Conjuction_State& atom) {
 
 Variable_Bound_Analysis_Result* compute_bounds_analysis(Quantified_Atom_Conjunction& conj) {
     vector<Variable_Bounds> var_bounds {conj.var_count};
-    /* unordered_set<u64> vars_with_both_bounds; */
     bool var_with_both_bounds_exists = false;
+
+    vector<vector<u64>> congruences_per_var (conj.var_count);
 
     for (u64 atom_i = 0u; atom_i < conj.atoms.size(); atom_i++) {
         auto& atom = conj.atoms[atom_i];
@@ -228,6 +229,9 @@ Variable_Bound_Analysis_Result* compute_bounds_analysis(Quantified_Atom_Conjunct
                         auto preferred_value = atom.coefs[bounded_var_i] > 0 ? Preferred_Var_Value_Type::LOW : Preferred_Var_Value_Type::HIGH;
                         var_bounds[bounded_var_i].preferred_value = var_bounds[bounded_var_i].preferred_value | preferred_value;
                     }
+                }
+                if (atom.type == PR_ATOM_CONGRUENCE) {
+                    congruences_per_var[var_i].push_back(atom_i);
                 }
 
                 bounded_var_count++;
@@ -271,7 +275,67 @@ Variable_Bound_Analysis_Result* compute_bounds_analysis(Quantified_Atom_Conjunct
         }
     }
 
-    return new Variable_Bound_Analysis_Result{.has_var_with_both_bounds = var_with_both_bounds_exists, .bounds = var_bounds};
+    return new Variable_Bound_Analysis_Result{
+        .has_var_with_both_bounds = var_with_both_bounds_exists,
+        .bounds = var_bounds,
+        .congruences_per_var = congruences_per_var
+    };
+}
+
+
+std::optional<std::pair<s64, u64>> compute_instantiating_value_for_var(const Quantified_Atom_Conjunction& formula,
+                                                                       Conjuction_State& state,
+                                                                       u64 var_to_instantiate,
+                                                                       Variable_Bounds& bounds,
+                                                                       vector<u64>& congruences_referencing_var)
+{
+    bool do_bounds_allow_instantiation = false;
+    u64 used_atom_i = 0;
+
+    if (bounds.preferred_value == Preferred_Var_Value_Type::LOW && bounds.lower.is_present) {
+        do_bounds_allow_instantiation = true;
+        used_atom_i = bounds.lower.atom_idx;
+    }
+    else if (bounds.preferred_value == Preferred_Var_Value_Type::HIGH && bounds.upper.is_present) {
+        do_bounds_allow_instantiation = true;
+        used_atom_i = bounds.upper.atom_idx;
+    }
+
+    if (!do_bounds_allow_instantiation || congruences_referencing_var.size() > 1)
+        return std::nullopt;
+
+    if (congruences_referencing_var.empty())
+        return std::make_pair(state.constants[used_atom_i], used_atom_i);
+
+    auto& congruence = formula.atoms[congruences_referencing_var[0]];
+    s64 bound_point = state.constants[used_atom_i];
+
+    bool found_congruence_var = false;
+    u64 var_in_congruence;
+    for (u64 var_i = 0u; var_i < congruence.coefs.size(); ++var_i) {
+        if (congruence.coefs[var_i]) {
+            if (found_congruence_var) {
+                // @Research: If there are multiple variables in the congruence no idea what value shuold the var have.
+                return std::nullopt;
+            }
+            found_congruence_var = true;
+            var_in_congruence = var_i;
+        }
+    }
+
+    assert(var_in_congruence == var_to_instantiate);
+
+    // Find a solution in the unshifted congruence range, e.g., -y == 303 (mod 299_993)
+    s64 unshifted_solution = state.constants[congruences_referencing_var[0]] / congruence.coefs[var_in_congruence];
+    assert (unshifted_solution * congruence.coefs[var_in_congruence] == state.constants[congruences_referencing_var[0]]);
+    unshifted_solution += (unshifted_solution < 0)*congruence.modulus;
+
+    s64 shift_coef = bound_point / congruence.modulus;
+    shift_coef -= (bound_point < 0); // Essentailly a signed floor division
+    s64 congruence_shift = congruence.modulus * shift_coef;
+
+    s64 instantiated_value = unshifted_solution + congruence_shift;
+    return std::make_pair(instantiated_value, used_atom_i);
 }
 
 
@@ -344,8 +408,6 @@ Entaiment_Status compute_entailed_formula(FormulaPool& formula_pool, Conjuction_
         vector<u64> quantified_vars_not_instantiated;
         for (auto bound_var: formula->bound_vars) {
             auto& bounds = var_bounds[bound_var];
-            bool can_instantiate_var = false;
-            s64 instantiation_bound_value;
 
             if (constant_vars[bound_var].first) {
                 // The variable already has been instantiated, continuing will not add to the
@@ -353,30 +415,19 @@ Entaiment_Status compute_entailed_formula(FormulaPool& formula_pool, Conjuction_
                 continue;
             }
 
-            if (bounds.preferred_value == Preferred_Var_Value_Type::LOW) {
-                if (bounds.lower.is_present) {
-                    can_instantiate_var = true;
-                    does_atom_imply_constant_var[bounds.lower.atom_idx] = true;
-                    instantiation_bound_value = entailed_state.constants[bounds.lower.atom_idx];
-                }
-            } else if (bounds.preferred_value == Preferred_Var_Value_Type::HIGH) {
-                if (bounds.upper.is_present) {
-                    can_instantiate_var = true;
-                    does_atom_imply_constant_var[bounds.upper.atom_idx] = true;
-                    instantiation_bound_value = entailed_state.constants[bounds.upper.atom_idx];
-                }
-            }
+            auto& congruences_for_var = formula->bounds_analysis_result->congruences_per_var[bound_var];
+            auto maybe_instantiation_result = compute_instantiating_value_for_var(entailed_formula, state, bound_var, bounds, congruences_for_var);
 
-            if (can_instantiate_var) {
+            if (maybe_instantiation_result.has_value()) {
+                auto [instantiation_value, used_atom_i] = maybe_instantiation_result.value();
                 for (u64 atom_i = 0u; atom_i < entailed_formula.atoms.size(); atom_i++) {
                     auto& atom = entailed_formula.atoms[atom_i];
-
-                    if (atom.coefs[bound_var])
-                        std::cout << "Instantiating x" << bound_var << "=" << instantiation_bound_value << " into " << entailed_formula.atoms[atom_i].fmt_with_rhs(entailed_state.constants[atom_i]) << std::endl;
-
-                    entailed_state.constants[atom_i] -= atom.coefs[bound_var] * instantiation_bound_value;
+                    entailed_state.constants[atom_i] -= atom.coefs[bound_var] * instantiation_value;
                     atom.coefs[bound_var] = 0;
                 }
+
+                does_atom_imply_constant_var[used_atom_i] = true;
+
             } else {
                 quantified_vars_not_instantiated.push_back(bound_var);
             }
@@ -603,17 +654,11 @@ int main(void) {
     real_formula.bounds_analysis_result = compute_bounds_analysis(real_formula);
     Conjuction_State real_state = Conjuction_State{.formula = &real_formula, .constants = {-1, -1, -1, 0, 0, 303}};
 
-    for (u64 var_i = 0u; var_i < real_formula.bounds_analysis_result->bounds.size(); var_i++) {
-        auto& bounds = real_formula.bounds_analysis_result->bounds[var_i];
-        std::cout << "x" << var_i << " has_lower=" << bounds.lower.is_present << " has_upper=" << bounds.upper.is_present << std::endl;
-    }
-
-
-    std::cout << real_formula.fmt_with_state(real_state) << std::endl;
+    std::cout << "Input formula   : " << real_formula.fmt_with_state(real_state) << std::endl;
 
     FormulaPool pool = FormulaPool();
     auto entailment_status = compute_entailed_formula(pool, real_state);
-    std::cout << "Atoms removed: " << entailment_status.removed_atom_count << std::endl;
+    std::cout << "Atoms removed   : " << entailment_status.removed_atom_count << std::endl;
     std::cout << "Entailed formula: " << entailment_status.state.value().formula->fmt_with_state(entailment_status.state.value()) << std::endl;
 
     return 0;
