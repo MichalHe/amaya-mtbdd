@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 
+#include <bitset>
 #include <iostream>
 #include <cstring>
 #include <string>
@@ -30,24 +31,17 @@ std::string fmt_array(T* array, size_t array_size) {
     return ss.str();
 }
 
-
-inline int64_t dot_product(int64_t* coef, int64_t* symbol, size_t dimension) {
-    assert(dimension > 0);
-    int64_t dot = symbol[0] * coef[0];
-    for (size_t i = 1; i < dimension; i++) {
-        dot += symbol[i] * coef[i];
-    }
-    return dot;
-}
-
 s64 Presburger_Atom::compute_post_along_sym(s64 state, u64 symbol_bits) const {
-    s64 post = 0;
+    s64 dot = 0;
     for (u64 var_i = 0; var_i < coefs.size(); var_i++) {
         s64 is_bit_set = (symbol_bits & (1 << var_i)) > 0;
-        post += is_bit_set * coefs[var_i];
+        dot += is_bit_set * coefs[var_i];
     }
 
-    return (state - post) / 2;
+    s64 post = (state - dot) / 2;
+    post -= (state - dot) < 0; // Floor division
+    std::cout << "State is " << state << " dot is " << dot << " post is: " << post << std::endl;
+    return post;
 }
 
 bool Conjuction_State::operator==(const Conjuction_State& other) const {
@@ -579,12 +573,37 @@ void build_nfa_with_formula_entailement(FormulaPool& formula_pool, Conjuction_St
 
     u64 max_symbol = (1u << init_state.formula->var_count);
     vector<Conjuction_State> produced_states;
+
+    // Prepare bit masks and constants to iterate over quantified symbols efficiently
+    u64 quantified_vars_mask = 0u;
+    for (auto quantified_var: init_state.formula->bound_vars) {
+        quantified_vars_mask |= (1u << quantified_var);
+    }
+    const u64 quantified_symbols_cnt = 1u << init_state.formula->bound_vars.size();
+    const u64 free_symbols_cnt = 1u << (init_state.formula->var_count - init_state.formula->bound_vars.size());
+
     while (!work_queue.empty()) {
         Conjuction_State state = work_queue.back();
         work_queue.pop_back();
 
-        for (u64 symbol_bits = 0u; symbol_bits < max_symbol; symbol_bits++) {
-            auto successor = state.successor_along_symbol(symbol_bits);
+        u64 symbol_free_bits = 0u;
+        for (u64 free_bits_val = 0u; free_bits_val < free_symbols_cnt; free_bits_val++) {
+
+            u64 symbol_quantif_bits = 0u;
+            std::cout << "-------------------" << std::endl;
+            for (u64 quantified_bits_val = 0u; quantified_bits_val < quantified_symbols_cnt; quantified_bits_val++) {
+                auto successor = state.successor_along_symbol(symbol_free_bits | symbol_quantif_bits);
+
+                std::cout << "Successor along " << std::bitset<8>{symbol_free_bits | symbol_quantif_bits} << " " << successor.formula->fmt_with_state(successor) << std::endl;
+
+                symbol_quantif_bits = ((symbol_quantif_bits | ~quantified_vars_mask) + 1) & quantified_vars_mask;
+            }
+
+            symbol_free_bits = ((symbol_free_bits | quantified_vars_mask) + 1) & ~quantified_vars_mask;
+        }
+    }
+
+            /*
 
             auto entailment_status = compute_entailed_formula(formula_pool, successor);
 
@@ -599,14 +618,15 @@ void build_nfa_with_formula_entailement(FormulaPool& formula_pool, Conjuction_St
                 successor = entailment_status.state.value();
             }
 
+            // Check whether the language of the state is contained in a language different state
+
             auto emplacement_result = seen_states.emplace(successor);
             if (!successor.formula->atoms.empty()) {
                 if (emplacement_result.second) {
                     work_queue.push_back(successor);
                 }
             }
-        }
-    }
+            */
 }
 
 const Quantified_Atom_Conjunction* FormulaPool::store_formula(Quantified_Atom_Conjunction& formula) {
@@ -661,15 +681,15 @@ int main(void) {
     std::cout << "Atoms removed   : " << entailment_status.removed_atom_count << std::endl;
     std::cout << "Entailed formula: " << entailment_status.state.value().formula->fmt_with_state(entailment_status.state.value()) << std::endl;
 
-    return 0;
+    //return 0;
 
     vector<Presburger_Atom> atoms = {
-        Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 0}),
-        Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0}),
-        Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 1}),
+        Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 0, 0, 1}),
+        Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 1, 0}),
+        Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 2, 0, 0}),
     };
 
-    Quantified_Atom_Conjunction formula = {.atoms = atoms, .bound_vars = {1}, .var_count = 2};
+    Quantified_Atom_Conjunction formula = {.atoms = atoms, .bound_vars = {0, 2}, .var_count = 4};
     formula.bounds_analysis_result = compute_bounds_analysis(formula);
 
     // -y <= -1
@@ -677,7 +697,7 @@ int main(void) {
     Conjuction_State state = Conjuction_State(&formula, {0, 1, 7});
 
     //FormulaPool pool = FormulaPool();
-    //build_nfa_with_formula_entailement(pool, state);
+    build_nfa_with_formula_entailement(pool, state);
 
     return 0;
 }
