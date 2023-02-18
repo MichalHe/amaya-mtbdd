@@ -4,16 +4,21 @@
 
 #include <bitset>
 #include <iostream>
+#include <list>
 #include <cstring>
 #include <string>
 #include <sstream>
 #include <vector>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 
+using std::list;
+using std::map;
 using std::vector;
 using std::unordered_set;
 using std::unordered_map;
+
 using std::pair;
 using std::optional;
 
@@ -40,7 +45,6 @@ s64 Presburger_Atom::compute_post_along_sym(s64 state, u64 symbol_bits) const {
 
     s64 post = (state - dot) / 2;
     post -= (state - dot) < 0; // Floor division
-    std::cout << "State is " << state << " dot is " << dot << " post is: " << post << std::endl;
     return post;
 }
 
@@ -183,21 +187,18 @@ std::ostream& operator<<(std::ostream& output, const Quantified_Atom_Conjunction
 }
 
 std::ostream& operator<<(std::ostream& output, const Conjuction_State& atom) {
-    output << "State{";
-    if (atom.constants.empty()) {
-        output << "}";
-        return output;
+    output << "(";
+    if (!atom.constants.empty()) {
+        auto constants_it = atom.constants.begin();
+        output << *constants_it;
+        ++constants_it;
+
+        for (; constants_it != atom.constants.end(); ++constants_it) {
+            output << ", " << *constants_it;
+        }
     }
 
-    auto constants_it = atom.constants.begin();
-    output << *constants_it;
-    ++constants_it;
-
-    for (; constants_it != atom.constants.end(); ++constants_it) {
-        output << ", " << *constants_it;
-    }
-
-    output << "}";
+    output << ") [" << atom.formula << "]";
     return output;
 }
 
@@ -357,7 +358,7 @@ Entaiment_Status compute_entailed_formula(FormulaPool& formula_pool, Conjuction_
             s64 upper_bound_val = state.constants[upper_bound.atom_idx] / upper_bound_atom.coefs[var_i];
 
             if (lower_bound_val > upper_bound_val)
-                return { .has_no_integer_solution = true, .removed_atom_count = 0, .state = std::nullopt };
+                return { .has_no_integer_solution = true, .removed_atom_count = 0, .state = Conjuction_State(&formula_pool.bottom, {}) };
 
             if (lower_bound_val == upper_bound_val) {
                 constant_vars[var_i] = {true, lower_bound_val};
@@ -534,8 +535,8 @@ std::string Presburger_Atom::fmt_with_rhs(s64 rhs) const {
 
 std::string Quantified_Atom_Conjunction::fmt_with_state(Conjuction_State& state) const {
     if (atoms.empty()) {
-        if (is_bottom) return "\\bottom";
-        else return "\\top";
+        if (is_bottom) return "false";
+        else return "true";
     }
 
     std::stringstream str_builder;
@@ -567,7 +568,94 @@ std::string Quantified_Atom_Conjunction::fmt_with_state(Conjuction_State& state)
 }
 
 
+void insert_successor_into_post_if_valueable(map<const Quantified_Atom_Conjunction*, list<Conjuction_State>>& post, Conjuction_State& successor) {
+    auto formula = successor.formula;
+    auto& bucket = post[successor.formula];
+
+    bool should_be_inserted = true;
+    bool insert_position_found = false;
+
+    /*
+     * @Optimize: The bucket is kept in a sorted order, so once we arrive at a state that is lexicographically
+     *            larger, we don't have to iterate further.
+     */
+
+    auto bucket_iter = bucket.begin();
+    list<Conjuction_State>::iterator insert_position;
+    while (bucket_iter != bucket.end()) {
+        auto& other_successor = *bucket_iter;
+
+        // Compute pareto optimality
+        bool is_smaller = false; // successor <= other_successor at some fragment of the state (constant)
+        bool is_larger  = false; // successor >= other_successor
+
+        bool is_other_smaller_then_inserted = true;
+
+        for (u64 state_fragment_i = 0u; state_fragment_i < successor.constants.size(); state_fragment_i++) {
+            auto& atom = formula->atoms[state_fragment_i];
+
+            bool is_simulation_plain = (atom.type == PR_ATOM_EQ || atom.type == PR_ATOM_CONGRUENCE);
+
+            if (is_simulation_plain) {
+                if (successor.constants[state_fragment_i] != other_successor.constants[state_fragment_i]) {
+                    // Successor and other successor are incomparable
+                    is_smaller = false;
+                    is_larger = false;
+                    break;
+                }
+            }
+            else {
+                // @Optimize: Those IFs can be avoided by bitpacking the use booleans into one machine word and using bit OPs
+                if (successor.constants[state_fragment_i] < other_successor.constants[state_fragment_i]) {
+                    is_smaller = true; // The successor is simulated at the current field
+                }
+                else if (successor.constants[state_fragment_i] > other_successor.constants[state_fragment_i]) {
+                    is_larger = true;
+                }
+            }
+
+            if (other_successor.constants[state_fragment_i] > successor.constants[state_fragment_i]) {
+                is_other_smaller_then_inserted = false;
+            }
+        }
+
+        // The current successor should be inserted after all <= states were exhaused (insertion sort)
+        if (!is_other_smaller_then_inserted && !insert_position_found) {
+            // @Note: The usage of the insert_position iterator should not get invalidated future list erasures, because
+            //        the iterator points to a state that is lexicographically larger than the inserted state. As the state
+            //        is larger, it cannot be that it is simulated by the inserted - either it is larger in some plain constant,
+            //        or larger in some inequation -> no simulation.
+            insert_position = bucket_iter;
+            insert_position_found = true;
+        }
+
+        if (is_larger == is_smaller) { // Incomparable
+            ++bucket_iter;
+            continue;
+        }
+        else {
+            if (is_larger) {
+                bucket.erase(bucket_iter++);
+            }
+            else { // is_smaller is true
+                should_be_inserted = false;
+                break;
+            }
+        }
+
+    }
+
+    if (should_be_inserted) {
+        if (!insert_position_found) insert_position = bucket.end();
+        bucket.insert(insert_position, successor);
+    }
+}
+
+
+
 void build_nfa_with_formula_entailement(FormulaPool& formula_pool, Conjuction_State& init_state) {
+    typedef Quantified_Atom_Conjunction Formula;
+
     unordered_set<Conjuction_State> seen_states; // Either the state was processed, or is in the queue
     vector<Conjuction_State> work_queue {init_state};
 
@@ -582,6 +670,10 @@ void build_nfa_with_formula_entailement(FormulaPool& formula_pool, Conjuction_St
     const u64 quantified_symbols_cnt = 1u << init_state.formula->bound_vars.size();
     const u64 free_symbols_cnt = 1u << (init_state.formula->var_count - init_state.formula->bound_vars.size());
 
+    // Use map instead of unordered_map so that we can serialize its contents in an canonical fashion
+    typedef map<const Formula*, list<Conjuction_State>> Structured_Post;
+    Structured_Post post;
+
     while (!work_queue.empty()) {
         Conjuction_State state = work_queue.back();
         work_queue.pop_back();
@@ -594,7 +686,23 @@ void build_nfa_with_formula_entailement(FormulaPool& formula_pool, Conjuction_St
             for (u64 quantified_bits_val = 0u; quantified_bits_val < quantified_symbols_cnt; quantified_bits_val++) {
                 auto successor = state.successor_along_symbol(symbol_free_bits | symbol_quantif_bits);
 
-                std::cout << "Successor along " << std::bitset<8>{symbol_free_bits | symbol_quantif_bits} << " " << successor.formula->fmt_with_state(successor) << std::endl;
+                auto entailment_result = compute_entailed_formula(formula_pool, successor);
+
+                if (entailment_result.state.has_value()) {
+                    successor = entailment_result.state.value();
+                }
+
+                std::cout << "Successor along " << std::bitset<8>{symbol_free_bits | symbol_quantif_bits}
+                          << " " << successor.formula->fmt_with_state(successor)
+                          << " (has no integer solution? " << entailment_result.has_no_integer_solution << ")" <<std::endl;
+
+                if (successor.formula == &formula_pool.top) {
+                    assert(false); // TODO: Make the entire post lead to \\top here
+                    break;
+                }
+                else if (successor.formula != &formula_pool.bottom) {
+                    insert_successor_into_post_if_valueable(post, successor);
+                }
 
                 symbol_quantif_bits = ((symbol_quantif_bits | ~quantified_vars_mask) + 1) & quantified_vars_mask;
             }
@@ -643,8 +751,7 @@ const Quantified_Atom_Conjunction* FormulaPool::store_formula(Quantified_Atom_Co
 }
 
 
-int main(void) {
-
+void test_constr_on_real_formula() {
     /* (exists ((y Int), (m Int))
      *   (land
      *     (<= (+ x (- y))  -1)
@@ -697,7 +804,14 @@ int main(void) {
     Conjuction_State state = Conjuction_State(&formula, {0, 1, 7});
 
     //FormulaPool pool = FormulaPool();
-    build_nfa_with_formula_entailement(pool, state);
+    build_nfa_with_formula_entailement(pool, real_state);
+
+}
+
+
+int main(void) {
+    typedef Quantified_Atom_Conjunction Formula;
+    typedef Conjuction_State State;
 
     return 0;
 }
