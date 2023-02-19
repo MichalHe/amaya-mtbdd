@@ -20,10 +20,7 @@ make_set_leaf(Transition_Destination_Set* value) {
 
 /**
  * Function is called when a new node is being inserted to the hash table.
- *
- * @param state_set_ptr     Pointer to an old valid leaf value, which is being
- * copied to the hash table. This means that its a pointer to a poiter to a
- * vector.
+ * @param state_set_ptr  Pointer to the contents of the created leaf.
  */
 void mk_set_leaf(uint64_t *target_destination_set_ptr)
 {
@@ -45,12 +42,7 @@ int set_leaf_equals(uint64_t a_ptr, uint64_t b_ptr)
     Transition_Destination_Set *a_tds = (Transition_Destination_Set *)a_ptr;
     Transition_Destination_Set *b_tds = (Transition_Destination_Set *)b_ptr;
 
-    //if (a_tds->automaton_id == b_tds->automaton_id)
-    if ((*a_tds->destination_set) == (*b_tds->destination_set))
-    {
-        return true;
-    };
-    return false;
+    return (*a_tds->destination_set) == (*b_tds->destination_set);
 }
 
 uint64_t set_leaf_hash(const uint64_t contents_ptr, const uint64_t seed)

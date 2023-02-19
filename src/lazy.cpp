@@ -746,16 +746,43 @@ void explore_macrostate(Structured_Macrostate& macrostate,
         }
 
         // Assign a unique integer to every state
-        const u64 macrostate_handle = known_macrostates.size(); // Might not be valid if insertion did not happen
-        auto [element_iter, was_inserted] = known_macrostates.emplace(post, macrostate_handle);
+        post.handle = known_macrostates.size();
+        auto [element_iter, was_inserted] = known_macrostates.emplace(post, post.handle);
         if (was_inserted) {
+            // @Simplicity: Maybe the known_macrostates should be a set instead of a map since we are storing the handle
+            //              inside the macrostate either way.
             output_queue.push_back(post);
 
             if (post.is_accepting) { // Do the hash-query only if we see the macrostate for the first time
-                accepting_macrostates.emplace(macrostate_handle);
+                accepting_macrostates.emplace(post.handle);
             }
+        } else {
+            post.handle = element_iter->second;  // Use the already existing handle
         }
+        
+        //NFA nfa;
+        //nfa.add_transition(macrostate.handle, post.handle, 0u, 0u);
     }
+}
+
+
+// @Cleanup: Move this into base.cpp
+void NFA::add_transition(State from, State to, u64 symbol, u64 quantified_bits_mask) {
+    u8 rich_symbol[var_count];
+
+    for (u64 bit_i = 0u; bit_i < var_count; bit_i++) {
+        u64 current_bit = (1u << bit_i);
+        bool dont_care = (current_bit & quantified_bits_mask) > 0;
+        u8 care_val = (symbol & current_bit > 0);
+
+        rich_symbol[bit_i] = dont_care ? 2 : care_val;
+    }
+    
+    set<State> leaf_states = {to};
+    Transition_Destination_Set leaf_contents = {.destination_set = &leaf_states};
+    sylvan::MTBDD leaf = make_set_leaf(&leaf_contents);
+
+    sylvan::MTBDD mtbdd = sylvan::mtbdd_cube(this->vars, rich_symbol, leaf);
 }
 
 

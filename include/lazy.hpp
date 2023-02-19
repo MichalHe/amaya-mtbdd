@@ -1,6 +1,8 @@
 #ifndef AMAYA_LAZY_H
 #define AMAYA_LAZY_H
+
 #include "base.hpp"
+#include "custom_leaf.hpp"
 
 #include <list>
 #include <cassert>
@@ -10,10 +12,6 @@
 #include <string>
 #include <map>
 #include <unordered_set>
-
-typedef uint64_t u64;
-typedef uint8_t  u8;
-typedef int64_t  s64;
 
 using std::optional;
 using std::vector;
@@ -235,6 +233,7 @@ struct Formula_Pool { // Formula memory management
 
 struct Structured_Macrostate {
     bool is_accepting;
+    u64 handle;
     map<const Quantified_Atom_Conjunction*, list<Conjuction_State>> formulae;
 
     bool operator==(const Structured_Macrostate& other) const;

@@ -20,6 +20,10 @@ using sylvan::BDDSET;
 
 typedef int64_t State;
 
+typedef uint64_t u64;
+typedef uint8_t  u8;
+typedef int64_t  s64;
+
 class Transition_Destination_Set {
 public:
 	std::set<State>* destination_set;
@@ -39,6 +43,8 @@ struct NFA {
 
     sylvan::BDDSET vars;
     uint64_t var_count;
+
+    void add_transition(State from, State to, u64 symbol, u64 quantified_bits_mask);
 };
 
 struct Transition {

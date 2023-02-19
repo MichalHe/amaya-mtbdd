@@ -1,13 +1,18 @@
 CXX=g++
 CXXLIBS=$(shell pkg-config --libs sylvan)
-CXXFLAGS=-O2 -shared -fPIC -g
+
+# CXXFLAGS=-O2 -shared -fPIC -g --std=c++20
+CXXFLAGS=-O2 -g --std=c++20
 
 .PHONY := clean
 
-lazy: build src/lazy.cpp include/lazy.hpp include/base.hpp
-	$(CXX) -g --std=c++20 -o $@ src/lazy.cpp $(CXXLIBS)
+lazy: build/lazy.o build/base.o build/custom_leaf.o
+	$(CXX) -o lazy $^ $(CXXLIBS)
 
 shared-lib: build build/amaya-mtbdd.so
+
+build/lazy.o: build src/lazy.cpp include/lazy.hpp include/base.hpp
+	$(CXX) -c $(CXXFLAGS)  src/lazy.cpp -o build/lazy.o
 
 build/amaya-mtbdd.so: build/wrapper.o build/operations.o build/custom_leaf.o build/hopcroft_leaf.o build/base.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(CXXLIBS)
