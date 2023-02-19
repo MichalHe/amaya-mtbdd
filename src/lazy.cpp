@@ -568,7 +568,7 @@ std::string Quantified_Atom_Conjunction::fmt_with_state(Conjuction_State& state)
 }
 
 
-void insert_successor_into_post_if_valueable(map<const Quantified_Atom_Conjunction*, list<Conjuction_State>>& post, Conjuction_State& successor) {
+void insert_successor_into_post_if_valuable(map<const Quantified_Atom_Conjunction*, list<Conjuction_State>>& post, Conjuction_State& successor) {
     auto formula = successor.formula;
     auto& bucket = post[successor.formula];
 
@@ -656,9 +656,6 @@ void insert_successor_into_post_if_valueable(map<const Quantified_Atom_Conjuncti
 void build_nfa_with_formula_entailement(FormulaPool& formula_pool, Conjuction_State& init_state) {
     typedef Quantified_Atom_Conjunction Formula;
 
-    unordered_set<Conjuction_State> seen_states; // Either the state was processed, or is in the queue
-    vector<Conjuction_State> work_queue {init_state};
-
     u64 max_symbol = (1u << init_state.formula->var_count);
     vector<Conjuction_State> produced_states;
 
@@ -674,67 +671,40 @@ void build_nfa_with_formula_entailement(FormulaPool& formula_pool, Conjuction_St
     typedef map<const Formula*, list<Conjuction_State>> Structured_Post;
     Structured_Post post;
 
-    while (!work_queue.empty()) {
-        Conjuction_State state = work_queue.back();
-        work_queue.pop_back();
+    unordered_map<Structured_Post, u64> post_to_id;
 
-        u64 symbol_free_bits = 0u;
-        for (u64 free_bits_val = 0u; free_bits_val < free_symbols_cnt; free_bits_val++) {
-
-            u64 symbol_quantif_bits = 0u;
-            std::cout << "-------------------" << std::endl;
-            for (u64 quantified_bits_val = 0u; quantified_bits_val < quantified_symbols_cnt; quantified_bits_val++) {
-                auto successor = state.successor_along_symbol(symbol_free_bits | symbol_quantif_bits);
-
-                auto entailment_result = compute_entailed_formula(formula_pool, successor);
-
-                if (entailment_result.state.has_value()) {
-                    successor = entailment_result.state.value();
-                }
-
-                std::cout << "Successor along " << std::bitset<8>{symbol_free_bits | symbol_quantif_bits}
-                          << " " << successor.formula->fmt_with_state(successor)
-                          << " (has no integer solution? " << entailment_result.has_no_integer_solution << ")" <<std::endl;
-
-                if (successor.formula == &formula_pool.top) {
-                    assert(false); // TODO: Make the entire post lead to \\top here
-                    break;
-                }
-                else if (successor.formula != &formula_pool.bottom) {
-                    insert_successor_into_post_if_valueable(post, successor);
-                }
-
-                symbol_quantif_bits = ((symbol_quantif_bits | ~quantified_vars_mask) + 1) & quantified_vars_mask;
-            }
-
-            symbol_free_bits = ((symbol_free_bits | quantified_vars_mask) + 1) & ~quantified_vars_mask;
-        }
+    vector<Structured_Post> work_queue;
+    {
+        list<Conjuction_State> init_list = {init_state};
+        Structured_Post init_set = { {init_state.formula, init_list} };
+        work_queue.push_back(init_set);
     }
 
-            /*
+    Alphabet_Iterator alphabet_iter = Alphabet_Iterator(init_state.formula->var_count, init_state.formula->bound_vars);
+    while (!work_queue.empty()) {
+        auto state_set = work_queue.back();
+        work_queue.pop_back();
 
-            auto entailment_status = compute_entailed_formula(formula_pool, successor);
+        for  (u64 symbol = alphabet_iter.init(); !alphabet_iter.finished; symbol = alphabet_iter.next_symbol()) {
+            std::cout << std::bitset<8> {symbol} << std::endl;
+        }
 
-            if (entailment_status.removed_atom_count > 0) {
-                std::cout << "Was able to reduce formula `" << successor.formula->fmt_with_state(successor)
-                          << " into " << entailment_status.state->formula->fmt_with_state(entailment_status.state.value()) << std::endl;
-            }
+                //auto entailment_result = compute_entailed_formula(formula_pool, successor);
 
-            if (entailment_status.has_no_integer_solution) {
-                successor = Conjuction_State{.formula=&formula_pool.bottom, .constants = {}};
-            } else if (entailment_status.removed_atom_count > 0) {
-                successor = entailment_status.state.value();
-            }
+                //if (entailment_result.state.has_value()) {
+                    //successor = entailment_result.state.value();
+                //}
 
-            // Check whether the language of the state is contained in a language different state
+                //if (successor.formula == &formula_pool.top) {
+                    //assert(false); // TODO: Make the entire post lead to \\top here
+                    //break;
+                //}
+                //else if (successor.formula != &formula_pool.bottom) {
+                    //insert_successor_into_post_if_valueable(post, successor);
+                //}
 
-            auto emplacement_result = seen_states.emplace(successor);
-            if (!successor.formula->atoms.empty()) {
-                if (emplacement_result.second) {
-                    work_queue.push_back(successor);
-                }
-            }
-            */
+        //post_to_id.emplace(post, post_to_id.size());  // Assign a unique integer to every state
+    }
 }
 
 const Quantified_Atom_Conjunction* FormulaPool::store_formula(Quantified_Atom_Conjunction& formula) {
@@ -788,30 +758,16 @@ void test_constr_on_real_formula() {
     std::cout << "Atoms removed   : " << entailment_status.removed_atom_count << std::endl;
     std::cout << "Entailed formula: " << entailment_status.state.value().formula->fmt_with_state(entailment_status.state.value()) << std::endl;
 
-    //return 0;
-
-    vector<Presburger_Atom> atoms = {
-        Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 0, 0, 1}),
-        Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 1, 0}),
-        Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 2, 0, 0}),
-    };
-
-    Quantified_Atom_Conjunction formula = {.atoms = atoms, .bound_vars = {0, 2}, .var_count = 4};
-    formula.bounds_analysis_result = compute_bounds_analysis(formula);
-
-    // -y <= -1
-    // x + y <= 1
-    Conjuction_State state = Conjuction_State(&formula, {0, 1, 7});
-
     //FormulaPool pool = FormulaPool();
     build_nfa_with_formula_entailement(pool, real_state);
-
 }
 
 
 int main(void) {
     typedef Quantified_Atom_Conjunction Formula;
     typedef Conjuction_State State;
+
+    test_constr_on_real_formula();
 
     return 0;
 }

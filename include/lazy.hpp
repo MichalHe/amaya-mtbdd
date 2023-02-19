@@ -2,7 +2,7 @@
 #define AMAYA_LAZY_H
 #include "base.hpp"
 
-#include <array>
+#include <list>
 #include <cassert>
 #include <optional>
 #include <cstring>
@@ -150,12 +150,100 @@ namespace std {
             return hash;
         }
     };
+
+    template <>
+    struct hash< map<const Quantified_Atom_Conjunction*, list<Conjuction_State>> > {
+        std::size_t operator() (const map<const Quantified_Atom_Conjunction*, list<Conjuction_State>>& post) const {
+            std::size_t hash = 0u;
+
+            for (auto& [formula, states] : post) {
+                std::size_t formula_hash = std::hash<const Quantified_Atom_Conjunction*>{}(formula);
+
+                // @Simplicity: Is hashing really useful in this case?
+                for (auto& state: states) {
+                    std::size_t state_hash = 0u;
+
+                    for (auto state_constant: state.constants) {
+                        std::size_t state_constant_hash = ((state_constant >> 16) ^ state_constant) * 0x45d9f3b;
+                        state_constant = ((state_constant >> 16) ^ state_constant) * 0x45d9f3b;
+                        state_constant = (state_constant >> 16) ^ state_constant;
+
+                        state_hash += 0x9e3779b9 + (state_constant << 6) + (state_constant >> 2);
+                    }
+
+                    formula_hash += 0x9e3779b9 + (state_hash << 6) + (state_hash >> 2);
+                }
+
+                hash += 0x9e3779b9 + (formula_hash << 6) + (formula_hash >> 2);
+            }
+            return hash;
+        }
+    };
 }
+
+
+struct Alphabet_Iterator {
+    u64 free_bits_val;
+    u64 free_bits_inc_count;
+
+    u64 quantified_bits_val;
+    u64 quantified_bits_inc_count;
+
+    bool finished;
+
+    u64 quantified_bits_mask;
+    u64 quantified_bits_inc_limit;
+    u64 free_bits_inc_limit;
+
+    Alphabet_Iterator(u64 var_count, const vector<u64>& quantified_vars):
+        free_bits_val(0u),
+        free_bits_inc_count(0u),
+        quantified_bits_val(0u),
+        quantified_bits_inc_count(0u),
+        finished(false)
+    {
+        quantified_bits_mask = 0u;
+        for (auto quantified_var: quantified_vars) {
+            quantified_bits_mask |= (1u << quantified_var);
+        }
+
+        quantified_bits_inc_limit = 1u << quantified_vars.size();
+        free_bits_inc_limit = 1u << (var_count - quantified_vars.size());
+    };
+
+    u64 next_symbol() {
+        quantified_bits_val = ((quantified_bits_val | ~quantified_bits_mask) + 1u) & quantified_bits_mask;
+        ++quantified_bits_inc_count;
+
+        if (quantified_bits_inc_count >= quantified_bits_inc_limit) {
+            quantified_bits_inc_count = 0u;
+            quantified_bits_val = 0u;
+
+            free_bits_val = ((free_bits_val | quantified_bits_mask) + 1u) & ~quantified_bits_mask;
+            ++free_bits_inc_count;
+
+            if (free_bits_inc_count >= free_bits_inc_limit) finished = true;
+        }
+
+        return free_bits_val | quantified_bits_val;
+    }
+
+    u64 init() {
+        free_bits_val = 0u;
+        free_bits_inc_count = 0u;
+        quantified_bits_val = 0u;
+        quantified_bits_inc_count = 0u;
+        finished = false;
+
+        return 0u; // First symbol is always 0
+    }
+};
+
 
 struct FormulaPool { // Formula memory management
     Quantified_Atom_Conjunction top;
     Quantified_Atom_Conjunction bottom;
-    
+
     unordered_set<Quantified_Atom_Conjunction> formulae;
 
     FormulaPool() {
