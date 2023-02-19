@@ -22,24 +22,12 @@ using std::unordered_map;
 using std::pair;
 using std::optional;
 
-
-template <typename T>
-std::string fmt_array(T* array, size_t array_size) {
-    if (array_size == 0) return "[]";
-
-    std::stringstream ss;
-    ss << "[" << array[0];
-    for (size_t i = 1; i < array_size; i++) {
-        ss << ", " << array[i];
-    }
-    ss << "]";
-    return ss.str();
-}
+typedef Quantified_Atom_Conjunction Formula;
 
 s64 Presburger_Atom::compute_post_along_sym(s64 state, u64 symbol_bits) const {
     s64 dot = 0;
     for (u64 var_i = 0; var_i < coefs.size(); var_i++) {
-        s64 is_bit_set = (symbol_bits & (1 << var_i)) > 0;
+        s64 is_bit_set = (symbol_bits & (1u << var_i)) > 0;
         dot += is_bit_set * coefs[var_i];
     }
 
@@ -60,6 +48,27 @@ s64 Presburger_Atom::compute_post_along_sym(s64 state, u64 symbol_bits) const {
     post_div_2 -= (post_mod_2 != 0) * (post < 0);
     return post_div_2;
 }
+
+bool Presburger_Atom::accepts_last_symbol(s64 state, u64 symbol) const {
+    s64 dot = 0;
+    for (u64 var_i = 0; var_i < coefs.size(); var_i++) {
+        s64 is_bit_set = (symbol & (1u << var_i)) > 0;
+        dot += is_bit_set * coefs[var_i];
+    }
+
+    // @Optimize: This can be converted to branchless code by having a local copy of modulus and setting it to 1 if
+    //            the one in atom is 0 (thus the atom is congruence). Then the result is an or between the remaining
+    //            branches
+
+    if (type == PR_ATOM_CONGRUENCE) {
+        return ((state + dot) % modulus) == 0;
+    } else if (type == PR_ATOM_EQ) {
+        return (state + dot) == 0;
+    } else {
+        return (state + dot) <= 0;
+    }
+}
+
 
 bool Conjuction_State::operator==(const Conjuction_State& other) const {
     return formula == other.formula && constants == other.constants;
@@ -82,6 +91,14 @@ Conjuction_State Conjuction_State::successor_along_symbol(u64 symbol) {
     return Conjuction_State {.formula = formula, .constants = successor_values};
 }
 
+bool Conjuction_State::accepts_last_symbol(u64 symbol) {
+    bool accepts = true;
+    for (u64 atom_i = 0; atom_i < formula->atoms.size(); atom_i++) {
+        s64 current_state = constants[atom_i];
+        accepts &= formula->atoms[atom_i].compute_post_along_sym(current_state, symbol);
+    }
+    return accepts;
+}
 
 void Conjuction_State::post(unordered_set<Conjuction_State>& known_states, vector<Conjuction_State>& new_states) {
     const s64 max_symbol_val = (1 << formula->var_count);
@@ -104,7 +121,6 @@ void Conjuction_State::post(unordered_set<Conjuction_State>& known_states, vecto
         }
     }
 }
-
 
 vector<Presburger_Atom> broadcast_atoms_to_same_dimension(const vector<Sparse_Presburger_Atom>& atoms) {
     unordered_set<u64> referenced_vars;
@@ -214,6 +230,12 @@ std::ostream& operator<<(std::ostream& output, const Conjuction_State& atom) {
     output << ") [" << atom.formula << "]";
     return output;
 }
+
+bool Structured_Macrostate::operator==(const Structured_Macrostate& other) const {
+    if (is_accepting != other.is_accepting) return false;
+    return formulae == other.formulae;
+};
+
 
 Variable_Bound_Analysis_Result* compute_bounds_analysis(Quantified_Atom_Conjunction& conj) {
     vector<Variable_Bounds> var_bounds {conj.var_count};
@@ -585,9 +607,9 @@ std::string Quantified_Atom_Conjunction::fmt_with_state(Conjuction_State& state)
 }
 
 
-void insert_successor_into_post_if_valuable(map<const Quantified_Atom_Conjunction*, list<Conjuction_State>>& post, Conjuction_State& successor) {
+void insert_successor_into_post_if_valuable(Structured_Macrostate& post, Conjuction_State& successor) {
     auto formula = successor.formula;
-    auto& bucket = post[successor.formula];
+    auto& bucket = post.formulae[successor.formula];
 
     bool should_be_inserted = true;
     bool insert_position_found = false;
@@ -668,30 +690,41 @@ void insert_successor_into_post_if_valuable(map<const Quantified_Atom_Conjunctio
     }
 }
 
+std::ostream& operator<<(std::ostream& output, const Structured_Macrostate& macrostate) {
+    output << "{";
+    for (auto& [formula, states]: macrostate.formulae) {
+        auto state_it = states.begin();
+        output << *state_it;
+        ++state_it;
 
-typedef Quantified_Atom_Conjunction Formula;
-typedef map<const Formula*, list<Conjuction_State>> Structured_Macrostate;
+        for (; state_it != states.end(); ++state_it) {
+            output << ", " << *state_it;
+        }
+
+    }
+    if (macrostate.is_accepting) {
+        output << " (+ ACCEPTING)";
+    }
+    output << "}";
+    return output;
+}
 
 void explore_macrostate(Structured_Macrostate& macrostate,
                         Alphabet_Iterator& alphabet_iter,
                         Formula_Pool& formula_pool,
                         unordered_map<Structured_Macrostate, u64>& known_macrostates,
+                        unordered_set<u64>& accepting_macrostates,
                         vector<Structured_Macrostate>& output_queue)
 {
     alphabet_iter.reset();
 
-    std::cout << "Exploring: ";
-    for (auto& [formula, states]: macrostate) {
-        for (auto& state: states) {
-            std::cout << state << std::endl;
-        }
-    }
+    std::cout << "Exploring: " << macrostate << std::endl;
 
     while (!alphabet_iter.finished) {
-
         Structured_Macrostate post;
+        bool is_accepting = false;
         for (u64 symbol = alphabet_iter.init_quantif(); alphabet_iter.has_more_quantif_symbols; symbol = alphabet_iter.next_symbol()) {
-            for (auto& [formula, states]: macrostate) {
+            for (auto& [formula, states]: macrostate.formulae) {
                 for (auto& state: states) {
                     auto successor = state.successor_along_symbol(symbol);
                     auto entailment_result = compute_entailed_formula(formula_pool, successor);
@@ -706,14 +739,21 @@ void explore_macrostate(Structured_Macrostate& macrostate,
                     } else if (successor.formula != &formula_pool.bottom) {
                         insert_successor_into_post_if_valuable(post, successor);
                     }
+
+                    post.is_accepting |= state.accepts_last_symbol(symbol);
                 }
             }
         }
 
         // Assign a unique integer to every state
-        auto [element_iter, was_inserted] = known_macrostates.emplace(post, known_macrostates.size());
+        const u64 macrostate_handle = known_macrostates.size(); // Might not be valid if insertion did not happen
+        auto [element_iter, was_inserted] = known_macrostates.emplace(post, macrostate_handle);
         if (was_inserted) {
             output_queue.push_back(post);
+
+            if (post.is_accepting) { // Do the hash-query only if we see the macrostate for the first time
+                accepting_macrostates.emplace(macrostate_handle);
+            }
         }
     }
 }
@@ -735,11 +775,13 @@ void build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_S
     Structured_Macrostate post;
 
     unordered_map<Structured_Macrostate, u64> known_macrostates;
+    unordered_set<u64> accepting_macrostates;
 
     vector<Structured_Macrostate> work_queue;
     {
         list<Conjuction_State> init_list = {init_state};
-        Structured_Macrostate init_macrostate = { {init_state.formula, init_list} };
+        map<const Formula*, list<Conjuction_State>> init_macrostate_formulae = { {init_state.formula, init_list} };
+        Structured_Macrostate init_macrostate = { .is_accepting = false, .formulae = init_macrostate_formulae };
         work_queue.push_back(init_macrostate);
 
         known_macrostates.emplace(init_macrostate, known_macrostates.size());
@@ -750,8 +792,19 @@ void build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_S
         auto macrostate = work_queue.back();
         work_queue.pop_back();
 
-        explore_macrostate(macrostate, alphabet_iter, formula_pool, known_macrostates, work_queue);
+        explore_macrostate(macrostate, alphabet_iter, formula_pool, known_macrostates, accepting_macrostates, work_queue);
     }
+
+    std::cout << "Known macrostates:" << std::endl;
+    for (auto& [state, handle]: known_macrostates) {
+        std::cout << "@" << handle << " :: " << state << std::endl;
+    }
+
+    std::cout << "Accepting macrostates: " << std::endl;
+    for (auto macrostate_handle: accepting_macrostates) {
+        std::cout << "  @" << macrostate_handle << std::endl;
+    }
+
 }
 
 const Quantified_Atom_Conjunction* Formula_Pool::store_formula(Quantified_Atom_Conjunction& formula) {

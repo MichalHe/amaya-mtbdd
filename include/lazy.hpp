@@ -18,6 +18,8 @@ typedef int64_t  s64;
 using std::optional;
 using std::vector;
 using std::unordered_set;
+using std::map;
+using std::list;
 
 enum Presburger_Atom_Type {
     PR_ATOM_INVALID = 0,
@@ -38,8 +40,22 @@ struct Presburger_Atom {
     Presburger_Atom(Presburger_Atom_Type atom_type, const vector<s64>& coefficients, s64 modulus=0) : type(atom_type), coefs(coefficients), modulus(modulus) {}
 
     s64 compute_post_along_sym(s64 constant, u64 symbol_bits) const;
+    bool accepts_last_symbol(s64 state, u64 symbol_bits) const;
+
     std::string fmt_with_rhs(s64 rhs) const;
     bool operator==(const Presburger_Atom& other) const;
+};
+
+template <>
+struct std::hash<Presburger_Atom> {
+    std::size_t operator() (const Presburger_Atom& state) const {
+        std::size_t hash = 0;
+        for (auto coef: state.coefs) {
+            std::size_t coef_hash = std::hash<s64>{}(coef);
+            hash = hash + 0x9e3779b9 + (coef_hash << 6) + (coef_hash >> 2);
+        }
+        return hash;
+    }
 };
 
 struct Sparse_Presburger_Atom {
@@ -88,6 +104,18 @@ struct Quantified_Atom_Conjunction {
     std::string fmt_with_state(Conjuction_State& state) const;
 };
 
+template <>
+struct std::hash<Quantified_Atom_Conjunction> {
+    std::size_t operator() (const Quantified_Atom_Conjunction& formula) const {
+        std::size_t hash = formula.is_bottom ? 0 : 33;
+        for (auto& atom: formula.atoms) {
+            std::size_t atom_hash = std::hash<Presburger_Atom>{}(atom);
+            hash = hash + 0x9e3779b9 + (atom_hash << 6) + (atom_hash >> 2);
+        }
+        return hash;
+    }
+};
+
 struct Conjuction_State {
     const Quantified_Atom_Conjunction* formula;
     vector<s64> constants;
@@ -98,9 +126,23 @@ struct Conjuction_State {
 
     void post(unordered_set<Conjuction_State>& known_states, vector<Conjuction_State>& dest);
     Conjuction_State successor_along_symbol(u64 symbol);
+    bool accepts_last_symbol(u64 symbol);
     bool operator==(const Conjuction_State& other) const;
 };
 
+template <>
+struct std::hash<Conjuction_State> {
+    std::size_t operator() (const Conjuction_State& state) const {
+        std::size_t hash = std::hash<const Quantified_Atom_Conjunction*>{}(state.formula);
+
+        for (u64 i = 0u; i < state.formula->atoms.size(); i++) {
+            std::size_t atom_val_hash = std::hash<s64>{}(state.constants[i]);
+            hash = hash + 0x9e3779b9 + (atom_val_hash << 6) + (atom_val_hash >> 2);
+        }
+
+        return hash;
+    }
+};
 
 std::ostream& operator<<(std::ostream& output, const Presburger_Atom& atom);
 std::ostream& operator<<(std::ostream& output, const Quantified_Atom_Conjunction& formula);
@@ -111,75 +153,6 @@ struct Entaiment_Status {
     u64 removed_atom_count;
     optional<Conjuction_State> state;
 };
-
-namespace std {
-    template <>
-    struct hash<Conjuction_State> {
-        std::size_t operator() (const Conjuction_State& state) const {
-            std::size_t hash = std::hash<const Quantified_Atom_Conjunction*>{}(state.formula);
-
-            for (u64 i = 0u; i < state.formula->atoms.size(); i++) {
-                std::size_t atom_val_hash = std::hash<s64>{}(state.constants[i]);
-                hash = hash + 0x9e3779b9 + (atom_val_hash << 6) + (atom_val_hash >> 2);
-            }
-
-            return hash;
-        }
-    };
-
-    template <>
-    struct hash<Presburger_Atom> {
-        std::size_t operator() (const Presburger_Atom& state) const {
-            std::size_t hash = 0;
-            for (auto coef: state.coefs) {
-                std::size_t coef_hash = std::hash<s64>{}(coef);
-                hash = hash + 0x9e3779b9 + (coef_hash << 6) + (coef_hash >> 2);
-            }
-            return hash;
-        }
-    };
-
-    template <>
-    struct hash<Quantified_Atom_Conjunction> {
-        std::size_t operator() (const Quantified_Atom_Conjunction& formula) const {
-            std::size_t hash = formula.is_bottom ? 0 : 33;
-            for (auto& atom: formula.atoms) {
-                std::size_t atom_hash = std::hash<Presburger_Atom>{}(atom);
-                hash = hash + 0x9e3779b9 + (atom_hash << 6) + (atom_hash >> 2);
-            }
-            return hash;
-        }
-    };
-
-    template <>
-    struct hash< map<const Quantified_Atom_Conjunction*, list<Conjuction_State>> > {
-        std::size_t operator() (const map<const Quantified_Atom_Conjunction*, list<Conjuction_State>>& post) const {
-            std::size_t hash = 0u;
-
-            for (auto& [formula, states] : post) {
-                std::size_t formula_hash = std::hash<const Quantified_Atom_Conjunction*>{}(formula);
-
-                // @Simplicity: Is hashing really useful in this case?
-                for (auto& state: states) {
-                    std::size_t state_hash = 0u;
-
-                    for (auto state_constant: state.constants) {
-                        std::size_t state_constant_hash = ((state_constant >> 16) ^ state_constant) * 0x45d9f3b;
-                        state_constant = ((state_constant >> 16) ^ state_constant) * 0x45d9f3b;
-                        state_constant = (state_constant >> 16) ^ state_constant;
-
-                        state_hash += 0x9e3779b9 + (state_constant << 6) + (state_constant >> 2);
-                    }
-
-                    formula_hash += 0x9e3779b9 + (state_hash << 6) + (state_hash >> 2);
-                }
-
-                hash += 0x9e3779b9 + (formula_hash << 6) + (formula_hash >> 2);
-            }
-            return hash;
-        }
-    };
-}
 
 
 struct Alphabet_Iterator {
@@ -247,8 +220,8 @@ struct Alphabet_Iterator {
 
 
 struct Formula_Pool { // Formula memory management
-    Quantified_Atom_Conjunction top;
-    Quantified_Atom_Conjunction bottom;
+    Quantified_Atom_Conjunction top;    // Formula with solution space spanning entire space
+    Quantified_Atom_Conjunction bottom; // Formula with no solution space
 
     unordered_set<Quantified_Atom_Conjunction> formulae;
 
@@ -259,4 +232,45 @@ struct Formula_Pool { // Formula memory management
 
     const Quantified_Atom_Conjunction* store_formula(Quantified_Atom_Conjunction& formula);
 };
+
+struct Structured_Macrostate {
+    bool is_accepting;
+    map<const Quantified_Atom_Conjunction*, list<Conjuction_State>> formulae;
+
+    bool operator==(const Structured_Macrostate& other) const;
+};
+
+template <>
+struct std::hash<Structured_Macrostate> {
+    std::size_t operator() (const Structured_Macrostate& macrostate) const {
+        std::size_t hash = 0u;
+
+        // Hash the states constituting macrostate
+        for (auto& [formula, states] : macrostate.formulae) {
+            std::size_t formula_hash = std::hash<const Quantified_Atom_Conjunction*>{}(formula);
+
+            // @Simplicity: Is hashing really useful in this case?
+            for (auto& state: states) {
+                std::size_t state_hash = 0u;
+
+                for (auto state_constant: state.constants) {
+                    std::size_t state_constant_hash = ((state_constant >> 16) ^ state_constant) * 0x45d9f3b;
+                    state_constant = ((state_constant >> 16) ^ state_constant) * 0x45d9f3b;
+                    state_constant = (state_constant >> 16) ^ state_constant;
+
+                    state_hash += 0x9e3779b9 + (state_constant << 6) + (state_constant >> 2);
+                }
+
+                formula_hash += 0x9e3779b9 + (state_hash << 6) + (state_hash >> 2);
+            }
+
+            hash += 0x9e3779b9 + (formula_hash << 6) + (formula_hash >> 2);
+        }
+
+        hash += macrostate.is_accepting * 33;
+
+        return hash;
+    }
+};
+
 #endif
