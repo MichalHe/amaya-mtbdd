@@ -43,9 +43,22 @@ s64 Presburger_Atom::compute_post_along_sym(s64 state, u64 symbol_bits) const {
         dot += is_bit_set * coefs[var_i];
     }
 
-    s64 post = (state - dot) / 2;
-    post -= (state - dot) < 0; // Floor division
-    return post;
+    if (this->type == PR_ATOM_CONGRUENCE) {
+        s64 post = state - dot;
+        post += modulus * ((state - dot % 2) != 0);
+        post /= 2;
+        post = post % modulus;
+        return post;
+    }
+
+    s64 post = (state - dot);
+
+    s64 post_div_2 = post / 2;
+    s64 post_mod_2 = post % 2;
+
+    // Floor the division
+    post_div_2 -= (post_mod_2 != 0) * (post < 0);
+    return post_div_2;
 }
 
 bool Conjuction_State::operator==(const Conjuction_State& other) const {
@@ -334,7 +347,7 @@ std::optional<std::pair<s64, u64>> compute_instantiating_value_for_var(const Qua
 }
 
 
-Entaiment_Status compute_entailed_formula(FormulaPool& formula_pool, Conjuction_State& state) {
+Entaiment_Status compute_entailed_formula(Formula_Pool& formula_pool, Conjuction_State& state) {
     auto formula = state.formula;
 
     if (!formula->bounds_analysis_result->has_var_with_both_bounds)
@@ -374,6 +387,10 @@ Entaiment_Status compute_entailed_formula(FormulaPool& formula_pool, Conjuction_
             }
         }
     }
+
+    // @Robustness: We should also handle formulae without any hard bounds on them, e.g., (exists ((x Int) (y Int))
+    //              (<= (+ x y) 0)). Handling it should be probably done when we shift from simple analysis to inter-
+    //              atom influence analysis.
 
     if (!atoms_implying_constant_var)  // The current formula does not imply a constant variable value
         return { .has_no_integer_solution = false, .removed_atom_count = 0, .state = state};
@@ -599,8 +616,8 @@ void insert_successor_into_post_if_valuable(map<const Quantified_Atom_Conjunctio
             if (is_simulation_plain) {
                 if (successor.constants[state_fragment_i] != other_successor.constants[state_fragment_i]) {
                     // Successor and other successor are incomparable
-                    is_smaller = false;
-                    is_larger = false;
+                    is_smaller = true;
+                    is_larger = true;
                     break;
                 }
             }
@@ -629,15 +646,15 @@ void insert_successor_into_post_if_valuable(map<const Quantified_Atom_Conjunctio
             insert_position_found = true;
         }
 
-        if (is_larger == is_smaller) { // Incomparable
+        if (is_larger && is_smaller) { // Incomparable
             ++bucket_iter;
             continue;
         }
         else {
             if (is_larger) {
                 bucket.erase(bucket_iter++);
-            }
-            else { // is_smaller is true
+            } else {
+                // Either the inserted atom is smaller (is_smaller = true), or they are the same (is_smaller = is_larger = false)
                 should_be_inserted = false;
                 break;
             }
@@ -652,10 +669,57 @@ void insert_successor_into_post_if_valuable(map<const Quantified_Atom_Conjunctio
 }
 
 
+typedef Quantified_Atom_Conjunction Formula;
+typedef map<const Formula*, list<Conjuction_State>> Structured_Macrostate;
 
-void build_nfa_with_formula_entailement(FormulaPool& formula_pool, Conjuction_State& init_state) {
-    typedef Quantified_Atom_Conjunction Formula;
+void explore_macrostate(Structured_Macrostate& macrostate,
+                        Alphabet_Iterator& alphabet_iter,
+                        Formula_Pool& formula_pool,
+                        unordered_map<Structured_Macrostate, u64>& known_macrostates,
+                        vector<Structured_Macrostate>& output_queue)
+{
+    alphabet_iter.reset();
 
+    std::cout << "Exploring: ";
+    for (auto& [formula, states]: macrostate) {
+        for (auto& state: states) {
+            std::cout << state << std::endl;
+        }
+    }
+
+    while (!alphabet_iter.finished) {
+
+        Structured_Macrostate post;
+        for (u64 symbol = alphabet_iter.init_quantif(); alphabet_iter.has_more_quantif_symbols; symbol = alphabet_iter.next_symbol()) {
+            for (auto& [formula, states]: macrostate) {
+                for (auto& state: states) {
+                    auto successor = state.successor_along_symbol(symbol);
+                    auto entailment_result = compute_entailed_formula(formula_pool, successor);
+
+                    if (entailment_result.state.has_value()) {
+                        successor = entailment_result.state.value();
+                    }
+
+                    if (successor.formula == &formula_pool.top) {
+                        assert(false); // @TODO: Make the entire post lead to \\top here
+                        break;
+                    } else if (successor.formula != &formula_pool.bottom) {
+                        insert_successor_into_post_if_valuable(post, successor);
+                    }
+                }
+            }
+        }
+
+        // Assign a unique integer to every state
+        auto [element_iter, was_inserted] = known_macrostates.emplace(post, known_macrostates.size());
+        if (was_inserted) {
+            output_queue.push_back(post);
+        }
+    }
+}
+
+
+void build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_State& init_state) {
     u64 max_symbol = (1u << init_state.formula->var_count);
     vector<Conjuction_State> produced_states;
 
@@ -668,47 +732,29 @@ void build_nfa_with_formula_entailement(FormulaPool& formula_pool, Conjuction_St
     const u64 free_symbols_cnt = 1u << (init_state.formula->var_count - init_state.formula->bound_vars.size());
 
     // Use map instead of unordered_map so that we can serialize its contents in an canonical fashion
-    typedef map<const Formula*, list<Conjuction_State>> Structured_Post;
-    Structured_Post post;
+    Structured_Macrostate post;
 
-    unordered_map<Structured_Post, u64> post_to_id;
+    unordered_map<Structured_Macrostate, u64> known_macrostates;
 
-    vector<Structured_Post> work_queue;
+    vector<Structured_Macrostate> work_queue;
     {
         list<Conjuction_State> init_list = {init_state};
-        Structured_Post init_set = { {init_state.formula, init_list} };
-        work_queue.push_back(init_set);
+        Structured_Macrostate init_macrostate = { {init_state.formula, init_list} };
+        work_queue.push_back(init_macrostate);
+
+        known_macrostates.emplace(init_macrostate, known_macrostates.size());
     }
 
     Alphabet_Iterator alphabet_iter = Alphabet_Iterator(init_state.formula->var_count, init_state.formula->bound_vars);
     while (!work_queue.empty()) {
-        auto state_set = work_queue.back();
+        auto macrostate = work_queue.back();
         work_queue.pop_back();
 
-        while (!alphabet_iter.finished) {
-            for (u64 symbol = alphabet_iter.init_quantif(); alphabet_iter.has_more_quantif_symbols; symbol = alphabet_iter.next_symbol()) {
-            }
-        }
-
-            //auto entailment_result = compute_entailed_formula(formula_pool, successor);
-
-            //if (entailment_result.state.has_value()) {
-                //successor = entailment_result.state.value();
-            //}
-
-            //if (successor.formula == &formula_pool.top) {
-                //assert(false); // TODO: Make the entire post lead to \\top here
-                //break;
-            //}
-            //else if (successor.formula != &formula_pool.bottom) {
-                //insert_successor_into_post_if_valueable(post, successor);
-            //}
-
-            //post_to_id.emplace(post, post_to_id.size());  // Assign a unique integer to every state
+        explore_macrostate(macrostate, alphabet_iter, formula_pool, known_macrostates, work_queue);
     }
 }
 
-const Quantified_Atom_Conjunction* FormulaPool::store_formula(Quantified_Atom_Conjunction& formula) {
+const Quantified_Atom_Conjunction* Formula_Pool::store_formula(Quantified_Atom_Conjunction& formula) {
     auto [it, did_insertion_happen] = formulae.emplace(formula);
 
     const Quantified_Atom_Conjunction* stored_formula_ptr = &(*it);
@@ -719,6 +765,44 @@ const Quantified_Atom_Conjunction* FormulaPool::store_formula(Quantified_Atom_Co
     }
 
     return &(*it);
+}
+
+void test_nfa_construction_without_quantifiers() {
+    Quantified_Atom_Conjunction formula = {
+        .atoms = {
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 1}),
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 0}, 3),
+        },
+        .bound_vars = {},
+        .var_count = 2
+    };
+
+    Formula_Pool pool = Formula_Pool();
+    auto formula_id = pool.store_formula(formula);
+
+    Conjuction_State init_state = Conjuction_State{.formula = formula_id, .constants = {-1, 0}};
+
+    std::cout << "Input formula   : " << formula.fmt_with_state(init_state) << std::endl;
+    build_nfa_with_formula_entailement(pool, init_state);
+}
+
+
+void test_nfa_construction_with_single_quantifier() {
+    Quantified_Atom_Conjunction formula = {
+        .atoms = {
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 1}),
+        },
+        .bound_vars = {1},
+        .var_count = 2
+    };
+
+    Formula_Pool pool = Formula_Pool();
+    auto formula_id = pool.store_formula(formula);
+
+    Conjuction_State init_state = Conjuction_State{.formula = formula_id, .constants = {0}};
+
+    std::cout << "Input formula   : " << formula.fmt_with_state(init_state) << std::endl;
+    build_nfa_with_formula_entailement(pool, init_state);
 }
 
 
@@ -754,21 +838,17 @@ void test_constr_on_real_formula() {
 
     std::cout << "Input formula   : " << real_formula.fmt_with_state(real_state) << std::endl;
 
-    FormulaPool pool = FormulaPool();
+    Formula_Pool pool = Formula_Pool();
     auto entailment_status = compute_entailed_formula(pool, real_state);
     std::cout << "Atoms removed   : " << entailment_status.removed_atom_count << std::endl;
     std::cout << "Entailed formula: " << entailment_status.state.value().formula->fmt_with_state(entailment_status.state.value()) << std::endl;
 
-    //FormulaPool pool = FormulaPool();
     build_nfa_with_formula_entailement(pool, real_state);
 }
 
 
 int main(void) {
-    typedef Quantified_Atom_Conjunction Formula;
-    typedef Conjuction_State State;
-
-    test_constr_on_real_formula();
+    test_nfa_construction_with_single_quantifier();
 
     return 0;
 }

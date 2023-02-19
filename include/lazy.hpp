@@ -235,27 +235,24 @@ struct Alphabet_Iterator {
 
         return (free_bits_val | quantified_bits_val);
     }
-    /* Never called anymore since we want to iterate blocks of quantified symbols - maybe rename to reset.
-    u64 init() {
+
+    void reset() {
         free_bits_val = 0u;
         free_bits_inc_count = 0u;
         quantified_bits_val = 0u;
         quantified_bits_inc_count = 0u;
         finished = false;
-
-        return 0u; // First symbol is always 0
     }
-    */
 };
 
 
-struct FormulaPool { // Formula memory management
+struct Formula_Pool { // Formula memory management
     Quantified_Atom_Conjunction top;
     Quantified_Atom_Conjunction bottom;
 
     unordered_set<Quantified_Atom_Conjunction> formulae;
 
-    FormulaPool() {
+    Formula_Pool() {
         top    = Quantified_Atom_Conjunction{.is_bottom = false};
         bottom = Quantified_Atom_Conjunction{.is_bottom = true};
     }
