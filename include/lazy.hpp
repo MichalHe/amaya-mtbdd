@@ -190,6 +190,7 @@ struct Alphabet_Iterator {
     u64 quantified_bits_inc_count;
 
     bool finished;
+    bool has_more_quantif_symbols;
 
     u64 quantified_bits_mask;
     u64 quantified_bits_inc_limit;
@@ -200,7 +201,8 @@ struct Alphabet_Iterator {
         free_bits_inc_count(0u),
         quantified_bits_val(0u),
         quantified_bits_inc_count(0u),
-        finished(false)
+        finished(false),
+        has_more_quantif_symbols(false)
     {
         quantified_bits_mask = 0u;
         for (auto quantified_var: quantified_vars) {
@@ -216,18 +218,24 @@ struct Alphabet_Iterator {
         ++quantified_bits_inc_count;
 
         if (quantified_bits_inc_count >= quantified_bits_inc_limit) {
-            quantified_bits_inc_count = 0u;
-            quantified_bits_val = 0u;
+            has_more_quantif_symbols = false;
 
             free_bits_val = ((free_bits_val | quantified_bits_mask) + 1u) & ~quantified_bits_mask;
             ++free_bits_inc_count;
-
             if (free_bits_inc_count >= free_bits_inc_limit) finished = true;
         }
 
         return free_bits_val | quantified_bits_val;
     }
 
+    u64 init_quantif() {
+        quantified_bits_val = 0u;
+        quantified_bits_inc_count = 0u;
+        has_more_quantif_symbols = true;
+
+        return (free_bits_val | quantified_bits_val);
+    }
+    /* Never called anymore since we want to iterate blocks of quantified symbols - maybe rename to reset.
     u64 init() {
         free_bits_val = 0u;
         free_bits_inc_count = 0u;
@@ -237,6 +245,7 @@ struct Alphabet_Iterator {
 
         return 0u; // First symbol is always 0
     }
+    */
 };
 
 

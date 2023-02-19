@@ -685,25 +685,26 @@ void build_nfa_with_formula_entailement(FormulaPool& formula_pool, Conjuction_St
         auto state_set = work_queue.back();
         work_queue.pop_back();
 
-        for  (u64 symbol = alphabet_iter.init(); !alphabet_iter.finished; symbol = alphabet_iter.next_symbol()) {
-            std::cout << std::bitset<8> {symbol} << std::endl;
+        while (!alphabet_iter.finished) {
+            for (u64 symbol = alphabet_iter.init_quantif(); alphabet_iter.has_more_quantif_symbols; symbol = alphabet_iter.next_symbol()) {
+            }
         }
 
-                //auto entailment_result = compute_entailed_formula(formula_pool, successor);
+            //auto entailment_result = compute_entailed_formula(formula_pool, successor);
 
-                //if (entailment_result.state.has_value()) {
-                    //successor = entailment_result.state.value();
-                //}
+            //if (entailment_result.state.has_value()) {
+                //successor = entailment_result.state.value();
+            //}
 
-                //if (successor.formula == &formula_pool.top) {
-                    //assert(false); // TODO: Make the entire post lead to \\top here
-                    //break;
-                //}
-                //else if (successor.formula != &formula_pool.bottom) {
-                    //insert_successor_into_post_if_valueable(post, successor);
-                //}
+            //if (successor.formula == &formula_pool.top) {
+                //assert(false); // TODO: Make the entire post lead to \\top here
+                //break;
+            //}
+            //else if (successor.formula != &formula_pool.bottom) {
+                //insert_successor_into_post_if_valueable(post, successor);
+            //}
 
-        //post_to_id.emplace(post, post_to_id.size());  // Assign a unique integer to every state
+            //post_to_id.emplace(post, post_to_id.size());  // Assign a unique integer to every state
     }
 }
 
