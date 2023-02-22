@@ -22,10 +22,7 @@ extern "C" {
 	const sylvan::MTBDD w_mtbdd_false = sylvan::mtbdd_false;
 
 	// Functions
-	sylvan::MTBDD amaya_unite_mtbdds(
-			sylvan::MTBDD m1, 
-			sylvan::MTBDD m2,
-			uint32_t automaton_id);
+	sylvan::MTBDD amaya_unite_mtbdds(sylvan::MTBDD m1, sylvan::MTBDD m2);
 
 	sylvan::MTBDD amaya_project_variables_away(
 			sylvan::MTBDD m, 
@@ -41,7 +38,6 @@ extern "C" {
 	void amaya_print_dot(sylvan::MTBDD m, int32_t fd);
 
 	sylvan::MTBDD amaya_mtbdd_build_single_terminal(
-		uint32_t  automaton_id,
 		uint8_t*  transition_symbols,  // 2D array of size (variable_count) * transition_symbols_count
 		uint32_t  transition_symbols_count,
 		uint32_t  variable_count,
@@ -77,19 +73,6 @@ extern "C" {
 			void* 	 leaf_tds, 
 			State* 	 new_leaf_contents, 
 			uint32_t contents_size);
-
-	/**
-	 * Given an arary of MTBDD roots, collects their leaves and changes their automaton id
-	 * to `new_id`. Should be called after a new automaton is a result of automaton union.
-	 *
-	 * @param roots 	The array of mtbdds roots.
-	 * @param root_cnt 	The number of roots in the `roots` array.
-	 * @param new_id 	New automaton identifier for the leaves.
-	 */
-	void amaya_mtbdd_change_automaton_id_for_leaves(
-			sylvan::MTBDD* roots,
-			uint32_t root_cnt,
-			uint32_t new_id);
 
 	/**
 	 * Calculates the post set from given MTBDD.
@@ -138,8 +121,6 @@ extern "C" {
 	 * Calculate the intersection of two mtbdds (Operation on leaves is set intersection).
 	 * @param a 				Some transition MTBDD
 	 * @param b 				Other transition MTBDD
-	 * @param new_automaton_id 	Automaton ID for the created intersect leaves.
-	 *
 	 * @param discovered_states 		Flat array of discovered macrostates and their generated int.
 	 * 									[macrostate_left, macrostate_right, state_int ...]
 	 * @param discovered_states_cnt 	Discovered_states count (size/3).
@@ -148,7 +129,6 @@ extern "C" {
 	sylvan::MTBDD amaya_mtbdd_intersection(
 			sylvan::MTBDD a, 
 			sylvan::MTBDD b,
-			uint32_t 	result_automaton_id, 
 			State**  	discovered_states,         // OUT
 			uint32_t*  	discovered_states_cnt);    // OUT
 
@@ -188,7 +168,6 @@ extern "C" {
 	 * from the determinization procedure some automaton.
 	 * @param roots 					The roots of the MTBDDs that were created during the determinization procedure.  
 	 * @param root_cnt  				The number of given MTBDDs. 
-	 * @param resulting_automaton_id  	The ID of the resulting automaton.
 	 * @param out_macrostates_sizes   	OUTPUT: The sized of the located macrostates.
 	 * @param out_macrostates_cnt   		OUTPUT: The number of located macrostates.
 	 * @param out_serialized_macrostates OUTPUT: The macrostates located serialized one after another.
@@ -198,7 +177,6 @@ extern "C" {
 			sylvan::MTBDD* 		roots, 							// MTBDDs resulting from determinization
 			uint32_t 			root_cnt,						// Root count
 			State 				start_numbering_macrostates_from,
-			uint32_t 			resulting_automaton_id,
 			State**				out_serialized_macrostates,
 			uint64_t**			out_macrostates_sizes,
 			uint64_t*			out_macrostates_cnt);
@@ -206,7 +184,6 @@ extern "C" {
 
 	sylvan::MTBDD amaya_complete_mtbdd_with_trapstate(
 			sylvan::MTBDD mtbdd,
-			uint32_t 	automaton_id, 
 			State 		trapstate,
 			bool* 		had_effect);
 	
