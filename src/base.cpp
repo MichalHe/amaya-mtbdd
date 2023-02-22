@@ -16,7 +16,8 @@ Transition_Destination_Set::Transition_Destination_Set()
 
 Transition_Destination_Set::Transition_Destination_Set(const Transition_Destination_Set &other)
 {
-    this->destination_set = new std::set<State>(*other.destination_set); // Do copy
+    // NOTE: Copy is called when a new leaf is created 
+    this->destination_set = new std::set<State>(*other.destination_set);
 }
 
 Transition_Destination_Set::Transition_Destination_Set(std::set<State> *destination_set)
