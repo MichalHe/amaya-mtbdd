@@ -16,7 +16,7 @@ Transition_Destination_Set::Transition_Destination_Set()
 
 Transition_Destination_Set::Transition_Destination_Set(const Transition_Destination_Set &other)
 {
-    // NOTE: Copy is called when a new leaf is created 
+    // NOTE: Copy is called when a new leaf is created
     this->destination_set = new std::set<State>(*other.destination_set);
 }
 
@@ -66,13 +66,13 @@ void unpack_dont_care_bits_in_mtbdd_path(
             dont_care_symbol_found = true;
             first_dont_care_symbol_index = i;
         }
-    } 
-    
+    }
+
     if (dont_care_symbol_found) {
-        uint8_t path_with_dont_care_bit_interpreted[path_size]; 
+        uint8_t path_with_dont_care_bit_interpreted[path_size];
         for (uint64_t i = 0; i < path_size; i++) path_with_dont_care_bit_interpreted[i] = mtbdd_path[i];
 
-        // Case split - interpret the don't care bit by setting first bit = 0, and then bit = 1 
+        // Case split - interpret the don't care bit by setting first bit = 0, and then bit = 1
         path_with_dont_care_bit_interpreted[first_dont_care_symbol_index] = 0;
         unpack_dont_care_bits_in_mtbdd_path(path_with_dont_care_bit_interpreted, path_size, unpacked_transitions, first_dont_care_symbol_index+1, origin, destination);
 
@@ -99,14 +99,14 @@ std::vector<struct Transition> nfa_unpack_transitions(struct NFA& nfa)
     LACE_ME;
 
     std::vector<struct Transition> transitions;
-    
+
     uint8_t* path_in_mtbdd_to_leaf = (uint8_t*) malloc(sizeof(uint8_t) * nfa.var_count);
     assert(path_in_mtbdd_to_leaf != NULL);
 
     for (auto origin_state: nfa.states) {
         MTBDD    state_transitions = nfa.transitions[origin_state];
         MTBDD    leaf         = sylvan::mtbdd_enum_first(state_transitions, nfa.vars, path_in_mtbdd_to_leaf, NULL);
-        
+
         while (leaf != sylvan::mtbdd_false) {
             Transition_Destination_Set* tds = (Transition_Destination_Set*) sylvan::mtbdd_getvalue(leaf);
             for (auto dest_state: *tds->destination_set) {
