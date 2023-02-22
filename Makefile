@@ -36,8 +36,7 @@ build:
 	-mkdir build
 
 clean:
-	rm build/*
-
+	rm build/* || true
 
 build/test.o: src/test.cpp include/hopcroft_leaf.hpp
 	$(CXX) -c $(CXXFLAGS) src/test.cpp -o build/test.o
