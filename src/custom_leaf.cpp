@@ -45,7 +45,6 @@ int set_leaf_equals(uint64_t a_ptr, uint64_t b_ptr)
     Transition_Destination_Set *a_tds = (Transition_Destination_Set *)a_ptr;
     Transition_Destination_Set *b_tds = (Transition_Destination_Set *)b_ptr;
 
-    //if (a_tds->automaton_id == b_tds->automaton_id)
     if ((*a_tds->destination_set) == (*b_tds->destination_set))
     {
         return true;

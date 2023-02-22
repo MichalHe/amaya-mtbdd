@@ -71,99 +71,86 @@ uint64_t 	STATE_RENAME_OP_COUNTER = (1LL << 33);
 uint64_t    TRANSFORM_MACROSTATES_TO_INTS_COUNTER = (1LL << 34);
 
 /**
- * Performs an intersection of two given transitions. When performing an intersection the states tuples
- * that get created must be renamed to an integer right away (to be consistent with the overall design -
- * states are always integers). This requires that the information about mapping macrostates to corresponding
- * integers will be persistent in between the intersection of individual transition MTBDDs. This is solved
- * via intersection_state - a global variable.
+ * Compute intersection of two transition sets represented as MTBDDs. The tuples of states that are created
+ * must be renamed to an integer right after they are created to as automaton states are represented by integers.
+ * Furthermore, the assignment of a state number to a tuple must be consistent across all invocations for
+ * the automaton to which the transitions belong. Currently, a global intersection state is kept to preserve
+ * the mapping of state numbers to produced tuples.
  */
 TASK_IMPL_3(MTBDD, transitions_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64_t, param)
 {
     MTBDD a = *pa, b = *pb;
     // Intersection with an empty set (mtbdd_false) is empty set (mtbdd_false)
-    if (a == mtbdd_false || b == mtbdd_false)
-    {
+    if (a == mtbdd_false || b == mtbdd_false) {
         return mtbdd_false;
     }
 
-    // If both are leaves calculate intersection
-    if (mtbdd_isleaf(a) && mtbdd_isleaf(b))
-    {
-        auto intersect_info = (Intersection_Op_Info *)param;
-
-        auto &tds_a = *((Transition_Destination_Set *)mtbdd_getvalue(a));
-        auto &tds_b = *((Transition_Destination_Set *)mtbdd_getvalue(b));
-
-        auto left_states = tds_a.destination_set;
-        auto right_states = tds_b.destination_set;
-
-        if (left_states->empty() || right_states->empty())
-        {
-            return mtbdd_false;
-        }
-
-        // Calculate cross product
-		std::pair<State, State> macrostate;
-        State state;
-
-        auto intersection_leaf_states = new std::set<State>();
-
-        auto already_discovered_intersection_states = intersection_state->intersection_state_pairs_numbers;
-
-        for (auto left_state : *left_states)
-        {
-            for (auto right_state : *right_states)
-            {
-                macrostate = std::make_pair(left_state, right_state);
-                auto pos = already_discovered_intersection_states->find(macrostate);
-                bool contains_macrostate = (pos != already_discovered_intersection_states->end());
-                if (contains_macrostate)
-                {
-                    state = pos->second;
-                }
-                else
-                {
-                    // We have discovered a new state.
-                    // Check (if early pruning is on) whether the state should be pruned.
-                    if (intersection_state->should_do_early_prunining)
-                    {
-                        const bool is_left_in_pruned = (intersection_state->prune_final_states->find(left_state) != intersection_state->prune_final_states->end());
-                        const bool is_right_in_pruned = (intersection_state->prune_final_states->find(right_state) != intersection_state->prune_final_states->end());
-
-                        // Pruning is performed only when exactly one of the states is in the pruned set
-                        if (is_left_in_pruned != is_right_in_pruned)
-                        {
-                            // The state should be pruned
-                            continue;
-                        }
-                    }
-
-                    // Update the global intersection state, so in the future every such
-                    // state will get the same integer
-                    state = already_discovered_intersection_states->size();
-                    already_discovered_intersection_states->insert(std::make_pair(macrostate, state));
-
-                    // Update the discoveries local for this intersection, so that the Python
-                    // side knows that we have discovered some new macrostate and what number we assigned
-					// to it.
-                    intersect_info->discoveries->push_back(left_state);
-                    intersect_info->discoveries->push_back(right_state);
-                    intersect_info->discoveries->push_back(state);
-                }
-
-                intersection_leaf_states->insert(state);
-            }
-        }
-
-        auto intersection_tds = new Transition_Destination_Set(intersection_leaf_states);
-        MTBDD intersection_leaf = make_set_leaf(intersection_tds);
-		delete intersection_tds;
-        return intersection_leaf;
+    if (!mtbdd_isleaf(a) || !mtbdd_isleaf(b)) {
+        return mtbdd_invalid;
     }
+
+    auto intersect_info = (Intersection_Op_Info *) param;
+
+    auto& tds_a = *((Transition_Destination_Set *) mtbdd_getvalue(a));
+    auto& tds_b = *((Transition_Destination_Set *) mtbdd_getvalue(b));
+
+    auto left_states  = tds_a.destination_set;
+    auto right_states = tds_b.destination_set;
+
+    if (left_states->empty() || right_states->empty()) {
+        return mtbdd_false;  // Equivalent to a leaf with an empty set
+    }
+
+
+    auto known_product_states = intersection_state->intersection_state_pairs_numbers;
+
+    State state;
+
+    std::set<State> leaf_states;
+    Transition_Destination_Set intersection_tds (&leaf_states);
+
+    for (auto left_state : *left_states) {
+        for (auto right_state : *right_states) {
+            std::pair<State, State> product_state = std::make_pair(left_state, right_state);
+            auto pos = known_product_states->find(product_state);
+            bool is_product_state_known = (pos != known_product_states->end());
+            if (is_product_state_known) {
+                state = pos->second;
+            } else {
+                // Check (if early pruning is on) whether the state should be pruned.
+                if (intersection_state->should_do_early_prunining) {
+                    const bool is_left_in_pruned = (intersection_state->prune_final_states->find(left_state) != intersection_state->prune_final_states->end());
+                    const bool is_right_in_pruned = (intersection_state->prune_final_states->find(right_state) != intersection_state->prune_final_states->end());
+
+                    // Pruning is performed only when exactly one of the states is in the pruned set
+                    if (is_left_in_pruned != is_right_in_pruned) {
+                        continue;
+                    }
+                }
+
+                state = known_product_states->size();
+                known_product_states->insert(std::make_pair(product_state, state));
+
+                // Store the triple (left_state, right_state, ID) to make sure Python side knows about a new state
+                intersect_info->discoveries->push_back(left_state);
+                intersect_info->discoveries->push_back(right_state);
+                intersect_info->discoveries->push_back(state);
+            }
+
+            leaf_states.insert(state);
+        }
+    }
+
+    MTBDD intersection_leaf = make_set_leaf(&intersection_tds);
+
+    // @Cleanup: This is temporary until we convert destination_set to not be a pointer.
+    //           Prevent class destructor to call delete on destination_set as it is a pointer to stack
+    intersection_tds.destination_set = nullptr;
+
+    return intersection_leaf;
 
     // TODO: Perform pointer swap here, so the cache would be utilized (operation is commutative).
     // TODO: Utilize operation cache.
-    return mtbdd_invalid;
 }
 
 /**
@@ -191,16 +178,6 @@ TASK_IMPL_3(MTBDD, transitions_union_op, MTBDD *, pa, MTBDD *, pb, uint64_t, par
     {
         auto &tds_a = *((Transition_Destination_Set *)mtbdd_getvalue(a));
         auto &tds_b = *((Transition_Destination_Set *)mtbdd_getvalue(b));
-
-        // If the passed parameter is missing (-1) that means that we should derive it
-        // from the leaves (TDS). This can happen when padding closure is performed, as
-        // the leaf automaton id is not modified.
-
-		// @RefactorMe
-        //if (param == -1)
-        //{
-            //param = (uint32_t)tds_a.automaton_id;
-        //}
 
         std::set<State> *union_set = new std::set<State>();
         std::set_union(
