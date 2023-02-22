@@ -77,50 +77,48 @@ uint64_t    TRANSFORM_MACROSTATES_TO_INTS_COUNTER = (1LL << 34);
  * the automaton to which the transitions belong. Currently, a global intersection state is kept to preserve
  * the mapping of state numbers to produced tuples.
  */
-TASK_IMPL_3(MTBDD, transitions_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64_t, param)
-{
+TASK_IMPL_3(MTBDD, transitions_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64_t, param) {
     MTBDD a = *pa, b = *pb;
-    // Intersection with an empty set (mtbdd_false) is empty set (mtbdd_false)
+
     if (a == mtbdd_false || b == mtbdd_false) {
-        return mtbdd_false;
+        return mtbdd_false; // The result is an empty set when one of the operands is an empty set (mtbdd_false)
     }
 
     if (!mtbdd_isleaf(a) || !mtbdd_isleaf(b)) {
+        // @Note: According to the GMP implementation in Sylvan source code, swapping pointers should increase the cache
+        // performance. However, doing a pointer swap causes some of the tests to fail, not sure what is up with it.
+
         return mtbdd_invalid;
     }
 
-    auto intersect_info = (Intersection_Op_Info *) param;
+    auto intersect_info = reinterpret_cast<Intersection_Op_Info*>(param);
 
-    auto& tds_a = *((Transition_Destination_Set *) mtbdd_getvalue(a));
-    auto& tds_b = *((Transition_Destination_Set *) mtbdd_getvalue(b));
+    auto left_leaf_contents  = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(a));
+    auto right_leaf_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(b));
 
-    auto left_states  = tds_a.destination_set;
-    auto right_states = tds_b.destination_set;
-
-    if (left_states->empty() || right_states->empty()) {
+    if (left_leaf_contents->destination_set->empty() || right_leaf_contents->destination_set->empty()) {
         return mtbdd_false;  // Equivalent to a leaf with an empty set
     }
 
-
     auto known_product_states = intersection_state->intersection_state_pairs_numbers;
-
-    State state;
 
     std::set<State> leaf_states;
     Transition_Destination_Set intersection_tds (&leaf_states);
 
-    for (auto left_state : *left_states) {
-        for (auto right_state : *right_states) {
+    for (auto left_state : *left_leaf_contents->destination_set) {
+        for (auto right_state : *right_leaf_contents->destination_set) {
+
             std::pair<State, State> product_state = std::make_pair(left_state, right_state);
-            auto pos = known_product_states->find(product_state);
-            bool is_product_state_known = (pos != known_product_states->end());
-            if (is_product_state_known) {
-                state = pos->second;
-            } else {
+            State product_handle = known_product_states->size();
+
+            auto [existing_entry_it, did_insert] = known_product_states->emplace(product_state, product_handle);
+
+            if (did_insert) {
                 // Check (if early pruning is on) whether the state should be pruned.
                 if (intersection_state->should_do_early_prunining) {
-                    const bool is_left_in_pruned = (intersection_state->prune_final_states->find(left_state) != intersection_state->prune_final_states->end());
-                    const bool is_right_in_pruned = (intersection_state->prune_final_states->find(right_state) != intersection_state->prune_final_states->end());
+                    auto final_states = intersection_state->prune_final_states;
+                    const bool is_left_in_pruned  = (final_states->find(left_state) != final_states->end());
+                    const bool is_right_in_pruned = (final_states->find(right_state) != final_states->end());
 
                     // Pruning is performed only when exactly one of the states is in the pruned set
                     if (is_left_in_pruned != is_right_in_pruned) {
@@ -128,16 +126,15 @@ TASK_IMPL_3(MTBDD, transitions_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64
                     }
                 }
 
-                state = known_product_states->size();
-                known_product_states->insert(std::make_pair(product_state, state));
-
                 // Store the triple (left_state, right_state, ID) to make sure Python side knows about a new state
                 intersect_info->discoveries->push_back(left_state);
                 intersect_info->discoveries->push_back(right_state);
-                intersect_info->discoveries->push_back(state);
+                intersect_info->discoveries->push_back(product_handle);
+            } else {
+                product_handle = existing_entry_it->second;  // Use the previously assigned state handle
             }
 
-            leaf_states.insert(state);
+            leaf_states.insert(product_handle);
         }
     }
 
@@ -148,9 +145,6 @@ TASK_IMPL_3(MTBDD, transitions_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64
     intersection_tds.destination_set = nullptr;
 
     return intersection_leaf;
-
-    // TODO: Perform pointer swap here, so the cache would be utilized (operation is commutative).
-    // TODO: Utilize operation cache.
 }
 
 /**
