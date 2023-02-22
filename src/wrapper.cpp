@@ -99,7 +99,6 @@ void shutdown_machinery()
 }
 
 MTBDD amaya_mtbdd_build_single_terminal(
-		uint32_t  automaton_id,
 		uint8_t*  transition_symbols,  // 2D array of size (variable_count) * transition_symbols_count
 		uint32_t  transition_symbols_count,
 		uint32_t  variable_count,
@@ -144,14 +143,12 @@ MTBDD amaya_mtbdd_build_single_terminal(
 
 MTBDD amaya_complete_mtbdd_with_trapstate(
 		MTBDD 	 dd,
-		uint32_t automaton_id,
 		State 	 trapstate,
 		bool* 	 had_effect)
 {
 
 	Complete_With_Trapstate_Op_Info op_info = {};
 	op_info.trapstate = trapstate;
-	op_info.automaton_id = automaton_id;
 	op_info.had_effect = false;
 
 	LACE_ME;
@@ -403,7 +400,6 @@ MTBDD* amaya_rename_macrostates_to_int(
 		MTBDD* 		roots, 							// MTBDDs resulting from determinization
 		uint32_t 	root_cnt,						// Root count
 		State 		start_numbering_macrostates_from,
-		uint32_t 	resulting_automaton_id,
 		State**		out_serialized_macrostates,
 		uint64_t**	out_macrostates_sizes,
 		uint64_t*	out_macrostates_cnt)
@@ -668,33 +664,14 @@ uint8_t* amaya_mtbdd_get_transitions(
 	return symbols_out;
 }
 
-void amaya_mtbdd_change_automaton_id_for_leaves(
-        MTBDD* roots,
-        uint32_t root_cnt,
-        uint32_t new_id)
-{
-	set<MTBDD> leaves {};
-    for (uint32_t i = 0; i < root_cnt; i++) {
-        collect_mtbdd_leaves(roots[i], leaves);
-    }
-
-    for (auto leaf : leaves) {
-        auto tds = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
-
-		// @Refactoring:
-        // tds->automaton_id = new_id;
-    }
-}
 
 MTBDD amaya_mtbdd_intersection(
         MTBDD 		a,
         MTBDD 		b,
-        uint32_t 	result_automaton_id,
         State** 	discovered_states,         // OUT
         uint32_t*  	discovered_states_cnt)     // OUT
 {
     Intersection_Op_Info intersect_info = {0};
-    intersect_info.automaton_id = result_automaton_id;
     intersect_info.discoveries = new vector<State>();
 
 	LACE_ME;
@@ -720,9 +697,9 @@ MTBDD amaya_mtbdd_intersection(
     return result;
 }
 
-MTBDD amaya_unite_mtbdds(MTBDD m1, MTBDD m2, uint32_t automaton_id) {
+MTBDD amaya_unite_mtbdds(MTBDD m1, MTBDD m2) {
 	LACE_ME;
-	MTBDD u = mtbdd_applyp(m1, m2, (uint64_t) automaton_id, TASK(transitions_union_op), AMAYA_UNION_OP_ID);
+	MTBDD u = mtbdd_applyp(m1, m2, (uint64_t) 0, TASK(transitions_union_op), AMAYA_UNION_OP_ID);
 	return u;
 }
 

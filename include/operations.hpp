@@ -47,13 +47,11 @@ typedef struct
 typedef struct
 {
 	bool had_effect;
-	uint32_t automaton_id;
 	State trapstate;
 } Complete_With_Trapstate_Op_Info;
 
 typedef struct
 {
-	uint32_t automaton_id;
 	std::vector<State> *discoveries; // Flat array of [macrostate_left_part, macrostate_right_part, state, ...]
 } Intersection_Op_Info;
 

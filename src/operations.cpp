@@ -182,18 +182,12 @@ TASK_IMPL_3(MTBDD, transitions_union_op, MTBDD *, left_op_ptr, MTBDD *, right_op
 }
 
 /**
- * ABOUT ABSTRACTIONS:
- * Abstraction operation defines what should happen when a variable that should be projected
- * away should happen with the subtrees (one for high, one for low) that should have
- * the previous variable as a parent.
- *
- * THIS OPERATOR:
- * When projecting away an alphabet variable we perform union of the two MTBDD trees underneath.
- *
+ * 'Abstraction' operation defines what happens to MTBDD subtrees when a variable is projected away.
+ * We perform an union of the subtrees trees.
  */
-TASK_IMPL_3(MTBDD, project_variable_away_abstract_op, MTBDD, a, MTBDD, b, int, k)
+TASK_IMPL_3(MTBDD, project_variable_away_abstract_op, MTBDD, left_mtbdd, MTBDD, right_mtbdd, int, k)
 {
-    MTBDD u = mtbdd_applyp(a, b, (uint64_t)-1, TASK(transitions_union_op), AMAYA_EXISTS_OPERATION_ID);
+    MTBDD u = mtbdd_applyp(left_mtbdd, right_mtbdd, (uint64_t)-1, TASK(transitions_union_op), AMAYA_EXISTS_OPERATION_ID);
     return u;
 }
 
@@ -233,7 +227,7 @@ TASK_IMPL_2(MTBDD, remove_states_op, MTBDD, dd, uint64_t, param) {
 }
 
 /**
- * Completes the given transition MTBDD with trapstate.
+ * Completes the given transition MTBDD by adding transitions along missing symbols leading to a trapstate.
  *
  * NOTE:
  * The param is not used - sylvan cachce problems, see remove_states_op. Instead the information
@@ -243,14 +237,12 @@ TASK_IMPL_2(MTBDD, remove_states_op, MTBDD, dd, uint64_t, param) {
  */
 TASK_IMPL_2(MTBDD, complete_transition_with_trapstate_op, MTBDD, dd, uint64_t, param)
 {
-	// param is used just to avoid sylvan miss-cachces
+	// param is used just to avoid sylvan cache-miss
 	if (dd == mtbdd_false) {
 		(void) param;
 		auto op_info = (Complete_With_Trapstate_Op_Info*) ADD_TRAPSTATE_OP_PARAM;
 
 		Transition_Destination_Set* tds = new Transition_Destination_Set();
-		// RefactorMe
-		//tds->automaton_id = op_info->automaton_id;
 		tds->destination_set = new set<State>();
 		tds->destination_set->insert(op_info->trapstate);
 
@@ -259,8 +251,6 @@ TASK_IMPL_2(MTBDD, complete_transition_with_trapstate_op, MTBDD, dd, uint64_t, p
 		delete tds;
 		return leaf;
 	} else if (mtbdd_isleaf(dd)) {
-		// @TODO: Check that the complete with trapstate does have the same automaton ID as the node
-		// being returned.
 		return dd;
 	}
 	return mtbdd_invalid;
@@ -336,9 +326,6 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
         // state to the pre-state (left) TDS
 		Transition_Destination_Set* new_leaf_contents = new Transition_Destination_Set();
 
-		// @Refactoring
-		// new_leaf_contents->automaton_id = left_tds->automaton_id;
-
         // Make new state set from the original leaf + add the new final state
 		auto new_leaf_destination_set = new std::set<State>();
 		for (auto original_state: *left_tds->destination_set) new_leaf_destination_set->insert(original_state);
@@ -365,8 +352,6 @@ TASK_IMPL_2(MTBDD, rename_states_op, MTBDD, dd, uint64_t, param) {
 		auto old_tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
 		auto new_tds = new Transition_Destination_Set();
 
-		// @Refactoring(codeboy): automaton_id is not used anymore, that is why it is commented out
-		// new_tds->automaton_id = old_tds->automaton_id;
 		auto renamed_leaf_contents = new set<State>();
 
 		for (auto state : *old_tds->destination_set) {
@@ -405,9 +390,6 @@ TASK_IMPL_2(MTBDD, transform_macrostates_to_ints_op, MTBDD, dd, uint64_t, param)
 		auto transform_state = TRANSFORM_MACROSTATES_TO_INTS_STATE;
 		auto old_tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
 		auto new_tds = new Transition_Destination_Set();
-
-		// @Refactoring: this is commented because we do not use automaton_ids anymore
-		// new_tds->automaton_id = old_tds->automaton_id;
 
 		State macrostate_state_number;
 		bool is_cache_miss = false;
