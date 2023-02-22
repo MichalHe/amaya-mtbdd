@@ -150,39 +150,31 @@ TASK_IMPL_3(MTBDD, transitions_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64
 /**
  * Unites the two transition MTBDDs.
  */
-TASK_IMPL_3(MTBDD, transitions_union_op, MTBDD *, pa, MTBDD *, pb, uint64_t, param)
+TASK_IMPL_3(MTBDD, transitions_union_op, MTBDD *, left_op_ptr, MTBDD *, right_op_ptr, uint64_t, param)
 {
-    MTBDD a = *pa, b = *pb;
-    if (a == mtbdd_false && b == mtbdd_false)
-        return mtbdd_false;
+    MTBDD left_mtbdd = *left_op_ptr, right_mtbdd = *right_op_ptr;
 
-    // When one leaf is empty set (false),
-    // the algorithm should return all reachable states for the other one
-    if (a == mtbdd_false)
-    {
-        return b;
-    }
+    if (left_mtbdd == mtbdd_false)  return right_mtbdd;
+    if (right_mtbdd == mtbdd_false) return left_mtbdd;
 
-    if (b == mtbdd_false)
-    {
-        return a;
-    }
-    // If both are leaves, we calculate union
-    if (mtbdd_isleaf(a) && mtbdd_isleaf(b))
-    {
-        auto &tds_a = *((Transition_Destination_Set *)mtbdd_getvalue(a));
-        auto &tds_b = *((Transition_Destination_Set *)mtbdd_getvalue(b));
+    if (mtbdd_isleaf(left_mtbdd) && mtbdd_isleaf(right_mtbdd)) {
 
-        std::set<State> *union_set = new std::set<State>();
-        std::set_union(
-            tds_a.destination_set->begin(), tds_a.destination_set->end(),
-            tds_b.destination_set->begin(), tds_b.destination_set->end(),
-            std::inserter(*union_set, union_set->begin()));
+        auto left_contents  = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(left_mtbdd));
+        auto right_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(right_mtbdd));
 
-        Transition_Destination_Set *union_tds = new Transition_Destination_Set(union_set);
+        std::set<State> leaf_states;
+        Transition_Destination_Set leaf_contents (&leaf_states);
 
-        MTBDD union_leaf = make_set_leaf(union_tds); // Wrap the TDS with a MTBDD leaf.
-		delete union_tds;
+        std::set_union(left_contents->destination_set->begin(), left_contents->destination_set->end(),
+                       right_contents->destination_set->begin(), right_contents->destination_set->end(),
+                       std::inserter(leaf_states, leaf_states.begin()));
+
+        MTBDD union_leaf = make_set_leaf(&leaf_contents);
+
+        // @Cleanup: This is temporary until we convert destination_set to not be a pointer.
+        //           Prevent class destructor to call delete on destination_set as it is a pointer to stack
+        leaf_contents.destination_set = nullptr;
+
         return union_leaf;
     }
 
