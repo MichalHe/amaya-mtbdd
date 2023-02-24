@@ -47,7 +47,6 @@ extern uint64_t 	PAD_CLOSURE_OP_COUNTER;
 extern Pad_Closure_Info *PAD_CLOSURE_OP_STATE;
 
 
-
 VOID_TASK_0(gc_start)
 {
 	fprintf(stderr, "Sylvan - Starting garbage collection.\n");
@@ -118,13 +117,12 @@ MTBDD amaya_mtbdd_build_single_terminal(
 
 	// Construct the destination set
 
-	auto leaf_state_set = new std::set<State>();
+    Transition_Destination_Set leaf_contents;
 	for (uint32_t i = 0; i < destination_set_size; i++) {
-		leaf_state_set->insert(destination_set[i]);
+		leaf_contents.destination_set.insert(destination_set[i]);
 	}
 
-    Transition_Destination_Set* tds = new Transition_Destination_Set(leaf_state_set);
-	MTBDD leaf = make_set_leaf(tds);
+	MTBDD leaf = make_set_leaf(&leaf_contents);
 
 	// Construct the initial MTBDD, then add the rest of the symbols
 	// signature: mtbdd_cube(MTBDD variables, uint8_t *cube, MTBDD terminal)
@@ -171,9 +169,9 @@ Transition_Destination_Set* _get_transition_target(
 	if (var_count == 0) {
 		if (is_leaf) {
 			if (root == mtbdd_false) return NULL;
-			auto tds = (Transition_Destination_Set*) mtbdd_getvalue(root);
-			auto tds_copy = new Transition_Destination_Set(*tds);
-			return tds_copy;
+			auto leaf_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(root));
+			auto leaf_contents_copy = new Transition_Destination_Set(*leaf_contents);
+			return leaf_contents_copy;
 		} else {
 			// We have exhausted all variables, yet we did not hit a leaf.
 			// That means the cube did not contain all the variables.
@@ -185,9 +183,9 @@ Transition_Destination_Set* _get_transition_target(
 		if (root == mtbdd_false) return NULL;
 		else {
 			// Found a solution
-			auto tds = (Transition_Destination_Set*) mtbdd_getvalue(root);
-			auto tds_copy = new Transition_Destination_Set(*tds); // Return a copy (might modify elsewhere)
-			return tds_copy;
+			auto leaf_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(root));
+			auto leaf_contents_copy = new Transition_Destination_Set(*leaf_contents);
+			return leaf_contents_copy;
 		}
 	}
 
@@ -197,55 +195,32 @@ Transition_Destination_Set* _get_transition_target(
 	if (root_var == current_variable) {
 		if (*variable_assigments == 0) {
 			// Go low
-			return _get_transition_target(
-					mtbdd_getlow(root),
-					current_variable + 1,
-					variable_assigments + 1,
-					var_count - 1);
+			return _get_transition_target(mtbdd_getlow(root), current_variable + 1, variable_assigments + 1, var_count - 1);
 		}
 		else if (*variable_assigments == 1) {
 			// Go high
-			return _get_transition_target(
-					mtbdd_gethigh(root),
-					current_variable + 1,
-					variable_assigments + 1,
-					var_count - 1);
+			return _get_transition_target(mtbdd_gethigh(root), current_variable + 1, variable_assigments + 1, var_count - 1);
 		}
 		else {
 			// That means that the current assigment is don't care (2)
             // Then we need to explore both branches and return the results
-			auto low_tds = _get_transition_target(
-					mtbdd_getlow(root),
-					current_variable + 1,
-					variable_assigments + 1,
-					var_count - 1);
-
-			auto high_tds = _get_transition_target(
-					mtbdd_gethigh(root),
-					current_variable + 1,
-					variable_assigments + 1,
-					var_count - 1);
+			auto low_tds  = _get_transition_target(mtbdd_getlow(root), current_variable + 1, variable_assigments + 1, var_count - 1);
+			auto high_tds = _get_transition_target(mtbdd_gethigh(root), current_variable + 1, variable_assigments + 1, var_count - 1);
 
 			// Now decide what to do with the results
 			if (low_tds == NULL) return high_tds; // Might return NULL
 			if (high_tds == NULL) return low_tds; // The low result is not NULL
 
             // Perform state merging.
-			low_tds->destination_set->insert(
-                    high_tds->destination_set->begin(),
-                    high_tds->destination_set->end());
+			low_tds->destination_set.insert(high_tds->destination_set.begin(), high_tds->destination_set.end());
 			delete high_tds; // Only low result will be propagated upwards
 			return low_tds;
 		}
 
 	} else {
-		// The current variable in the tree skipped a variable.
-		// That means the current variable assignment did not matter.
-		return _get_transition_target(
-				root,
-				current_variable + 1,   		// Move to the next variable
-				variable_assigments + 1,		// --^
-				var_count - 1);
+        // The current variable in the tree skipped a variable. That means the current variable assignment did not
+        // matter and we can just move to the next variable (current_variable + 1)
+		return _get_transition_target(root, current_variable + 1, variable_assigments + 1, var_count - 1);
 	}
 }
 
@@ -257,25 +232,22 @@ State* amaya_mtbdd_get_transition_target(
 {
 
 	auto search_result_tds = _get_transition_target(mtbdd, 1, cube, cube_size);
-	if (search_result_tds == NULL)
-	{
+	if (search_result_tds == NULL) {
 		*result_size = 0;
 		return NULL;
 	} else {
-		const uint32_t rs = search_result_tds->destination_set->size();
+		const uint32_t rs = search_result_tds->destination_set.size();
 		*result_size = rs;
 		auto result_arr = (State*) malloc(sizeof(uint32_t) * rs);
 		uint32_t i = 0;
-		for (auto state : *search_result_tds->destination_set)
-		{
+		for (auto state : search_result_tds->destination_set) {
 			result_arr[i++] = state;
 		}
 		return result_arr;
 	}
 }
 
-void amaya_do_free(void *ptr)
-{
+void amaya_do_free(void *ptr) {
 	free(ptr);
 }
 
@@ -291,8 +263,7 @@ void collect_mtbdd_leaves(MTBDD root, std::set<MTBDD>& dest)
 
 	MTBDD leaf = mtbdd_enum_first(root, support, arr, NULL);
 
- 	while (leaf != mtbdd_false)
-	{
+ 	while (leaf != mtbdd_false) {
 		dest.insert(leaf);
  	    leaf = mtbdd_enum_next(root, support, arr, NULL);
  	}
@@ -319,7 +290,7 @@ MTBDD* amaya_mtbdd_rename_states(
 	op_info.states_rename_map = &state_names_map;
 	STATE_RENAME_OP_PARAM = &op_info;
 
-	auto renamed_mtbdds = (MTBDD *) malloc(sizeof(MTBDD) * root_count);
+	auto renamed_mtbdds = (MTBDD*) malloc(sizeof(MTBDD) * root_count);
 	assert(renamed_mtbdds != NULL);
 
 	LACE_ME;
@@ -347,8 +318,8 @@ State* amaya_mtbdd_get_leaves(
 	// First compute the destination size (for malloc)
 	uint32_t size_cnt = 0; // Counter for the total number of states.
 	for (MTBDD leaf : leaves) {
-		Transition_Destination_Set* tds = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
-		size_cnt += tds->destination_set->size();
+		Transition_Destination_Set* leaf_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(leaf));
+		size_cnt += leaf_contents->destination_set.size();
 	}
 
 	// Do the allocations
@@ -360,12 +331,12 @@ State* amaya_mtbdd_get_leaves(
 	uint32_t size_i = 0;
 
 	for (MTBDD leaf : leaves) {
-		auto tds = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
-		for (int state : *tds->destination_set) {
+		auto leaf_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(leaf));
+		for (int state : leaf_contents->destination_set) {
 			_leaf_states[state_i] = state;
 			state_i++;
 		}
-		_leaf_sizes[size_i] = tds->destination_set->size();
+		_leaf_sizes[size_i] = leaf_contents->destination_set.size();
 		size_i++;
 	}
 
@@ -374,8 +345,8 @@ State* amaya_mtbdd_get_leaves(
 
         uint32_t i = 0;
         for (auto leaf : leaves) {
-            Transition_Destination_Set* tds = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
-            leaf_ptr_arr[i] = (void*) tds;
+            auto leaf_contents_ptr = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(leaf));
+            leaf_ptr_arr[i] = (void*) leaf_contents_ptr;
             i++;
         }
         *leaf_ptrs = leaf_ptr_arr;
@@ -389,10 +360,10 @@ State* amaya_mtbdd_get_leaves(
 void amaya_replace_leaf_contents_with(void *leaf_tds, State* new_contents, uint32_t contents_size)
 {
 	assert(false);
-    auto tds = (Transition_Destination_Set*) leaf_tds;
-    tds->destination_set->clear();
+    auto leaf_contents = reinterpret_cast<Transition_Destination_Set*>(leaf_tds);
+    leaf_contents->destination_set.clear();
     for (uint32_t i = 0; i < contents_size; i++) {
-        tds->destination_set->insert(new_contents[i]);
+        leaf_contents->destination_set.insert(new_contents[i]);
     }
 }
 
@@ -482,10 +453,8 @@ State* amaya_mtbdd_get_state_post(MTBDD dd, uint32_t *post_size)
 	set<State> state_post_set;
 
 	for (auto leaf: leaves)	{
-		auto tds = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
-		state_post_set.insert(
-                tds->destination_set->begin(),
-                tds->destination_set->end());
+		auto leaf_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(leaf));
+		state_post_set.insert(leaf_contents->destination_set.begin(), leaf_contents->destination_set.end());
 	}
 
 	auto result = (State*) malloc(sizeof(State) * state_post_set.size());
@@ -633,7 +602,7 @@ uint8_t* amaya_mtbdd_get_transitions(
 	{
 		// Add the destination states to the oveall vector
 		auto tds = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
-		for (int state: *tds->destination_set) {
+		for (int state: tds->destination_set) {
 			dest_states_vec.push_back(state);
 		}
 
@@ -641,7 +610,7 @@ uint8_t* amaya_mtbdd_get_transitions(
 			symbols.push_back(arr[i]);
 		}
 
-		state_sizes.push_back(tds->destination_set->size());
+		state_sizes.push_back(tds->destination_set.size());
 
  	    leaf = mtbdd_enum_next(root, variable_set, arr, NULL);
  	}
@@ -775,7 +744,7 @@ State* amaya_get_state_post_with_some_transition(
 
  	while (leaf != mtbdd_false) {
 		auto tds = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
-		for (auto state : *tds->destination_set) {
+		for (auto state : tds->destination_set) {
 
 			// @Optimize: We use linear search over vector - there should be a relatively small number of states
 			// 			  reachable from everystate, therefore it should be faster to use ordinary vector (chache lines)
@@ -860,7 +829,7 @@ State* amaya_get_states_in_mtbdd_leaves(
 	std::set<State> states;
 	for (auto mtbdd_leaf : mtbdd_leaves) {
 		auto leaf_tds = (Transition_Destination_Set*) mtbdd_getvalue(mtbdd_leaf);
-		for (auto state : *leaf_tds->destination_set) {
+		for (auto state : leaf_tds->destination_set) {
 			states.insert(state);
 		}
 	}
@@ -906,7 +875,7 @@ void amaya_sylvan_clear_cache()
 	sylvan_clear_cache();
 }
 
-struct Serialized_DFA* amaya_minimize_hopcroft(struct Serialized_DFA* serialized_dfa) 
+struct Serialized_DFA* amaya_minimize_hopcroft(struct Serialized_DFA* serialized_dfa)
 {
     // Deserialize the DFA
     struct NFA dfa = {
@@ -927,35 +896,35 @@ struct Serialized_DFA* amaya_minimize_hopcroft(struct Serialized_DFA* serialized
 
     for (uint64_t i = 0; i < serialized_dfa->var_count; i++)
         dfa.vars = sylvan::mtbdd_set_add(dfa.vars, serialized_dfa->vars[i]);
-    
+
     struct NFA minimized_dfa = minimize_hopcroft(dfa);
-    
+
     struct Serialized_DFA* output_dfa = (struct Serialized_DFA*) malloc(sizeof(struct Serialized_DFA));
     assert(output_dfa != nullptr);
 
     set<State>::iterator state_it;
     uint64_t i = 0;
-    
-    output_dfa->states = (State*) malloc(sizeof(State) * minimized_dfa.states.size()); 
+
+    output_dfa->states = (State*) malloc(sizeof(State) * minimized_dfa.states.size());
     assert(output_dfa->states != nullptr);
     for (state_it = minimized_dfa.states.begin(), i = 0;
          state_it != minimized_dfa.states.end();
          state_it++, i++) {
         output_dfa->states[i] = *state_it;
     }
-    output_dfa->state_count = minimized_dfa.states.size(); 
+    output_dfa->state_count = minimized_dfa.states.size();
 
-    output_dfa->final_states = (State*) malloc(sizeof(State) * minimized_dfa.final_states.size()); 
+    output_dfa->final_states = (State*) malloc(sizeof(State) * minimized_dfa.final_states.size());
     assert(output_dfa->final_states != nullptr);
     for (state_it = minimized_dfa.final_states.begin(), i = 0;
          state_it != minimized_dfa.final_states.end();
          state_it++, i++) {
         output_dfa->final_states[i] = *state_it;
     }
-    output_dfa->final_state_count = minimized_dfa.final_states.size(); 
+    output_dfa->final_state_count = minimized_dfa.final_states.size();
 
     output_dfa->initial_state = *minimized_dfa.initial_states.begin();
-    
+
     output_dfa->mtbdds = (sylvan::MTBDD*) malloc(sizeof(sylvan::MTBDD) * minimized_dfa.states.size());
 
     i = 0;
