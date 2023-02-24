@@ -134,7 +134,7 @@ TASK_IMPL_2(sylvan::MTBDD, hopcroft_leaf_from_normal, sylvan::MTBDD, mtbdd, uint
     Hopcroft_Leaf_Contents leaf_contents;
 
     std::map<State, std::set<State>> dest_state_to_origin_states;
-    for (State dest_state: *tds->destination_set) {
+    for (State dest_state: tds->destination_set) {
          dest_state_to_origin_states.insert({dest_state, {origin_state}});
     }
 

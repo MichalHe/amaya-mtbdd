@@ -9,38 +9,24 @@
 using sylvan::MTBDD;
 using sylvan::mtbdd_support_CALL;
 
-Transition_Destination_Set::Transition_Destination_Set()
-{
-    this->destination_set = NULL;
-}
-
-Transition_Destination_Set::Transition_Destination_Set(const Transition_Destination_Set &other)
-{
+Transition_Destination_Set::Transition_Destination_Set(const Transition_Destination_Set &other) {
     // NOTE: Copy is called when a new leaf is created
-    this->destination_set = new std::set<State>(*other.destination_set);
+    this->destination_set = std::set<State>(other.destination_set);
 }
 
-Transition_Destination_Set::Transition_Destination_Set(std::set<State> *destination_set)
-{
+Transition_Destination_Set::Transition_Destination_Set(std::set<State>& destination_set) {
+    // @Cleanup: Check whether is is even called as it does a copy of the destination set,
+    //           and thus it is essentially the same as the copy constructor
     this->destination_set = destination_set;
 }
 
-Transition_Destination_Set::~Transition_Destination_Set()
-{
-    if (this->destination_set != NULL)
-    {
-        delete this->destination_set;
-    }
-}
-
-void Transition_Destination_Set::print_dest_states()
-{
+void Transition_Destination_Set::print_dest_states() {
     int cnt = 1;
     std::cout << "{";
-    for (auto state : *this->destination_set)
+    for (auto state : this->destination_set)
     {
         std::cout << state;
-        if (cnt < this->destination_set->size())
+        if (cnt < this->destination_set.size())
         {
             std::cout << ", ";
         }
@@ -92,10 +78,7 @@ void unpack_dont_care_bits_in_mtbdd_path(
     }
 }
 
-
-// @Unoptimized
-std::vector<struct Transition> nfa_unpack_transitions(struct NFA& nfa)
-{
+std::vector<struct Transition> nfa_unpack_transitions(struct NFA& nfa) {
     LACE_ME;
 
     std::vector<struct Transition> transitions;
@@ -109,7 +92,7 @@ std::vector<struct Transition> nfa_unpack_transitions(struct NFA& nfa)
 
         while (leaf != sylvan::mtbdd_false) {
             Transition_Destination_Set* tds = (Transition_Destination_Set*) sylvan::mtbdd_getvalue(leaf);
-            for (auto dest_state: *tds->destination_set) {
+            for (auto dest_state: tds->destination_set) {
                 unpack_dont_care_bits_in_mtbdd_path(path_in_mtbdd_to_leaf, nfa.var_count, transitions, 0, origin_state, dest_state);
             }
 
@@ -133,8 +116,7 @@ std::string transition_to_str(const struct Transition& transition) {
     return str_stream.str();
 }
 
-bool transition_is_same_as(const struct Transition& transition_a, const struct Transition& transition_b)
-{
+bool transition_is_same_as(const struct Transition& transition_a, const struct Transition& transition_b) {
     return transition_a.origin == transition_b.origin &&
            transition_a.destination == transition_b.destination &&
            transition_a.symbols == transition_b.symbols;

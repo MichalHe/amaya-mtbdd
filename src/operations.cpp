@@ -96,17 +96,16 @@ TASK_IMPL_3(MTBDD, transitions_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64
     auto left_leaf_contents  = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(a));
     auto right_leaf_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(b));
 
-    if (left_leaf_contents->destination_set->empty() || right_leaf_contents->destination_set->empty()) {
+    if (left_leaf_contents->destination_set.empty() || right_leaf_contents->destination_set.empty()) {
         return mtbdd_false;  // Equivalent to a leaf with an empty set
     }
 
     auto known_product_states = intersection_state->intersection_state_pairs_numbers;
 
-    std::set<State> leaf_states;
-    Transition_Destination_Set intersection_tds (&leaf_states);
+    Transition_Destination_Set leaf_contents;
 
-    for (auto left_state : *left_leaf_contents->destination_set) {
-        for (auto right_state : *right_leaf_contents->destination_set) {
+    for (auto left_state : left_leaf_contents->destination_set) {
+        for (auto right_state : right_leaf_contents->destination_set) {
 
             std::pair<State, State> product_state = std::make_pair(left_state, right_state);
             State product_handle = known_product_states->size();
@@ -134,15 +133,11 @@ TASK_IMPL_3(MTBDD, transitions_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64
                 product_handle = existing_entry_it->second;  // Use the previously assigned state handle
             }
 
-            leaf_states.insert(product_handle);
+            leaf_contents.destination_set.insert(product_handle);
         }
     }
 
-    MTBDD intersection_leaf = make_set_leaf(&intersection_tds);
-
-    // @Cleanup: This is temporary until we convert destination_set to not be a pointer.
-    //           Prevent class destructor to call delete on destination_set as it is a pointer to stack
-    intersection_tds.destination_set = nullptr;
+    MTBDD intersection_leaf = make_set_leaf(&leaf_contents);
 
     return intersection_leaf;
 }
@@ -162,19 +157,13 @@ TASK_IMPL_3(MTBDD, transitions_union_op, MTBDD *, left_op_ptr, MTBDD *, right_op
         auto left_contents  = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(left_mtbdd));
         auto right_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(right_mtbdd));
 
-        std::set<State> leaf_states;
-        Transition_Destination_Set leaf_contents (&leaf_states);
+        Transition_Destination_Set leaf_contents;
 
-        std::set_union(left_contents->destination_set->begin(), left_contents->destination_set->end(),
-                       right_contents->destination_set->begin(), right_contents->destination_set->end(),
-                       std::inserter(leaf_states, leaf_states.begin()));
+        std::set_union(left_contents->destination_set.begin(), left_contents->destination_set.end(),
+                       right_contents->destination_set.begin(), right_contents->destination_set.end(),
+                       std::inserter(leaf_contents.destination_set, leaf_contents.destination_set.begin()));
 
         MTBDD union_leaf = make_set_leaf(&leaf_contents);
-
-        // @Cleanup: This is temporary until we convert destination_set to not be a pointer.
-        //           Prevent class destructor to call delete on destination_set as it is a pointer to stack
-        leaf_contents.destination_set = nullptr;
-
         return union_leaf;
     }
 
@@ -208,12 +197,12 @@ TASK_IMPL_2(MTBDD, remove_states_op, MTBDD, dd, uint64_t, param) {
 
 		auto new_tds = new Transition_Destination_Set(*tds); // Make leaf value copy.
 
-		for (auto state : *tds->destination_set) {
+		for (auto state : tds->destination_set) {
 			bool should_be_removed = states_to_remove->find(state) != states_to_remove->end();
-			if (should_be_removed) new_tds->destination_set->erase(state);
+			if (should_be_removed) new_tds->destination_set.erase(state);
 		}
 
-		if (new_tds->destination_set->empty()) {
+		if (new_tds->destination_set.empty()) {
 			delete new_tds;
 			return mtbdd_false;
 		}
@@ -240,15 +229,13 @@ TASK_IMPL_2(MTBDD, complete_transition_with_trapstate_op, MTBDD, dd, uint64_t, p
 	// param is used just to avoid sylvan cache-miss
 	if (dd == mtbdd_false) {
 		(void) param;
-		auto op_info = (Complete_With_Trapstate_Op_Info*) ADD_TRAPSTATE_OP_PARAM;
+		auto op_info = reinterpret_cast<Complete_With_Trapstate_Op_Info*>(ADD_TRAPSTATE_OP_PARAM);
 
-		Transition_Destination_Set* tds = new Transition_Destination_Set();
-		tds->destination_set = new set<State>();
-		tds->destination_set->insert(op_info->trapstate);
+		Transition_Destination_Set leaf_contents;
+		leaf_contents.destination_set.insert(op_info->trapstate);
 
 		op_info->had_effect = true;
-		MTBDD leaf =  make_set_leaf(tds);
-		delete tds;
+		MTBDD leaf = make_set_leaf(&leaf_contents);
 		return leaf;
 	} else if (mtbdd_isleaf(dd)) {
 		return dd;
@@ -259,7 +246,7 @@ TASK_IMPL_2(MTBDD, complete_transition_with_trapstate_op, MTBDD, dd, uint64_t, p
 
 inline bool contains_final_state(Pad_Closure_Info* pci, Transition_Destination_Set* tds)
 {
-    for (State current_post_state: *tds->destination_set) {
+    for (State current_post_state: tds->destination_set) {
         for (uint32_t i = 0; i < pci->final_states_cnt; i++) {
             if (current_post_state == pci->final_states[i])
                 return true;
@@ -291,13 +278,13 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
 
     if (mtbdd_isleaf(left) && mtbdd_isleaf(right)) {
         // Both are leaves, do the actual padding closure
-        auto left_tds  = (Transition_Destination_Set*) mtbdd_getvalue(left);
-        auto right_tds = (Transition_Destination_Set*) mtbdd_getvalue(right);
+        auto left_tds  = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(left));
+        auto right_tds = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(right));
 
 	    auto pci = PAD_CLOSURE_OP_STATE;
 
 		// Check whether the MTBDD of the pre-state (left) even leads to the current state (right)
-		if (left_tds->destination_set->find(pci->right_state) == left_tds->destination_set->end()) {
+		if (left_tds->destination_set.find(pci->right_state) == left_tds->destination_set.end()) {
 			// Does not lead to the current state, therefore, the saturation property was not broken (here)
 			return left;
 		}
@@ -322,19 +309,10 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
             return left;  // Nothing to propagate
         }
 
-        // The saturation property is broken, fix it by adding the new final
-        // state to the pre-state (left) TDS
-		Transition_Destination_Set* new_leaf_contents = new Transition_Destination_Set();
-
-        // Make new state set from the original leaf + add the new final state
-		auto new_leaf_destination_set = new std::set<State>();
-		for (auto original_state: *left_tds->destination_set) new_leaf_destination_set->insert(original_state);
-        new_leaf_destination_set->insert(pci->new_final_state);
-
-		new_leaf_contents->destination_set = new_leaf_destination_set;
-
-		MTBDD leaf = make_set_leaf(new_leaf_contents);
-		delete new_leaf_contents;
+        // The saturation property is broken, fix it by adding the new final state to the pre-state (left) TDS
+		Transition_Destination_Set new_leaf_contents(*left_tds);
+        new_leaf_contents.destination_set.insert(pci->new_final_state);
+		MTBDD leaf = make_set_leaf(&new_leaf_contents);
 
 		return leaf;
     }
@@ -349,12 +327,12 @@ TASK_IMPL_2(MTBDD, rename_states_op, MTBDD, dd, uint64_t, param) {
 	if (mtbdd_isleaf(dd)) {
 		(void) param;
 		auto state_rename_info = STATE_RENAME_OP_PARAM;
-		auto old_tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
-		auto new_tds = new Transition_Destination_Set();
+		auto old_tds = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(dd));
 
-		auto renamed_leaf_contents = new set<State>();
+        // Do a heap allocation here, so that we can call mtbdd_makeleaf directly, avoiding copying state contents.
+        auto new_leaf_contents = new Transition_Destination_Set();
 
-		for (auto state : *old_tds->destination_set) {
+		for (auto state : old_tds->destination_set) {
 			auto new_name_it = state_rename_info->states_rename_map->find(state);
 
 			if (new_name_it == state_rename_info->states_rename_map->end()) {
@@ -369,12 +347,10 @@ TASK_IMPL_2(MTBDD, rename_states_op, MTBDD, dd, uint64_t, param) {
 			}
 
 			auto new_state_name = new_name_it->second;
-			renamed_leaf_contents->insert(new_state_name);
+			new_leaf_contents->destination_set.insert(new_state_name);
 		}
 
-		new_tds->destination_set = renamed_leaf_contents;
-
-		return mtbdd_makeleaf(mtbdd_leaf_type_set, (uint64_t) new_tds);
+		return mtbdd_makeleaf(mtbdd_leaf_type_set, reinterpret_cast<uint64_t>(new_leaf_contents));
 	}
 
 	return mtbdd_invalid;
@@ -388,18 +364,16 @@ TASK_IMPL_2(MTBDD, transform_macrostates_to_ints_op, MTBDD, dd, uint64_t, param)
 		(void) param;
 
 		auto transform_state = TRANSFORM_MACROSTATES_TO_INTS_STATE;
-		auto old_tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
-		auto new_tds = new Transition_Destination_Set();
+		auto old_tds = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(dd));
 
 		State macrostate_state_number;
 		bool is_cache_miss = false;
-		auto iterator = transform_state->alias_map->find(*old_tds->destination_set);
+		auto iterator = transform_state->alias_map->find(old_tds->destination_set);
 		if (iterator == transform_state->alias_map->end()) {
 			macrostate_state_number = transform_state->first_available_state_number++;
 		} else {
-			// Cache entry for this leaf must have gotten evicted,
-			// we need to return the previously returned leaf with
-			// the same alias number.
+            // Cache entry for this leaf must have gotten evicted, we need to
+            // return the previously returned leaf with the same alias number.
 			is_cache_miss = true;
 			macrostate_state_number = iterator->second;
 		}
@@ -408,24 +382,22 @@ TASK_IMPL_2(MTBDD, transform_macrostates_to_ints_op, MTBDD, dd, uint64_t, param)
 		// 		  keeps them sorted. That means that two macrostates e.g {1, 2, 3} and {3, 2, 1} will get always hashed to the
 		// 		  same value --- Otherwise the same macrostates would get more than 1 ID which would cause troubles.
 
-		auto transformed_leaf_contents = new set<State>();
-		transformed_leaf_contents->insert(macrostate_state_number);
-		new_tds->destination_set = transformed_leaf_contents;
+		Transition_Destination_Set new_leaf_contents;
+		new_leaf_contents.destination_set.insert(macrostate_state_number);
 
 		if (!is_cache_miss) {
 			// Serialize the current macrostate, so that the python side will get notified about the created mapping.
-			for (auto state : *old_tds->destination_set) {
+			for (auto state : old_tds->destination_set) {
 				transform_state->serialized_macrostates->push_back(state);
 			}
 
-			transform_state->macrostates_sizes->push_back(old_tds->destination_set->size());
+			transform_state->macrostates_sizes->push_back(old_tds->destination_set.size());
 			transform_state->macrostates_cnt += 1;
 
-			transform_state->alias_map->insert(std::make_pair(*old_tds->destination_set, macrostate_state_number));
+			transform_state->alias_map->emplace(old_tds->destination_set, macrostate_state_number);
 		}
 
-		MTBDD leaf = make_set_leaf(new_tds);
-		delete new_tds;
+		MTBDD leaf = make_set_leaf(&new_leaf_contents);
 		return leaf;
 	}
 
@@ -604,7 +576,7 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
             Transition_Destination_Set* leaf_contents = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
 
             // If the entire partition leads to one state it cannot be fragmented using this single state
-            if (leaf_contents->destination_set->size() == 1) {
+            if (leaf_contents->destination_set.size() == 1) {
                 leaf = mtbdd_enum_next(partition_mtbdd, nfa.vars, path_in_mtbdd_to_leaf, NULL);
                 continue;
             }
@@ -612,7 +584,7 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
             // Check if the entire destination set belongs to same equivalence class, or we need to fragment it
             for (auto existing_partition: existing_partitions) {
                 // @Optimize: Pass in references to sets - reuse them, and avoid needless allocations
-                auto fragment = fragment_dest_states_using_partition(*leaf_contents->destination_set, existing_partition);
+                auto fragment = fragment_dest_states_using_partition(leaf_contents->destination_set, existing_partition);
                 auto dest_states_from_existing_partition = fragment.first;
                 auto dest_states_not_from_existing_partition = fragment.second;
 
@@ -630,8 +602,8 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
 
                         Transition_Destination_Set* tds = (Transition_Destination_Set*) sylvan::mtbdd_getvalue(state_mtbdd);
 
-                        assert(tds->destination_set->size() == 1);  // We should be dealing with complete DFAs
-                        State dest_state = *(tds->destination_set->begin());
+                        assert(tds->destination_set.size() == 1);  // We should be dealing with complete DFAs
+                        State dest_state = *(tds->destination_set.begin());
 
                         if (existing_partition.find(dest_state) != existing_partition.end()) {
                             fragment_leading_to_partition.insert(state);
@@ -726,7 +698,7 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
 
         while (leaf != mtbdd_false) {
             Transition_Destination_Set* tds = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
-            State tds_state = *tds->destination_set->begin();
+            State tds_state = *tds->destination_set.begin();
             auto tds_partition_ptr = state_to_its_parition[tds_state];
 
             // Check if we have already seen the destination partition before and it already has a number
@@ -744,7 +716,7 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
 
             // Create a MTBDD encoding only the transition to the state resulting from condensing the partition in which was the state located
             Transition_Destination_Set destination_tds;
-            destination_tds.destination_set = new std::set<State>{dest_partition_index};
+            destination_tds.destination_set = {dest_partition_index};
 
             MTBDD dest_leaf  = sylvan::mtbdd_makeleaf(mtbdd_leaf_type_set, (uint64_t) &destination_tds);
             MTBDD dest_mtbdd = sylvan::mtbdd_cube(nfa.vars, path_in_mtbdd_to_leaf, dest_leaf);
