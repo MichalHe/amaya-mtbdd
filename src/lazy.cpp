@@ -719,8 +719,6 @@ void explore_macrostate(NFA& constructed_nfa,
 {
     alphabet_iter.reset();
 
-    std::cout << "Exploring: " << macrostate << std::endl;
-
     while (!alphabet_iter.finished) {
         Structured_Macrostate post;
         bool is_accepting = false;
@@ -795,7 +793,7 @@ void NFA::add_transition(State from, State to, const u64 symbol, const u64 quant
     for (u64 bit_i = 0u; bit_i < var_count; bit_i++) {
         u64 current_bit = (1u << bit_i);
         bool dont_care = (current_bit & quantified_bits_mask) > 0;
-        u8 care_val = (symbol & current_bit > 0);
+        u8 care_val = (symbol & current_bit) > 0;
 
         rich_symbol[bit_i] = dont_care ? 2 : care_val;
     }
@@ -812,7 +810,7 @@ void NFA::add_transition(State from, State to, const u64 symbol, const u64 quant
 
         using namespace sylvan; // Pull the entire sylvan namespace because mtbdd_applyp is a macro
         sylvan::MTBDD updated_mtbdd = mtbdd_applyp(existing_transitions, transition_mtbdd, 0u, TASK(transitions_union_op), AMAYA_UNION_OP_ID);
-        transitions.insert({from, updated_mtbdd});
+        transitions[from] = updated_mtbdd;
     }
 }
 
@@ -830,6 +828,7 @@ char convert_cube_bit_to_char(u8 cube_bit) {
 
 void show_transitions_from_state(std::stringstream& output, const NFA& nfa, State origin, sylvan::MTBDD mtbdd) {
     u8 symbol[nfa.var_count];
+
 
 	MTBDD leaf = sylvan::mtbdd_enum_first(mtbdd, nfa.vars, symbol, NULL);
  	while (leaf != sylvan::mtbdd_false) {
@@ -865,7 +864,7 @@ std::string NFA::show_transitions() const {
     if (transitions.empty()) {
         return "{}\n";
     }
-    
+
     std::cout << "Number of states: " << transitions.size() << std::endl;
     for (auto& [origin_state, mtbdd]: this->transitions) {
         show_transitions_from_state(str_builder, *this, origin_state, mtbdd);
@@ -903,7 +902,7 @@ NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_St
 
         known_macrostates.emplace(init_macrostate, known_macrostates.size());
     }
-    
+
     sylvan::BDDSET mtbdd_vars = sylvan::mtbdd_set_empty();
     for (u64 i = 1u; i <= init_state.formula->var_count; i++) {
         mtbdd_vars = sylvan::mtbdd_set_add(mtbdd_vars, i);
@@ -916,16 +915,6 @@ NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_St
         work_queue.pop_back();
 
         explore_macrostate(nfa, macrostate, alphabet_iter, formula_pool, known_macrostates, accepting_macrostates, work_queue);
-    }
-
-    std::cout << "Known macrostates:" << std::endl;
-    for (auto& [state, handle]: known_macrostates) {
-        std::cout << "@" << handle << " :: " << state << std::endl;
-    }
-
-    std::cout << "Accepting macrostates: " << std::endl;
-    for (auto macrostate_handle: accepting_macrostates) {
-        std::cout << "  @" << macrostate_handle << std::endl;
     }
 
     return nfa;
@@ -970,7 +959,7 @@ void test_nfa_construction_with_single_quantifier() {
         .atoms = {
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 1}),
         },
-        .bound_vars = {1},
+        .bound_vars = {0},
         .var_count = 2
     };
 
@@ -980,7 +969,9 @@ void test_nfa_construction_with_single_quantifier() {
     Conjuction_State init_state = Conjuction_State{.formula = formula_id, .constants = {0}};
 
     std::cout << "Input formula   : " << formula.fmt_with_state(init_state) << std::endl;
-    build_nfa_with_formula_entailement(pool, init_state);
+    auto nfa = build_nfa_with_formula_entailement(pool, init_state);
+
+    std::cout << nfa.show_transitions() << std::endl;
 }
 
 

@@ -2,7 +2,7 @@ CXX=g++
 CXXLIBS=$(shell pkg-config --libs sylvan)
 
 # CXXFLAGS=-O2 -shared -fPIC -g --std=c++20
-CXXFLAGS=-O2 -g --std=c++20
+CXXFLAGS=-O0 -g --std=c++20
 
 .PHONY := clean
 
