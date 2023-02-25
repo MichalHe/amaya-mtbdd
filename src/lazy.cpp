@@ -709,7 +709,8 @@ std::ostream& operator<<(std::ostream& output, const Structured_Macrostate& macr
     return output;
 }
 
-void explore_macrostate(Structured_Macrostate& macrostate,
+void explore_macrostate(NFA& constructed_nfa,
+                        Structured_Macrostate& macrostate,
                         Alphabet_Iterator& alphabet_iter,
                         Formula_Pool& formula_pool,
                         unordered_map<Structured_Macrostate, u64>& known_macrostates,
@@ -759,9 +760,6 @@ void explore_macrostate(Structured_Macrostate& macrostate,
         } else {
             post.handle = element_iter->second;  // Use the already existing handle
         }
-        
-        //NFA nfa;
-        //nfa.add_transition(macrostate.handle, post.handle, 0u, 0u);
     }
 }
 
@@ -812,13 +810,19 @@ void build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_S
 
         known_macrostates.emplace(init_macrostate, known_macrostates.size());
     }
+    
+    sylvan::BDDSET mtbdd_vars = sylvan::mtbdd_set_empty();
+    for (u64 i = 1u; i <= init_state.formula->var_count; i++) {
+        mtbdd_vars = sylvan::mtbdd_set_add(mtbdd_vars, i);
+    }
+    NFA nfa = {.vars = mtbdd_vars, .var_count = init_state.formula->var_count};
 
     Alphabet_Iterator alphabet_iter = Alphabet_Iterator(init_state.formula->var_count, init_state.formula->bound_vars);
     while (!work_queue.empty()) {
         auto macrostate = work_queue.back();
         work_queue.pop_back();
 
-        explore_macrostate(macrostate, alphabet_iter, formula_pool, known_macrostates, accepting_macrostates, work_queue);
+        explore_macrostate(nfa, macrostate, alphabet_iter, formula_pool, known_macrostates, accepting_macrostates, work_queue);
     }
 
     std::cout << "Known macrostates:" << std::endl;
@@ -928,6 +932,5 @@ void test_constr_on_real_formula() {
 
 int main(void) {
     test_nfa_construction_with_single_quantifier();
-
     return 0;
 }
