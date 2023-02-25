@@ -778,8 +778,7 @@ void NFA::add_transition(State from, State to, u64 symbol, u64 quantified_bits_m
         rich_symbol[bit_i] = dont_care ? 2 : care_val;
     }
     
-    set<State> leaf_states = {to};
-    Transition_Destination_Set leaf_contents = {.destination_set = &leaf_states};
+    Transition_Destination_Set leaf_contents({to});
     sylvan::MTBDD leaf = make_set_leaf(&leaf_contents);
 
     sylvan::MTBDD mtbdd = sylvan::mtbdd_cube(this->vars, rich_symbol, leaf);
