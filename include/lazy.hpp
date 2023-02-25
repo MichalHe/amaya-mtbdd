@@ -3,6 +3,7 @@
 
 #include "base.hpp"
 #include "custom_leaf.hpp"
+#include "operations.hpp"
 
 #include <list>
 #include <cassert>

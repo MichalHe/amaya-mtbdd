@@ -6,13 +6,13 @@ CXXFLAGS=-O2 -g --std=c++20
 
 .PHONY := clean
 
-lazy: build/lazy.o build/base.o build/custom_leaf.o
+lazy: build/lazy.o build/base.o build/custom_leaf.o build/operations.o
 	$(CXX) -o lazy $^ $(CXXLIBS)
 
 shared-lib: build build/amaya-mtbdd.so
 
 build/lazy.o: build src/lazy.cpp include/lazy.hpp include/base.hpp
-	$(CXX) -c $(CXXFLAGS)  src/lazy.cpp -o build/lazy.o
+	$(CXX) -c $(CXXFLAGS) src/lazy.cpp -o build/lazy.o
 
 build/amaya-mtbdd.so: build/wrapper.o build/operations.o build/custom_leaf.o build/hopcroft_leaf.o build/base.o
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(CXXLIBS)

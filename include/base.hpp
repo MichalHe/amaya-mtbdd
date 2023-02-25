@@ -45,6 +45,7 @@ struct NFA {
     uint64_t var_count;
 
     void add_transition(State from, State to, u64 symbol, u64 quantified_bits_mask);
+    std::string show_transitions() const;
 };
 
 struct Transition {

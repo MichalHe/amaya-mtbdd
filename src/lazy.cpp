@@ -724,7 +724,10 @@ void explore_macrostate(NFA& constructed_nfa,
     while (!alphabet_iter.finished) {
         Structured_Macrostate post;
         bool is_accepting = false;
-        for (u64 symbol = alphabet_iter.init_quantif(); alphabet_iter.has_more_quantif_symbols; symbol = alphabet_iter.next_symbol()) {
+
+        u64 transition_symbol = alphabet_iter.init_quantif();  // The quantified bits will be masked away, so it is sufficient to take the first one
+
+        for (u64 symbol = transition_symbol; alphabet_iter.has_more_quantif_symbols; symbol = alphabet_iter.next_symbol()) {
             for (auto& [formula, states]: macrostate.formulae) {
                 for (auto& state: states) {
                     auto successor = state.successor_along_symbol(symbol);
@@ -760,12 +763,33 @@ void explore_macrostate(NFA& constructed_nfa,
         } else {
             post.handle = element_iter->second;  // Use the already existing handle
         }
+
+        constructed_nfa.add_transition(macrostate.handle, post.handle, transition_symbol, alphabet_iter.quantified_bits_mask);
     }
+}
+
+void init_mtbdd_libs() {
+    int n_workers = 1;
+    size_t dequeue_size = 10000000;
+
+    lace_init(n_workers, dequeue_size);
+	const size_t stack_size = 1LL << 20;
+    lace_startup(0, NULL, NULL);
+    sylvan::sylvan_set_limits(500LL*1024*1024, 3, 5);
+    sylvan::sylvan_init_package();
+    sylvan::sylvan_init_mtbdd();
+
+    mtbdd_leaf_type_set = sylvan::sylvan_mt_create_type();
+    sylvan::sylvan_mt_set_hash(mtbdd_leaf_type_set, set_leaf_hash);
+    sylvan::sylvan_mt_set_equals(mtbdd_leaf_type_set, set_leaf_equals);
+    sylvan::sylvan_mt_set_create(mtbdd_leaf_type_set, mk_set_leaf);
+    sylvan::sylvan_mt_set_destroy(mtbdd_leaf_type_set, destroy_set_leaf);
+    sylvan::sylvan_mt_set_to_str(mtbdd_leaf_type_set, set_leaf_to_str);
 }
 
 
 // @Cleanup: Move this into base.cpp
-void NFA::add_transition(State from, State to, u64 symbol, u64 quantified_bits_mask) {
+void NFA::add_transition(State from, State to, const u64 symbol, const u64 quantified_bits_mask) {
     u8 rich_symbol[var_count];
 
     for (u64 bit_i = 0u; bit_i < var_count; bit_i++) {
@@ -775,15 +799,84 @@ void NFA::add_transition(State from, State to, u64 symbol, u64 quantified_bits_m
 
         rich_symbol[bit_i] = dont_care ? 2 : care_val;
     }
-    
+
     Transition_Destination_Set leaf_contents({to});
     sylvan::MTBDD leaf = make_set_leaf(&leaf_contents);
 
-    sylvan::MTBDD mtbdd = sylvan::mtbdd_cube(this->vars, rich_symbol, leaf);
+    sylvan::MTBDD transition_mtbdd = sylvan::mtbdd_cube(this->vars, rich_symbol, leaf);
+
+    LACE_ME;
+    auto [present_key_val_it, was_inserted] = transitions.emplace(from, transition_mtbdd);
+    if (!was_inserted) {
+        auto existing_transitions = present_key_val_it->second;
+
+        using namespace sylvan; // Pull the entire sylvan namespace because mtbdd_applyp is a macro
+        sylvan::MTBDD updated_mtbdd = mtbdd_applyp(existing_transitions, transition_mtbdd, 0u, TASK(transitions_union_op), AMAYA_UNION_OP_ID);
+        transitions.insert({from, updated_mtbdd});
+    }
+}
+
+char convert_cube_bit_to_char(u8 cube_bit) {
+    switch (cube_bit) {
+        case 0:
+            return '0';
+        case 1:
+            return '1';
+        default:
+            return '*';
+    }
 }
 
 
-void build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_State& init_state) {
+void show_transitions_from_state(std::stringstream& output, const NFA& nfa, State origin, sylvan::MTBDD mtbdd) {
+    u8 symbol[nfa.var_count];
+
+	MTBDD leaf = sylvan::mtbdd_enum_first(mtbdd, nfa.vars, symbol, NULL);
+ 	while (leaf != sylvan::mtbdd_false) {
+        output << origin << " (" << convert_cube_bit_to_char(symbol[0]);
+        for (u64 symbol_i = 1; symbol_i < nfa.var_count; symbol_i++) {
+            output << ", " << convert_cube_bit_to_char(symbol[symbol_i]);
+        }
+        output << ") ";
+
+        auto leaf_contents = reinterpret_cast<Transition_Destination_Set*>(sylvan::mtbdd_getvalue(leaf));
+
+        if (leaf_contents->destination_set.empty()) {
+            output << "{}";
+            continue;
+        }
+
+        auto contents_iter = leaf_contents->destination_set.begin();
+        output << "{" << *contents_iter;
+        ++contents_iter;
+        for (; contents_iter != leaf_contents->destination_set.end(); ++contents_iter) {
+            output << ", " << *contents_iter;
+        }
+        output << "}";
+
+ 	    leaf = sylvan::mtbdd_enum_next(mtbdd, nfa.vars, symbol, NULL);
+        if (leaf != sylvan::mtbdd_false) output << "\n";
+ 	}
+}
+
+std::string NFA::show_transitions() const {
+    std::stringstream str_builder;
+
+    if (transitions.empty()) {
+        return "{}\n";
+    }
+    
+    std::cout << "Number of states: " << transitions.size() << std::endl;
+    for (auto& [origin_state, mtbdd]: this->transitions) {
+        show_transitions_from_state(str_builder, *this, origin_state, mtbdd);
+        str_builder << std::endl;
+    }
+
+    return str_builder.str();
+}
+
+
+NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_State& init_state) {
     u64 max_symbol = (1u << init_state.formula->var_count);
     vector<Conjuction_State> produced_states;
 
@@ -835,7 +928,9 @@ void build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_S
         std::cout << "  @" << macrostate_handle << std::endl;
     }
 
+    return nfa;
 }
+
 
 const Quantified_Atom_Conjunction* Formula_Pool::store_formula(Quantified_Atom_Conjunction& formula) {
     auto [it, did_insertion_happen] = formulae.emplace(formula);
@@ -931,6 +1026,7 @@ void test_constr_on_real_formula() {
 
 
 int main(void) {
+    init_mtbdd_libs();
     test_nfa_construction_with_single_quantifier();
     return 0;
 }
