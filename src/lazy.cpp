@@ -24,7 +24,7 @@ using std::optional;
 
 typedef Quantified_Atom_Conjunction Formula;
 
-s64 Presburger_Atom::compute_post_along_sym(s64 state, u64 symbol_bits) const {
+optional<s64> Presburger_Atom::compute_post_along_sym(s64 state, u64 symbol_bits) const {
     s64 dot = 0;
     for (u64 var_i = 0; var_i < coefs.size(); var_i++) {
         s64 is_bit_set = (symbol_bits & (1u << var_i)) > 0;
@@ -33,9 +33,10 @@ s64 Presburger_Atom::compute_post_along_sym(s64 state, u64 symbol_bits) const {
 
     if (this->type == PR_ATOM_CONGRUENCE) {
         s64 post = state - dot;
-        post += modulus * ((state - dot % 2) != 0);
+        post += modulus * ((post % 2) != 0);
         post /= 2;
         post = post % modulus;
+        post += modulus * (post < 0);
         return post;
     }
 
@@ -43,6 +44,10 @@ s64 Presburger_Atom::compute_post_along_sym(s64 state, u64 symbol_bits) const {
 
     s64 post_div_2 = post / 2;
     s64 post_mod_2 = post % 2;
+
+    if (this->type == PR_ATOM_EQ && post_mod_2) {
+        return std::nullopt;
+    }
 
     // Floor the division
     post_div_2 -= (post_mod_2 != 0) * (post < 0);
@@ -65,7 +70,7 @@ bool Presburger_Atom::accepts_last_symbol(s64 state, u64 symbol) const {
     } else if (type == PR_ATOM_EQ) {
         return (state + dot) == 0;
     } else {
-        return (state + dot) <= 0;
+        return (state + dot) >= 0;
     }
 }
 
@@ -82,12 +87,16 @@ bool Quantified_Atom_Conjunction::operator==(const Quantified_Atom_Conjunction& 
     return other.is_bottom == is_bottom && other.var_count == var_count && other.atoms == atoms && other.bound_vars == other.bound_vars;
 }
 
-Conjuction_State Conjuction_State::successor_along_symbol(u64 symbol) {
+optional<Conjuction_State> Conjuction_State::successor_along_symbol(u64 symbol) {
     vector<s64> successor_values(constants.size());
     for (u64 atom_i = 0; atom_i < formula->atoms.size(); atom_i++) {
         s64 current_state = constants[atom_i];
-        successor_values[atom_i] = formula->atoms[atom_i].compute_post_along_sym(current_state, symbol);
+        auto successor_value = formula->atoms[atom_i].compute_post_along_sym(current_state, symbol);
+        if (!successor_value.has_value())
+            return std::nullopt;
+        successor_values[atom_i] = successor_value.value();
     }
+
     return Conjuction_State {.formula = formula, .constants = successor_values};
 }
 
@@ -95,7 +104,7 @@ bool Conjuction_State::accepts_last_symbol(u64 symbol) {
     bool accepts = true;
     for (u64 atom_i = 0; atom_i < formula->atoms.size(); atom_i++) {
         s64 current_state = constants[atom_i];
-        accepts &= formula->atoms[atom_i].compute_post_along_sym(current_state, symbol);
+        accepts &= formula->atoms[atom_i].accepts_last_symbol(current_state, symbol);
     }
     return accepts;
 }
@@ -106,11 +115,19 @@ void Conjuction_State::post(unordered_set<Conjuction_State>& known_states, vecto
     vector<s64> post(constants.size());
 
     for (s64 symbol_bits = 0; symbol_bits < max_symbol_val; symbol_bits++) {
-
+        bool has_no_post = false;
         for (u64 atom_i = 0; atom_i < formula->atoms.size(); atom_i++) {
             s64 current_state = constants[atom_i];
-            post[atom_i] = formula->atoms[atom_i].compute_post_along_sym(current_state, symbol_bits);
+            auto maybe_successor = formula->atoms[atom_i].compute_post_along_sym(current_state, symbol_bits);
+
+            if (!maybe_successor.has_value()) {
+                has_no_post = true;
+                break;
+            }
+            post[atom_i] = maybe_successor.value();
         }
+
+        if (has_no_post) continue;
 
         Conjuction_State dest = {.formula = formula, .constants = post};
 
@@ -728,7 +745,11 @@ void explore_macrostate(NFA& constructed_nfa,
         for (u64 symbol = transition_symbol; alphabet_iter.has_more_quantif_symbols; symbol = alphabet_iter.next_symbol()) {
             for (auto& [formula, states]: macrostate.formulae) {
                 for (auto& state: states) {
-                    auto successor = state.successor_along_symbol(symbol);
+                    auto maybe_successor = state.successor_along_symbol(symbol);
+
+                    if (!maybe_successor.has_value()) continue;
+                    auto successor = maybe_successor.value();
+
                     auto entailment_result = compute_entailed_formula(formula_pool, successor);
 
                     if (entailment_result.state.has_value()) {
@@ -746,6 +767,8 @@ void explore_macrostate(NFA& constructed_nfa,
                 }
             }
         }
+
+        if (post.formulae.empty()) continue;
 
         // Assign a unique integer to every state
         post.handle = known_macrostates.size();
@@ -766,6 +789,7 @@ void explore_macrostate(NFA& constructed_nfa,
     }
 }
 
+// @Cleanup: Figure out where should we put this
 void init_mtbdd_libs() {
     int n_workers = 1;
     size_t dequeue_size = 10000000;
@@ -787,32 +811,6 @@ void init_mtbdd_libs() {
 
 
 // @Cleanup: Move this into base.cpp
-void NFA::add_transition(State from, State to, const u64 symbol, const u64 quantified_bits_mask) {
-    u8 rich_symbol[var_count];
-
-    for (u64 bit_i = 0u; bit_i < var_count; bit_i++) {
-        u64 current_bit = (1u << bit_i);
-        bool dont_care = (current_bit & quantified_bits_mask) > 0;
-        u8 care_val = (symbol & current_bit) > 0;
-
-        rich_symbol[bit_i] = dont_care ? 2 : care_val;
-    }
-
-    Transition_Destination_Set leaf_contents({to});
-    sylvan::MTBDD leaf = make_set_leaf(&leaf_contents);
-
-    sylvan::MTBDD transition_mtbdd = sylvan::mtbdd_cube(this->vars, rich_symbol, leaf);
-
-    LACE_ME;
-    auto [present_key_val_it, was_inserted] = transitions.emplace(from, transition_mtbdd);
-    if (!was_inserted) {
-        auto existing_transitions = present_key_val_it->second;
-
-        using namespace sylvan; // Pull the entire sylvan namespace because mtbdd_applyp is a macro
-        sylvan::MTBDD updated_mtbdd = mtbdd_applyp(existing_transitions, transition_mtbdd, 0u, TASK(transitions_union_op), AMAYA_UNION_OP_ID);
-        transitions[from] = updated_mtbdd;
-    }
-}
 
 char convert_cube_bit_to_char(u8 cube_bit) {
     switch (cube_bit) {
@@ -907,12 +905,17 @@ NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_St
     for (u64 i = 1u; i <= init_state.formula->var_count; i++) {
         mtbdd_vars = sylvan::mtbdd_set_add(mtbdd_vars, i);
     }
-    NFA nfa = {.vars = mtbdd_vars, .var_count = init_state.formula->var_count};
+    NFA nfa = {.initial_states = {0u}, .vars = mtbdd_vars, .var_count = init_state.formula->var_count};
 
     Alphabet_Iterator alphabet_iter = Alphabet_Iterator(init_state.formula->var_count, init_state.formula->bound_vars);
     while (!work_queue.empty()) {
         auto macrostate = work_queue.back();
         work_queue.pop_back();
+
+        nfa.states.insert(macrostate.handle);
+        if (macrostate.is_accepting) {
+            nfa.final_states.insert(macrostate.handle);
+        }
 
         explore_macrostate(nfa, macrostate, alphabet_iter, formula_pool, known_macrostates, accepting_macrostates, work_queue);
     }
@@ -932,92 +935,4 @@ const Quantified_Atom_Conjunction* Formula_Pool::store_formula(Quantified_Atom_C
     }
 
     return &(*it);
-}
-
-void test_nfa_construction_without_quantifiers() {
-    Quantified_Atom_Conjunction formula = {
-        .atoms = {
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 1}),
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 0}, 3),
-        },
-        .bound_vars = {},
-        .var_count = 2
-    };
-
-    Formula_Pool pool = Formula_Pool();
-    auto formula_id = pool.store_formula(formula);
-
-    Conjuction_State init_state = Conjuction_State{.formula = formula_id, .constants = {-1, 0}};
-
-    std::cout << "Input formula   : " << formula.fmt_with_state(init_state) << std::endl;
-    build_nfa_with_formula_entailement(pool, init_state);
-}
-
-
-void test_nfa_construction_with_single_quantifier() {
-    Quantified_Atom_Conjunction formula = {
-        .atoms = {
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 1}),
-        },
-        .bound_vars = {0},
-        .var_count = 2
-    };
-
-    Formula_Pool pool = Formula_Pool();
-    auto formula_id = pool.store_formula(formula);
-
-    Conjuction_State init_state = Conjuction_State{.formula = formula_id, .constants = {0}};
-
-    std::cout << "Input formula   : " << formula.fmt_with_state(init_state) << std::endl;
-    auto nfa = build_nfa_with_formula_entailement(pool, init_state);
-
-    std::cout << nfa.show_transitions() << std::endl;
-}
-
-
-void test_constr_on_real_formula() {
-    /* (exists ((y Int), (m Int))
-     *   (land
-     *     (<= (+ x (- y))  -1)
-     *     (<= (+ m (- z))  -1)
-     *     (<= y -1)
-     *     (<= (- m) 0)
-     *     (<= m 0)
-     *     (= (mod (+ m (- y)) 299_993) 303)
-     *   )
-     * )
-     *
-     * Variables are renamed as: m -> x0, x -> x1, y -> x2, z -> x3
-     */
-    Quantified_Atom_Conjunction real_formula = {
-        .atoms = {
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 1, -1, 0}),        // (<= (+ x (- y))  -1)
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, -1}),        // (<= (+ m (- z))  -1)
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 0, 1, 0}),         // (<= y -1)
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 0, 0, 0}),        // (<= (- m) 0)
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, 0}),         // (<= m 0)
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 0, -1, 0}, 299993),  // (= (mod (+ m (- y)) 299_993) 303)
-        },
-        .bound_vars = {0, 2},
-        .var_count = 4
-    };
-
-    real_formula.bounds_analysis_result = compute_bounds_analysis(real_formula);
-    Conjuction_State real_state = Conjuction_State{.formula = &real_formula, .constants = {-1, -1, -1, 0, 0, 303}};
-
-    std::cout << "Input formula   : " << real_formula.fmt_with_state(real_state) << std::endl;
-
-    Formula_Pool pool = Formula_Pool();
-    auto entailment_status = compute_entailed_formula(pool, real_state);
-    std::cout << "Atoms removed   : " << entailment_status.removed_atom_count << std::endl;
-    std::cout << "Entailed formula: " << entailment_status.state.value().formula->fmt_with_state(entailment_status.state.value()) << std::endl;
-
-    build_nfa_with_formula_entailement(pool, real_state);
-}
-
-
-int main(void) {
-    init_mtbdd_libs();
-    test_nfa_construction_with_single_quantifier();
-    return 0;
 }

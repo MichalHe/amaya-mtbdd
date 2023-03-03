@@ -24,15 +24,24 @@ typedef uint64_t u64;
 typedef uint8_t  u8;
 typedef int64_t  s64;
 
+struct Transition {
+    State from;
+    State to;
+    std::vector<uint8_t> symbol;
+
+    bool operator==(const Transition& other) const;
+};
+
+// @Todo: Make this an ordinary struct
 class Transition_Destination_Set {
 public:
-	std::set<State> destination_set;
+    set<State> destination_set;
 
-	Transition_Destination_Set() {};
-	Transition_Destination_Set(const Transition_Destination_Set &other);
-	Transition_Destination_Set(std::set<State>& destination_set);
-    Transition_Destination_Set(std::set<State>&& destination_set) : destination_set(destination_set) {};
-	void print_dest_states();
+    Transition_Destination_Set() {};
+    Transition_Destination_Set(const Transition_Destination_Set &other);
+    Transition_Destination_Set(set<State>& destination_set);
+    Transition_Destination_Set(set<State>&& destination_set) : destination_set(destination_set) {};
+    void print_dest_states();
 };
 
 struct NFA {
@@ -45,13 +54,10 @@ struct NFA {
     uint64_t var_count;
 
     void add_transition(State from, State to, u64 symbol, u64 quantified_bits_mask);
-    std::string show_transitions() const;
-};
+    void add_transition(State from, State to, u8* symbol);
 
-struct Transition {
-    State origin;
-    State destination;
-    std::vector<uint8_t> symbols;
+    std::string show_transitions() const;
+    std::vector<Transition> get_symbolic_transitions_for_state(State state) const;
 };
 
 

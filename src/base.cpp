@@ -1,5 +1,8 @@
 #include "../include/base.hpp"
+#include "../include/custom_leaf.hpp"
+#include "../include/operations.hpp"
 
+#include <cassert>
 #include <iostream>
 #include <set>
 #include <vector>
@@ -66,19 +69,79 @@ void unpack_dont_care_bits_in_mtbdd_path(
         unpack_dont_care_bits_in_mtbdd_path(path_with_dont_care_bit_interpreted, path_size, unpacked_transitions, first_dont_care_symbol_index+1, origin, destination);
     } else {
         // The mtbdd_path does not contain any don't care bits, we can emit a transition
-        std::vector<uint8_t> symbols;
-        symbols.reserve(path_size);
-        for (uint64_t i = 0; i < path_size; i++) symbols.push_back(mtbdd_path[i]);
-        struct Transition transition = {
-            .origin = origin,
-            .destination = destination,
-            .symbols = symbols
-        };
+        std::vector<u8> symbol(path_size);
+        for (uint64_t i = 0; i < path_size; i++) symbol.push_back(mtbdd_path[i]);
+
+        Transition transition = {.from = origin, .to = destination, .symbol = symbol};
         unpacked_transitions.push_back(transition);
     }
 }
 
-std::vector<struct Transition> nfa_unpack_transitions(struct NFA& nfa) {
+
+std::vector<Transition> NFA::get_symbolic_transitions_for_state(State state) const {
+    std::vector<Transition> symbolic_transitions;
+
+    auto state_mtbdd_it = transitions.find(state);
+
+    // @Robustness: Keeping the assert as we should access the transitions only when iterating trough states
+    assert(state_mtbdd_it != transitions.end());
+
+    auto mtbdd = state_mtbdd_it->second;
+
+    u8 raw_symbol[this->var_count];
+
+    MTBDD leaf = sylvan::mtbdd_enum_first(mtbdd, this->vars, raw_symbol, NULL);
+    while (leaf != sylvan::mtbdd_false) {
+        auto leaf_contents = reinterpret_cast<Transition_Destination_Set*>(sylvan::mtbdd_getvalue(leaf));
+
+        for (auto& dest_state: leaf_contents->destination_set) {
+
+            std::vector<u8> symbol(this->var_count);
+            for (u64 i = 0; i < this->var_count; i++) symbol[i] = raw_symbol[i];
+
+            Transition transition = {.from = state, .to = dest_state, .symbol = symbol};
+            symbolic_transitions.push_back(transition);
+        }
+
+        leaf = sylvan::mtbdd_enum_next(mtbdd, this->vars, raw_symbol, NULL);
+    }
+
+    return symbolic_transitions;
+}
+
+void NFA::add_transition(State from, State to, const u64 symbol, const u64 quantified_bits_mask) {
+    u8 rich_symbol[var_count];
+
+    for (u64 bit_i = 0u; bit_i < var_count; bit_i++) {
+        u64 current_bit = (1u << bit_i);
+        bool dont_care = (current_bit & quantified_bits_mask) > 0;
+        u8 care_val = (symbol & current_bit) > 0;
+
+        rich_symbol[bit_i] = dont_care ? 2 : care_val;
+    }
+
+    add_transition(from, to, rich_symbol);
+}
+
+void NFA::add_transition(State from, State to, u8* rich_symbol) {
+    Transition_Destination_Set leaf_contents({to});
+    sylvan::MTBDD leaf = make_set_leaf(&leaf_contents);
+
+    sylvan::MTBDD transition_mtbdd = sylvan::mtbdd_cube(this->vars, rich_symbol, leaf);
+
+    LACE_ME;
+    auto [present_key_val_it, was_inserted] = transitions.emplace(from, transition_mtbdd);
+    if (!was_inserted) {
+        auto existing_transitions = present_key_val_it->second;
+
+        using namespace sylvan; // Pull the entire sylvan namespace because mtbdd_applyp is a macro
+        sylvan::MTBDD updated_mtbdd = mtbdd_applyp(existing_transitions, transition_mtbdd, 0u, TASK(transitions_union_op), AMAYA_UNION_OP_ID);
+        transitions[from] = updated_mtbdd;
+    }
+}
+
+
+std::vector<Transition> nfa_unpack_transitions(struct NFA& nfa) {
     LACE_ME;
 
     std::vector<struct Transition> transitions;
@@ -87,8 +150,8 @@ std::vector<struct Transition> nfa_unpack_transitions(struct NFA& nfa) {
     assert(path_in_mtbdd_to_leaf != NULL);
 
     for (auto origin_state: nfa.states) {
-        MTBDD    state_transitions = nfa.transitions[origin_state];
-        MTBDD    leaf         = sylvan::mtbdd_enum_first(state_transitions, nfa.vars, path_in_mtbdd_to_leaf, NULL);
+        MTBDD state_transitions = nfa.transitions[origin_state];
+        MTBDD leaf = sylvan::mtbdd_enum_first(state_transitions, nfa.vars, path_in_mtbdd_to_leaf, NULL);
 
         while (leaf != sylvan::mtbdd_false) {
             Transition_Destination_Set* tds = (Transition_Destination_Set*) sylvan::mtbdd_getvalue(leaf);
@@ -105,19 +168,17 @@ std::vector<struct Transition> nfa_unpack_transitions(struct NFA& nfa) {
 
 std::string transition_to_str(const struct Transition& transition) {
     std::stringstream str_stream;
-    str_stream << "Transition{.origin = " << transition.origin;
+    str_stream << "Transition{.origin = " << transition.from;
     str_stream << ", .symbols = (";
-    if (!transition.symbols.empty()) {
-        auto bit_iter = transition.symbols.begin();
+    if (!transition.symbol.empty()) {
+        auto bit_iter = transition.symbol.begin();
         str_stream << (int) *bit_iter++;
-        for (; bit_iter != transition.symbols.end(); bit_iter++) str_stream << ", " << (int) *bit_iter;
+        for (; bit_iter != transition.symbol.end(); bit_iter++) str_stream << ", " << (int) *bit_iter;
     }
-    str_stream <<  "), .destination = " << transition.destination << "}";
+    str_stream <<  "), .destination = " << transition.to << "}";
     return str_stream.str();
 }
 
-bool transition_is_same_as(const struct Transition& transition_a, const struct Transition& transition_b) {
-    return transition_a.origin == transition_b.origin &&
-           transition_a.destination == transition_b.destination &&
-           transition_a.symbols == transition_b.symbols;
+bool Transition::operator==(const Transition& other) const {
+    return from == other.from && to == other.to && symbol == other.symbol;
 }

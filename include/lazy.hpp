@@ -38,7 +38,7 @@ struct Presburger_Atom {
 
     Presburger_Atom(Presburger_Atom_Type atom_type, const vector<s64>& coefficients, s64 modulus=0) : type(atom_type), coefs(coefficients), modulus(modulus) {}
 
-    s64 compute_post_along_sym(s64 constant, u64 symbol_bits) const;
+    optional<s64> compute_post_along_sym(s64 constant, u64 symbol_bits) const;
     bool accepts_last_symbol(s64 state, u64 symbol_bits) const;
 
     std::string fmt_with_rhs(s64 rhs) const;
@@ -124,7 +124,7 @@ struct Conjuction_State {
     Conjuction_State(const Conjuction_State& other): formula(other.formula), constants(other.constants) {}
 
     void post(unordered_set<Conjuction_State>& known_states, vector<Conjuction_State>& dest);
-    Conjuction_State successor_along_symbol(u64 symbol);
+    optional<Conjuction_State> successor_along_symbol(u64 symbol);
     bool accepts_last_symbol(u64 symbol);
     bool operator==(const Conjuction_State& other) const;
 };
@@ -233,7 +233,7 @@ struct Formula_Pool { // Formula memory management
 };
 
 struct Structured_Macrostate {
-    bool is_accepting;
+    bool is_accepting = false;
     u64 handle;
     map<const Quantified_Atom_Conjunction*, list<Conjuction_State>> formulae;
 
@@ -275,5 +275,7 @@ struct std::hash<Structured_Macrostate> {
 
 char convert_cube_bit_to_char(u8 cube_bit);
 void show_transitions_from_state(std::stringstream& output, const NFA& nfa, State origin, sylvan::MTBDD mtbdd);
+NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_State& init_state);
+void init_mtbdd_libs();
 
 #endif
