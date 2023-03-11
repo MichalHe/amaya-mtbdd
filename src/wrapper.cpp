@@ -875,8 +875,65 @@ void amaya_sylvan_clear_cache()
 	sylvan_clear_cache();
 }
 
-struct Serialized_DFA* amaya_minimize_hopcroft(struct Serialized_DFA* serialized_dfa)
-{
+struct Serialized_DFA* amaya_construct_dfa_for_atom_conjunction(Serialized_Quantified_Atom_Conjunction* raw_formula) {
+    Quantified_Atom_Conjunction conjuction = {
+        .atoms = {},
+        .bound_vars = {},
+        .var_count = raw_formula->atom_cnt,
+    };
+    conjuction.atoms.resize(raw_formula->atom_cnt);
+
+    for (u64 atom_idx = 0u; atom_idx < raw_formula->atom_cnt; atom_idx++) {
+        auto raw_atom = raw_formula->atoms[atom_idx];
+        Presburger_Atom atom(static_cast<Presburger_Atom_Type>(raw_atom.type), {});
+        atom.coefs.resize(raw_atom.coef_cnt);
+
+        for (u64 coef_idx = 0u; coef_idx < raw_atom.coef_cnt; coef_idx++) {
+            atom.coefs[coef_idx] = raw_atom.coefs[coef_idx];
+        }
+
+        if (atom.type == PR_ATOM_CONGRUENCE) {
+            atom.modulus = raw_atom.modulus;
+        }
+        conjuction.atoms[atom_idx] = atom;
+    }
+
+    conjuction.var_count = raw_formula->var_cnt;
+    
+    conjuction.bound_vars.resize(raw_formula->quantified_var_cnt);
+    for (u64 quantified_var_idx = 0u; quantified_var_idx < raw_formula->quantified_var_cnt; quantified_var_idx++) {
+        conjuction.bound_vars[quantified_var_idx] = raw_formula->quantified_vars[quantified_var_idx];
+    }
+
+    std::vector<s64> initial_state_data (raw_formula->atom_cnt);
+    for (u64 atom_idx = 0u; atom_idx < raw_formula->atom_cnt; atom_idx++) {
+        initial_state_data[atom_idx] = raw_formula->initial_state[atom_idx];
+
+        // @Debug: This fragment is used to produced smaller automata (without handle)
+        //if (raw_formula->initial_state[atom_idx] = 299992) {
+            //initial_state_data[atom_idx] = 0;
+        //}
+    }
+
+    sylvan::BDDSET var_set = sylvan::mtbdd_set_empty();
+    for (u64 var_idx = 0u; var_idx < raw_formula->var_cnt; var_idx++) {
+        var_set = sylvan::mtbdd_set_add(var_set, raw_formula->vars[var_idx]);
+    }
+
+    Formula_Pool formula_pool;
+    auto stored_formula_ptr = formula_pool.store_formula(conjuction);
+
+    Conjuction_State initial_state(stored_formula_ptr, initial_state_data);
+
+    auto created_nfa = build_nfa_with_formula_entailement(formula_pool, initial_state, var_set);
+
+    // @Cleanup: The serialize_dfa function should be extended to handle NFAs. NFAs are not handled mostly
+    //           because of the Serialized_DFA structure has only a slot for only one initial state.
+    auto result = serialize_dfa(created_nfa, raw_formula->vars, raw_formula->var_cnt);
+    return result;
+}
+
+struct Serialized_DFA* amaya_minimize_hopcroft(struct Serialized_DFA* serialized_dfa) {
     // Deserialize the DFA
     struct NFA dfa = {
         .states = {},
@@ -898,44 +955,44 @@ struct Serialized_DFA* amaya_minimize_hopcroft(struct Serialized_DFA* serialized
         dfa.vars = sylvan::mtbdd_set_add(dfa.vars, serialized_dfa->vars[i]);
 
     struct NFA minimized_dfa = minimize_hopcroft(dfa);
+    
+    auto output_dfa = serialize_dfa(minimized_dfa, serialized_dfa->vars, serialized_dfa->var_count); 
+    return output_dfa;
+}
 
-    struct Serialized_DFA* output_dfa = (struct Serialized_DFA*) malloc(sizeof(struct Serialized_DFA));
-    assert(output_dfa != nullptr);
+Serialized_DFA* serialize_dfa(NFA& nfa, u64* vars, u64 var_count) {
+    Serialized_DFA* serialized_nfa = (Serialized_DFA*) malloc(sizeof(Serialized_DFA));
+    assert(serialized_nfa != nullptr);
 
     set<State>::iterator state_it;
     uint64_t i = 0;
 
-    output_dfa->states = (State*) malloc(sizeof(State) * minimized_dfa.states.size());
-    assert(output_dfa->states != nullptr);
-    for (state_it = minimized_dfa.states.begin(), i = 0;
-         state_it != minimized_dfa.states.end();
-         state_it++, i++) {
-        output_dfa->states[i] = *state_it;
+    serialized_nfa->states = (State*) malloc(sizeof(State) * nfa.states.size()); assert(serialized_nfa->states != nullptr);
+    for (state_it = nfa.states.begin(), i = 0; state_it != nfa.states.end(); state_it++, i++) {
+        serialized_nfa->states[i] = *state_it;
     }
-    output_dfa->state_count = minimized_dfa.states.size();
+    serialized_nfa->state_count = nfa.states.size();
 
-    output_dfa->final_states = (State*) malloc(sizeof(State) * minimized_dfa.final_states.size());
-    assert(output_dfa->final_states != nullptr);
-    for (state_it = minimized_dfa.final_states.begin(), i = 0;
-         state_it != minimized_dfa.final_states.end();
-         state_it++, i++) {
-        output_dfa->final_states[i] = *state_it;
+    serialized_nfa->final_states = (State*) malloc(sizeof(State) * nfa.final_states.size());
+    assert(serialized_nfa->final_states != nullptr);
+    for (state_it = nfa.final_states.begin(), i = 0; state_it != nfa.final_states.end(); state_it++, i++) {
+        serialized_nfa->final_states[i] = *state_it;
     }
-    output_dfa->final_state_count = minimized_dfa.final_states.size();
+    serialized_nfa->final_state_count = nfa.final_states.size();
 
-    output_dfa->initial_state = *minimized_dfa.initial_states.begin();
+    serialized_nfa->initial_state = *nfa.initial_states.begin();
 
-    output_dfa->mtbdds = (sylvan::MTBDD*) malloc(sizeof(sylvan::MTBDD) * minimized_dfa.states.size());
+    serialized_nfa->mtbdds = (sylvan::MTBDD*) malloc(sizeof(sylvan::MTBDD) * nfa.states.size());
 
     i = 0;
-    for (State state: minimized_dfa.states) {
-        output_dfa->mtbdds[i] = minimized_dfa.transitions[state];
+    for (State state: nfa.states) {
+        serialized_nfa->mtbdds[i] = nfa.transitions[state];
         i++;
     }
 
-    output_dfa->vars = serialized_dfa->vars;
-    output_dfa->var_count = serialized_dfa->var_count;
+    serialized_nfa->vars      = vars;
+    serialized_nfa->var_count = var_count;
 
-    return output_dfa;
+    return serialized_nfa;
 }
 

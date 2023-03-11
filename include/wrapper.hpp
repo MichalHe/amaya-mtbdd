@@ -2,7 +2,12 @@
 #define AMAYA_WRAPPER_H
 
 #include "base.hpp"
+#include "lazy.hpp"
+
 #include <sylvan.h>
+#include <sylvan_common.h>
+#include <sylvan_mtbdd.h>
+
 #include <inttypes.h>
 
 struct Serialized_DFA {
@@ -16,23 +21,43 @@ struct Serialized_DFA {
     uint64_t        var_count;
 };
 
+struct Serialized_Atom {
+    u64  type;
+    s64* coefs;
+    u64  coef_cnt;
+    s64  modulus;
+};
+
+struct Serialized_Quantified_Atom_Conjunction {
+    Serialized_Atom* atoms;
+    u64              atom_cnt;
+    State*           initial_state;
+    u64*             vars;
+    u64              var_cnt;
+    u64*             quantified_vars;
+    u64              quantified_var_cnt;
+};
+
+Serialized_DFA* serialize_dfa(NFA& nfa, u64* vars, u64 var_count);
+
 extern "C" {
+
 	// Export constants (wrapped)
-	const sylvan::MTBDD w_mtbdd_true  = sylvan::mtbdd_true; 
+	const sylvan::MTBDD w_mtbdd_true  = sylvan::mtbdd_true;
 	const sylvan::MTBDD w_mtbdd_false = sylvan::mtbdd_false;
 
 	// Functions
 	sylvan::MTBDD amaya_unite_mtbdds(sylvan::MTBDD m1, sylvan::MTBDD m2);
 
 	sylvan::MTBDD amaya_project_variables_away(
-			sylvan::MTBDD m, 
+			sylvan::MTBDD m,
 			uint32_t *variables,
 			uint32_t var_count);
 
 	State* amaya_mtbdd_get_transition_target(
-			sylvan::MTBDD mtbdd, 
-			uint8_t* cube, 
-			uint32_t cube_size, 
+			sylvan::MTBDD mtbdd,
+			uint8_t* cube,
+			uint32_t cube_size,
 			uint32_t* result_size);
 
 	void amaya_print_dot(sylvan::MTBDD m, int32_t fd);
@@ -45,18 +70,18 @@ extern "C" {
 		uint32_t  destination_set_size);
 
 	sylvan::MTBDD* amaya_mtbdd_rename_states(
-			sylvan::MTBDD* mtbdd_roots, 
+			sylvan::MTBDD* mtbdd_roots,
 			uint32_t 	root_count,
-			State* 		state_name_pairs,  // [(old, new), (old, new), (old, new)] 
+			State* 		state_name_pairs,  // [(old, new), (old, new), (old, new)]
 			uint32_t 	state_name_pairs_cnt);
 
 	/**
-	 * @param leaf_ptrs 	If not NULL will point to an array containing pointers 
+	 * @param leaf_ptrs 	If not NULL will point to an array containing pointers
 	 * 						to transition destinations set of the leaves.
 	 * @returns 			Contents of leaves serialized into array: [leafA1, leafA2, ..., leafAN, leafB1, ...]
 	 */
 	State* amaya_mtbdd_get_leaves(
-			sylvan::MTBDD root, 
+			sylvan::MTBDD root,
 			uint32_t** leaf_sizes,	// OUT, Array containing the sizes of leaves inside dest
 			uint32_t*  leaf_cnt, 	// OUT, Number of leaves in the tree
 			void***    leaf_ptrs);
@@ -70,8 +95,8 @@ extern "C" {
 	 * @param contents_size The length of the array.
 	 */
 	void amaya_replace_leaf_contents_with(
-			void* 	 leaf_tds, 
-			State* 	 new_leaf_contents, 
+			void* 	 leaf_tds,
+			State* 	 new_leaf_contents,
 			uint32_t contents_size);
 
 	/**
@@ -81,7 +106,7 @@ extern "C" {
 	 * @returns array containing the post set.
 	 */
 	State* amaya_mtbdd_get_state_post(
-			sylvan::MTBDD  m, 
+			sylvan::MTBDD  m,
 			uint32_t* 	   post_size);
 
 	/**
@@ -90,12 +115,12 @@ extern "C" {
 	 * @param right 		The transitions of a state that has some transitions leading to the final state.
 	 * @param final_states 		Pointer to an array containing the final states of the automaton.
 	 * @param final_states_cnt 	Number of states in the final_state array.
-	 * @returns The newly created MTBDD. If the MTBDD has the same value as the left_dd, 
+	 * @returns The newly created MTBDD. If the MTBDD has the same value as the left_dd,
      *          then the pad_closure had no effect.
 	 */
 	sylvan::MTBDD amaya_mtbdd_do_pad_closure(
 			State 			left_state,
-			sylvan::MTBDD 	left_dd, 
+			sylvan::MTBDD 	left_dd,
 			State 			right_state,
 			sylvan::MTBDD 	right_dd);
 
@@ -111,7 +136,7 @@ extern "C" {
 	 */
 	uint8_t* amaya_mtbdd_get_transitions(
 			sylvan::MTBDD root,
-			uint32_t* 	vars,	
+			uint32_t* 	vars,
 			uint32_t 	var_count,
 			uint32_t* 	symbols_cnt,
 			State** 	dest_states,
@@ -127,19 +152,19 @@ extern "C" {
 	 * @returns A MTBDD that contains only transitions that are present in both given MTBDDs.
 	 */
 	sylvan::MTBDD amaya_mtbdd_intersection(
-			sylvan::MTBDD a, 
+			sylvan::MTBDD a,
 			sylvan::MTBDD b,
 			State**  	discovered_states,         // OUT
 			uint32_t*  	discovered_states_cnt);    // OUT
 
-	
+
 	/**
 	 * Marks the beginning of intersection. Setups global std::map that holds
 	 * information about which intersection macrostates (pairs) were mapped to which values.
 	 */
 	void amaya_begin_intersection(
-			bool 		should_do_early_prunining, 
-			State* 		prune_final_states, 
+			bool 		should_do_early_prunining,
+			State* 		prune_final_states,
 			uint32_t 	final_states_cnt);
 
 	/**
@@ -151,8 +176,8 @@ extern "C" {
 	 * @param cnt 					Count of the macrostates.
 	 */
 	void amaya_update_intersection_state(
-			State* 	 macrostates, 
-			State* 	 renamed_macrostates, 
+			State* 	 macrostates,
+			State* 	 renamed_macrostates,
 			uint32_t macrostates_cnt);
 	/**
 	 * Marks the end of intersection and frees up resources.
@@ -163,11 +188,11 @@ extern "C" {
 
 	void amaya_do_free(void *ptr);
 
-	/** 
-	 * Renames the macrostates that are contained withing the roots of mtbdds resulting 
+	/**
+	 * Renames the macrostates that are contained withing the roots of mtbdds resulting
 	 * from the determinization procedure some automaton.
-	 * @param roots 					The roots of the MTBDDs that were created during the determinization procedure.  
-	 * @param root_cnt  				The number of given MTBDDs. 
+	 * @param roots 					The roots of the MTBDDs that were created during the determinization procedure.
+	 * @param root_cnt  				The number of given MTBDDs.
 	 * @param out_macrostates_sizes   	OUTPUT: The sized of the located macrostates.
 	 * @param out_macrostates_cnt   		OUTPUT: The number of located macrostates.
 	 * @param out_serialized_macrostates OUTPUT: The macrostates located serialized one after another.
@@ -186,14 +211,14 @@ extern "C" {
 			sylvan::MTBDD mtbdd,
 			State 		trapstate,
 			bool* 		had_effect);
-	
+
 	/**
 	 * Walks the MTBDD building a set of reachable states encoded within the MTBDD. For
 	 * every located state also notes the transition symbol via which can the state be reached.
 	 * Every reachable state is presented in the result array max. 1 times (it is an array representation
 	 * of a set).
-	 *	
-	 * @param mtbdd 			The mtbdd for which the reachable states will be retrieved. 
+	 *
+	 * @param mtbdd 			The mtbdd for which the reachable states will be retrieved.
 	 * @param variables			An array containing the indices of used variables.
 	 * @param variable_cnt		The number of variables in the variable array.
 	 * @param out_symbols		(OUT) Will contain transition symbols corresponting the returned states.
@@ -235,13 +260,15 @@ extern "C" {
 
     struct Serialized_DFA* amaya_minimize_hopcroft(struct Serialized_DFA* serialized_dfa);
 
+    struct Serialized_DFA* amaya_construct_dfa_for_atom_conjunction(Serialized_Quantified_Atom_Conjunction* raw_formula);
+
 	void amaya_end_pad_closure();
 
 	void amaya_mtbdd_ref(sylvan::MTBDD mtbdd);
 	void amaya_mtbdd_deref(sylvan::MTBDD mtbdd);
 	void amaya_sylvan_gc();
 	void amaya_sylvan_try_performing_gc();
-    
+
 	void amaya_sylvan_clear_cache();
 
 	void shutdown_machinery();
@@ -250,9 +277,9 @@ extern "C" {
 }
 
 Transition_Destination_Set* _get_transition_target(
-		sylvan::MTBDD root, 
+		sylvan::MTBDD root,
 		uint32_t current_variable,
-		uint8_t* variable_assigments, 
+		uint8_t* variable_assigments,
 		uint32_t var_count);
 
 void collect_mtbdd_leaves(sylvan::MTBDD root, std::set<sylvan::MTBDD>& dest);
