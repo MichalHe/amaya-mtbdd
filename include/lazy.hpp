@@ -275,7 +275,7 @@ struct std::hash<Structured_Macrostate> {
 
 char convert_cube_bit_to_char(u8 cube_bit);
 void show_transitions_from_state(std::stringstream& output, const NFA& nfa, State origin, sylvan::MTBDD mtbdd);
-NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_State& init_state);
+NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_State& init_state, sylvan::BDDSET bdd_vars);
 void init_mtbdd_libs();
 
 #endif

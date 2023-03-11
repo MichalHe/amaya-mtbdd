@@ -3,6 +3,7 @@
 #include <stdlib.h>
 
 #include <bitset>
+#include <chrono>
 #include <iostream>
 #include <list>
 #include <cstring>
@@ -21,6 +22,8 @@ using std::unordered_map;
 
 using std::pair;
 using std::optional;
+
+#define DEBUG_RUNTIME 0
 
 typedef Quantified_Atom_Conjunction Formula;
 
@@ -743,6 +746,10 @@ void explore_macrostate(NFA& constructed_nfa,
         u64 transition_symbol = alphabet_iter.init_quantif();  // The quantified bits will be masked away, so it is sufficient to take the first one
 
         for (u64 symbol = transition_symbol; alphabet_iter.has_more_quantif_symbols; symbol = alphabet_iter.next_symbol()) {
+#if DEBUG_RUNTIME
+            auto start = std::chrono::system_clock::now();
+#endif
+
             for (auto& [formula, states]: macrostate.formulae) {
                 for (auto& state: states) {
                     auto maybe_successor = state.successor_along_symbol(symbol);
@@ -765,7 +772,22 @@ void explore_macrostate(NFA& constructed_nfa,
 
                     post.is_accepting |= state.accepts_last_symbol(symbol);
                 }
+
             }
+
+#if DEBUG_RUNTIME
+            auto end = std::chrono::system_clock::now();
+            std::chrono::duration<double> elapsed_seconds = end - start;
+            std::cout << "Number of formulae: " << macrostate.formulae.size()
+                      << "; insertion took: " << elapsed_seconds.count() << "seconds." << std::endl;
+            if (elapsed_seconds.count() > 0.2d) {
+                for (auto& [formula, states]: macrostate.formulae) {
+                    std::cout << macrostate << std::endl;
+                    std::cout << *formula << std::endl;
+                }
+                assert(false);
+            }
+#endif
         }
 
         if (post.formulae.empty()) continue;
@@ -873,7 +895,7 @@ std::string NFA::show_transitions() const {
 }
 
 
-NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_State& init_state) {
+NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_State& init_state, sylvan::BDDSET bdd_vars) {
     u64 max_symbol = (1u << init_state.formula->var_count);
     vector<Conjuction_State> produced_states;
 
@@ -901,14 +923,14 @@ NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_St
         known_macrostates.emplace(init_macrostate, known_macrostates.size());
     }
 
-    sylvan::BDDSET mtbdd_vars = sylvan::mtbdd_set_empty();
-    for (u64 i = 1u; i <= init_state.formula->var_count; i++) {
-        mtbdd_vars = sylvan::mtbdd_set_add(mtbdd_vars, i);
-    }
-    NFA nfa = {.initial_states = {0u}, .vars = mtbdd_vars, .var_count = init_state.formula->var_count};
+    NFA nfa = {.initial_states = {0u}, .vars = bdd_vars, .var_count = init_state.formula->var_count};
 
     Alphabet_Iterator alphabet_iter = Alphabet_Iterator(init_state.formula->var_count, init_state.formula->bound_vars);
+    u64 processed_states = 0;
     while (!work_queue.empty()) {
+        if (processed_states % 1000 == 0) {
+            std::cout << "Processed states " << processed_states << std::endl;
+        }
         auto macrostate = work_queue.back();
         work_queue.pop_back();
 
@@ -918,6 +940,7 @@ NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_St
         }
 
         explore_macrostate(nfa, macrostate, alphabet_iter, formula_pool, known_macrostates, accepting_macrostates, work_queue);
+        processed_states += 1;
     }
 
     return nfa;
