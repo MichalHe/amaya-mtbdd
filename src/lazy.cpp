@@ -342,6 +342,10 @@ std::optional<std::pair<s64, u64>> compute_instantiating_value_for_var(const Qua
     bool do_bounds_allow_instantiation = false;
     u64 used_atom_i = 0;
 
+    // @Todo: If we encounter a variable with some clear value preference (e.g. LOW), but missing a bound that would
+    // be used to construct the instantiation value (no low bounds), this means that the value can be any. This
+    // function neeeds to be extended to tell the caller that she can drop all atoms with the instantiated variable
+    // as it poses no restrictions onto other variables.
     if (bounds.preferred_value == Preferred_Var_Value_Type::LOW && bounds.lower.is_present) {
         do_bounds_allow_instantiation = true;
         used_atom_i = bounds.lower.atom_idx;
@@ -779,14 +783,15 @@ void explore_macrostate(NFA& constructed_nfa,
             auto end = std::chrono::system_clock::now();
             std::chrono::duration<double> elapsed_seconds = end - start;
             std::cout << "Number of formulae: " << macrostate.formulae.size()
-                      << "; insertion took: " << elapsed_seconds.count() << "seconds." << std::endl;
+                      << "; insertion took: " << elapsed_seconds.count() << " seconds." << std::endl;
+            /*
             if (elapsed_seconds.count() > 0.2d) {
                 for (auto& [formula, states]: macrostate.formulae) {
                     std::cout << macrostate << std::endl;
                     std::cout << *formula << std::endl;
                 }
-                assert(false);
             }
+            */
 #endif
         }
 
