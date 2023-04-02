@@ -53,6 +53,9 @@ struct NFA {
     sylvan::BDDSET vars;
     uint64_t var_count;
 
+    // @Cleanup: Factor out the sylvan global configuration into a context struct
+    void perform_pad_closure(u64 leaf_type_id);
+
     void add_transition(State from, State to, u64 symbol, u64 quantified_bits_mask);
     void add_transition(State from, State to, u8* symbol);
 

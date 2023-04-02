@@ -822,7 +822,7 @@ void init_mtbdd_libs() {
     size_t dequeue_size = 10000000;
 
     lace_init(n_workers, dequeue_size);
-	const size_t stack_size = 1LL << 20;
+    const size_t stack_size = 1LL << 20;
     lace_startup(0, NULL, NULL);
     sylvan::sylvan_set_limits(500LL*1024*1024, 3, 5);
     sylvan::sylvan_init_package();

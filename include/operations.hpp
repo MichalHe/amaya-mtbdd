@@ -13,6 +13,8 @@
 
 #define AMAYA_EXISTS_OPERATION_ID 0x2000000
 #define AMAYA_UNION_OP_ID 0x4000000
+#define AMAYA_EXTEND_FRONTIER_OP_ID 0x8000000
+#define AMAYA_ADD_PAD_TRANSITIONS_OP_ID 0xC000000
 
 TASK_DECL_3(sylvan::MTBDD, transitions_intersection_op, sylvan::MTBDD *, sylvan::MTBDD *, uint64_t);
 
@@ -32,48 +34,57 @@ TASK_DECL_2(sylvan::MTBDD, complete_transition_with_trapstate_op, sylvan::MTBDD,
 TASK_DECL_2(sylvan::MTBDD, rename_states_op, sylvan::MTBDD, uint64_t);
 TASK_DECL_2(sylvan::MTBDD, transform_macrostates_to_ints_op, sylvan::MTBDD, uint64_t);
 
+TASK_DECL_3(sylvan::MTBDD, build_pad_closure_fronier_op, sylvan::MTBDD*, sylvan::MTBDD*, u64);
+TASK_DECL_3(sylvan::MTBDD, add_pad_transitions_op, sylvan::MTBDD*, sylvan::MTBDD*, u64);
+
 typedef struct
 {
     State new_final_state;      // Final state to be added if the saturation property is broken
-	State left_state;           // For debug purposes
-	State right_state;          // Actually used
+    State left_state;           // For debug purposes
+    State right_state;          // Actually used
 
-	std::unordered_map<State, std::pair<sylvan::MTBDD, uint64_t>> *operation_id_cache;
-	uint64_t first_available_r_cache_id;
-	State *final_states;
-	uint32_t final_states_cnt;
+    std::unordered_map<State, std::pair<sylvan::MTBDD, uint64_t>> *operation_id_cache;
+    uint64_t first_available_r_cache_id;
+    State *final_states;
+    uint32_t final_states_cnt;
 } Pad_Closure_Info;
+
+struct Pad_Closure_Info2 {
+    State origin_state;
+    State new_final_state;
+    std::set<State>* final_states;
+};
 
 typedef struct
 {
-	bool had_effect;
-	State trapstate;
+    bool had_effect;
+    State trapstate;
 } Complete_With_Trapstate_Op_Info;
 
 typedef struct
 {
-	std::vector<State> *discoveries; // Flat array of [macrostate_left_part, macrostate_right_part, state, ...]
+    std::vector<State> *discoveries; // Flat array of [macrostate_left_part, macrostate_right_part, state, ...]
 } Intersection_Op_Info;
 
 typedef struct
 {
-	bool should_do_early_prunining;
-	std::unordered_set<State> *prune_final_states;
-	std::map<std::pair<State, State>, State> *intersection_state_pairs_numbers;
+    bool should_do_early_prunining;
+    std::unordered_set<State> *prune_final_states;
+    std::map<std::pair<State, State>, State> *intersection_state_pairs_numbers;
 } Intersection_State;
 
 typedef struct
 {
-	std::map<State, State> *states_rename_map;
+    std::map<State, State> *states_rename_map;
 } State_Rename_Op_Info;
 
 typedef struct
 {
-	std::map<std::set<State>, State>* alias_map;
-	std::vector<State>* serialized_macrostates;
-	std::vector<uint64_t>* macrostates_sizes;
-	uint64_t macrostates_cnt;
-	State first_available_state_number;
+    std::map<std::set<State>, State>* alias_map;
+    std::vector<State>* serialized_macrostates;
+    std::vector<uint64_t>* macrostates_sizes;
+    uint64_t macrostates_cnt;
+    State first_available_state_number;
 } Transform_Macrostates_To_Ints_State;
 
 struct NFA minimize_hopcroft(struct NFA& nfa);

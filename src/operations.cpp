@@ -281,13 +281,13 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
         auto left_tds  = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(left));
         auto right_tds = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(right));
 
-	    auto pci = PAD_CLOSURE_OP_STATE;
+        auto pci = PAD_CLOSURE_OP_STATE;
 
-		// Check whether the MTBDD of the pre-state (left) even leads to the current state (right)
-		if (left_tds->destination_set.find(pci->right_state) == left_tds->destination_set.end()) {
-			// Does not lead to the current state, therefore, the saturation property was not broken (here)
-			return left;
-		}
+        // Check whether the MTBDD of the pre-state (left) even leads to the current state (right)
+        if (left_tds->destination_set.find(pci->right_state) == left_tds->destination_set.end()) {
+            // Does not lead to the current state, therefore, the saturation property was not broken (here)
+            return left;
+        }
 
         // Check whether any final state is present in the post of the current state
         bool is_final_reachable_from_current = contains_final_state(pci, right_tds);
@@ -310,11 +310,11 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
         }
 
         // The saturation property is broken, fix it by adding the new final state to the pre-state (left) TDS
-		Transition_Destination_Set new_leaf_contents(*left_tds);
+        Transition_Destination_Set new_leaf_contents(*left_tds);
         new_leaf_contents.destination_set.insert(pci->new_final_state);
-		MTBDD leaf = make_set_leaf(&new_leaf_contents);
+        MTBDD leaf = make_set_leaf(&new_leaf_contents);
 
-		return leaf;
+        return leaf;
     }
 
     return mtbdd_invalid;
@@ -602,6 +602,7 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
 
                         Transition_Destination_Set* tds = (Transition_Destination_Set*) sylvan::mtbdd_getvalue(state_mtbdd);
 
+
                         assert(tds->destination_set.size() == 1);  // We should be dealing with complete DFAs
                         State dest_state = *(tds->destination_set.begin());
 
@@ -741,4 +742,93 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
     std::cout << "Result has #states=" << result_nfa.states.size() << std::endl;
 #endif
     return result_nfa;
+}
+
+template <typename T>
+bool is_set_intersection_empty(const std::set<T>& left, const std::set<T>& right) {
+    if (left.empty() || right.empty()) return true;
+
+    typename std::set<T>::const_iterator left_begin = left.begin(), left_end = left.end();
+    typename std::set<T>::const_iterator right_begin = right.begin(), right_end = right.end();
+
+    if (*left_begin > *right.rbegin() || *right_begin > *left.rbegin()) return true;
+
+    while (left_begin != left_end && right_begin != right_end) {
+        if (*left_begin == *right_begin) return false;
+        else if (*left_begin < *right_begin) ++left_begin;
+        else ++right_begin;
+    }
+
+    return true;
+}
+
+TASK_IMPL_3(MTBDD, build_pad_closure_fronier_op, MTBDD *, p_extension, MTBDD *, p_frontier, u64, raw_extension_origin_state)
+{
+    State extension_origin_state = static_cast<State>(raw_extension_origin_state);
+    MTBDD extension = *p_extension, frontier = *p_frontier;
+
+    if (extension == mtbdd_false) {
+        return frontier;
+    }
+
+    if (frontier == mtbdd_false) {
+        return mtbdd_false;
+    }
+
+    if (mtbdd_isleaf(extension) && mtbdd_isleaf(frontier)) {
+        auto extension_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(extension));
+        auto frontier_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(frontier));
+
+
+        if (frontier_contents->destination_set.contains(extension_origin_state)) {
+            return frontier;
+        }
+
+        if (!is_set_intersection_empty(extension_contents->destination_set, frontier_contents->destination_set)) {
+            // It is possible to reach a state from extension_origin_state by a single transition along the current
+            // symbol from which it is possible to reach a final state along the same symbol by reading finitely many
+            // such symbols
+            Transition_Destination_Set new_frontier_contents(*frontier_contents);
+            new_frontier_contents.destination_set.insert(extension_origin_state);
+            MTBDD new_frontier = make_set_leaf(&new_frontier_contents);
+            return new_frontier;
+        }
+
+        return frontier;
+    }
+
+    return mtbdd_invalid;
+}
+
+TASK_IMPL_3(MTBDD, add_pad_transitions_op, MTBDD *, p_transitions, MTBDD *, p_frontier, u64, raw_pad_closure_info)
+{
+    Pad_Closure_Info2* pad_closure_info = reinterpret_cast<Pad_Closure_Info2*>(raw_pad_closure_info);
+    MTBDD transitions = *p_transitions, frontier = *p_frontier;
+
+    if (transitions == mtbdd_false) {
+        return mtbdd_false;
+    }
+
+    if (frontier == mtbdd_false) {
+        return transitions;
+    }
+
+    if (mtbdd_isleaf(transitions) && mtbdd_isleaf(frontier)) {
+        auto transition_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(transitions));
+        auto frontier_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(frontier));
+
+        if (!frontier_contents->destination_set.contains(pad_closure_info->origin_state))
+            return transitions;
+
+        if (is_set_intersection_empty(transition_contents->destination_set, *pad_closure_info->final_states)) {
+            Transition_Destination_Set new_transition_contents(*transition_contents);
+            new_transition_contents.destination_set.insert(pad_closure_info->new_final_state);
+            MTBDD new_destinations = sylvan::mtbdd_makeleaf(mtbdd_leaf_type_set, reinterpret_cast<u64>(&new_transition_contents));
+            return new_destinations;
+        }
+
+        return transitions;
+    }
+
+    return mtbdd_invalid;
 }

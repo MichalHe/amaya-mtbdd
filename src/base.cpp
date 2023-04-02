@@ -70,7 +70,7 @@ void unpack_dont_care_bits_in_mtbdd_path(
     } else {
         // The mtbdd_path does not contain any don't care bits, we can emit a transition
         std::vector<u8> symbol(path_size);
-        for (uint64_t i = 0; i < path_size; i++) symbol.push_back(mtbdd_path[i]);
+        for (uint64_t i = 0; i < path_size; i++) symbol[i] = mtbdd_path[i];
 
         Transition transition = {.from = origin, .to = destination, .symbol = symbol};
         unpacked_transitions.push_back(transition);
@@ -181,4 +181,53 @@ std::string transition_to_str(const struct Transition& transition) {
 
 bool Transition::operator==(const Transition& other) const {
     return from == other.from && to == other.to && symbol == other.symbol;
+}
+
+/*
+The MTBDD pad closure works in two steps:
+1. Build a 'frontier' - an MTBDD mapping alphabet symbols to all states that can reach
+   an accepting state via the corresponding symbol
+2. Use the frontier to augment all transition MTBDDs in case that no final state
+   can be reached directly, but it can be reached via a series of transitions along
+   certain alhabet symbol (decided using the frontier)
+ */
+void NFA::perform_pad_closure(u64 leaf_type_id) {
+    if (states.empty()) return;
+
+    LACE_ME;
+    using namespace sylvan; // @Cleanup: Remove this once we migrate to the new Sylvan version
+
+    Transition_Destination_Set frontier_init;
+    frontier_init.destination_set = std::set<State>(this->final_states);
+    MTBDD frontier = sylvan::mtbdd_makeleaf(leaf_type_id, reinterpret_cast<u64>(&frontier_init));
+
+    bool was_frontier_modified = true;
+    while (was_frontier_modified) {
+        MTBDD new_frontier = frontier;
+        for (auto& [origin, state_mtbdd]: transitions) {
+            new_frontier = mtbdd_applyp(state_mtbdd, new_frontier, origin, TASK(build_pad_closure_fronier_op), AMAYA_EXTEND_FRONTIER_OP_ID );
+        }
+        was_frontier_modified = (new_frontier != frontier);
+        frontier = new_frontier;
+    }
+
+
+    State new_final_state = *states.rbegin() + 1;
+    Pad_Closure_Info2 pad_closure_info = {.new_final_state = new_final_state, .final_states = &final_states};
+
+    bool was_any_transition_added = false;
+    for (auto& state_transition_pair: transitions) {
+        pad_closure_info.origin_state = state_transition_pair.first;
+        MTBDD old_mtbdd = state_transition_pair.second;
+        state_transition_pair.second = mtbdd_applyp(state_transition_pair.second,
+                                                    frontier,
+                                                    reinterpret_cast<u64>(&pad_closure_info),
+                                                    TASK(add_pad_transitions_op), AMAYA_ADD_PAD_TRANSITIONS_OP_ID);
+        if (old_mtbdd != state_transition_pair.second) was_any_transition_added = true;
+    }
+
+    if (was_any_transition_added) {
+        states.insert(new_final_state);
+        final_states.insert(new_final_state);
+    }
 }
