@@ -947,6 +947,8 @@ NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_St
         explore_macrostate(nfa, macrostate, alphabet_iter, formula_pool, known_macrostates, accepting_macrostates, work_queue);
         processed_states += 1;
     }
+    
+    nfa.perform_pad_closure(mtbdd_leaf_type_set);
 
     return nfa;
 }
