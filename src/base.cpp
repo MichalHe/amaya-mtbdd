@@ -10,7 +10,6 @@
 #include <string>
 
 using sylvan::MTBDD;
-using sylvan::mtbdd_support_CALL;
 
 Transition_Destination_Set::Transition_Destination_Set(const Transition_Destination_Set &other) {
     // NOTE: Copy is called when a new leaf is created
@@ -82,9 +81,9 @@ std::vector<Transition> NFA::get_symbolic_transitions_for_state(State state) con
     std::vector<Transition> symbolic_transitions;
 
     auto state_mtbdd_it = transitions.find(state);
-
-    // @Robustness: Keeping the assert as we should access the transitions only when iterating trough states
-    assert(state_mtbdd_it != transitions.end());
+    if (state_mtbdd_it == transitions.end()) {
+        return {};
+    }
 
     auto mtbdd = state_mtbdd_it->second;
 
@@ -121,6 +120,10 @@ void NFA::add_transition(State from, State to, const u64 symbol, const u64 quant
     }
 
     add_transition(from, to, rich_symbol);
+}
+
+void NFA::add_transition(State from, State to, std::vector<u8>&& symbol) {
+    add_transition(from, to, symbol.data());
 }
 
 void NFA::add_transition(State from, State to, u8* rich_symbol) {
@@ -230,4 +233,82 @@ void NFA::perform_pad_closure(u64 leaf_type_id) {
         states.insert(new_final_state);
         final_states.insert(new_final_state);
     }
+}
+
+NFA compute_nfa_intersection(NFA& left, NFA& right) {
+    LACE_ME;
+    typedef std::pair<State, State> Product_State;
+
+    std::vector<Intersection_Discovery> work_queue;
+    Intersection_Info2 intersection_info = {.seen_products = {}, .work_queue = work_queue};
+
+    sylvan::BDDSET intersection_vars = left.vars;
+
+    const u64 right_vars_cnt = sylvan::mtbdd_set_count(right.vars);
+    u32 right_vars[right_vars_cnt];
+    sylvan::mtbdd_set_to_array(right.vars, right_vars);
+    for (u64 i = 0; i < right_vars_cnt; i++) {
+        intersection_vars = sylvan::mtbdd_set_add(intersection_vars, right_vars[i]);
+    }
+
+    NFA intersection_nfa = {.vars = intersection_vars, .var_count = sylvan::mtbdd_set_count(intersection_vars)};
+
+    work_queue.reserve(left.initial_states.size() * right.initial_states.size());
+
+    for (auto& left_init_state: left.initial_states) {
+        for (auto& right_init_state: right.initial_states) {
+            auto product_state = std::make_pair(left_init_state, right_init_state);
+            auto handle = static_cast<State>(intersection_info.seen_products.size());
+            intersection_info.seen_products.emplace(product_state, handle);
+            intersection_nfa.initial_states.emplace(handle);
+
+            work_queue.push_back({.left = product_state.first, .right = product_state.second, .handle = handle});
+        }
+    }
+
+    while (!work_queue.empty()) {
+        auto explored_product = work_queue.back();
+        work_queue.pop_back();
+
+        intersection_nfa.states.insert(explored_product.handle);
+
+        MTBDD left_mtbdd = left.transitions[explored_product.left];
+        MTBDD right_mtbdd = right.transitions[explored_product.right];
+
+        if (left.final_states.contains(explored_product.left) && right.final_states.contains(explored_product.right)) {
+            intersection_nfa.final_states.insert(explored_product.handle);
+        }
+
+        using namespace sylvan;
+        sylvan::MTBDD product_mtbdd = mtbdd_applyp(left_mtbdd, right_mtbdd, reinterpret_cast<u64>(&intersection_info),
+                                                   TASK(transitions_intersection2_op), AMAYA_TRANSITIONS_INTERSECT_OP_ID);
+        sylvan::mtbdd_protect(&product_mtbdd);
+        intersection_nfa.transitions[explored_product.handle] = product_mtbdd;
+    }
+
+    return intersection_nfa;
+}
+
+template<typename T>
+std::ostream& operator<<(std::ostream& output, const std::set<T>& set) {
+    output << "{";
+    if (!set.empty()) {
+        auto set_it = set.begin();
+        output << *set_it;
+        ++set_it;
+        for (; set_it != set.end(); ++set_it) output << ", " << *set_it;
+    }
+    output << "}";
+    return output;
+}
+
+std::ostream& operator<<(std::ostream& output, const NFA& nfa) {
+    output << "NFA{" << std::endl;
+    output << "  states: "  << nfa.states << std::endl;
+    output << "  final_states: "  << nfa.final_states << std::endl;
+    output << "  initial_states: "  << nfa.initial_states << std::endl;
+    output << "  var_count: "  << nfa.var_count << std::endl;
+    output << "  vars: "  << nfa.vars << std::endl;
+    output << "}";
+    return output;
 }

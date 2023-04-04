@@ -68,7 +68,7 @@ uint64_t 	PAD_CLOSURE_OP_COUNTER = 64;
 
 uint64_t 	ADD_TRAPSTATE_OP_COUNTER = (1LL << 32);
 uint64_t 	STATE_RENAME_OP_COUNTER = (1LL << 33);
-uint64_t    TRANSFORM_MACROSTATES_TO_INTS_COUNTER = (1LL << 34);
+uint64_t  TRANSFORM_MACROSTATES_TO_INTS_COUNTER = (1LL << 34);
 
 /**
  * Compute intersection of two transition sets represented as MTBDDs. The tuples of states that are created
@@ -831,4 +831,46 @@ TASK_IMPL_3(MTBDD, add_pad_transitions_op, MTBDD *, p_transitions, MTBDD *, p_fr
     }
 
     return mtbdd_invalid;
+}
+
+TASK_IMPL_3(MTBDD, transitions_intersection2_op, MTBDD *, pa, MTBDD *, pb, uint64_t, param) {
+    MTBDD a = *pa, b = *pb;
+
+    if (a == mtbdd_false || b == mtbdd_false) {
+        return mtbdd_false; // The result is an empty set when one of the operands is an empty set (mtbdd_false)
+    }
+
+    if (!mtbdd_isleaf(a) || !mtbdd_isleaf(b)) {
+        // @Note: According to the GMP implementation in Sylvan source code, swapping pointers should increase the cache
+        // performance. However, doing a pointer swap causes some of the tests to fail, not sure what is up with it.
+        return mtbdd_invalid;
+    }
+
+    auto intersect_info = reinterpret_cast<Intersection_Info2*>(param);
+
+    auto left_leaf_contents  = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(a));
+    auto right_leaf_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(b));
+
+    if (left_leaf_contents->destination_set.empty() || right_leaf_contents->destination_set.empty()) {
+        return mtbdd_false;  // Equivalent to a leaf with an empty set
+    }
+
+    Transition_Destination_Set leaf_contents;
+
+    for (auto left_state : left_leaf_contents->destination_set) {
+        for (auto right_state : right_leaf_contents->destination_set) {
+            std::pair<State, State> product_state = std::make_pair(left_state, right_state);
+            State product_handle = intersect_info->seen_products.size();
+
+            auto [existing_entry_it, did_insert] = intersect_info->seen_products.emplace(product_state, product_handle);
+            leaf_contents.destination_set.insert(product_handle);
+
+            Intersection_Discovery discovery = {.left = left_state, .right = right_state, .handle = product_handle};
+            if (did_insert) intersect_info->work_queue.push_back(discovery);
+        }
+    }
+
+    MTBDD intersection_leaf = make_set_leaf(&leaf_contents);
+
+    return intersection_leaf;
 }

@@ -14,7 +14,8 @@
 #define AMAYA_EXISTS_OPERATION_ID 0x2000000
 #define AMAYA_UNION_OP_ID 0x4000000
 #define AMAYA_EXTEND_FRONTIER_OP_ID 0x8000000
-#define AMAYA_ADD_PAD_TRANSITIONS_OP_ID 0xC000000
+#define AMAYA_ADD_PAD_TRANSITIONS_OP_ID 0xc000000
+#define AMAYA_TRANSITIONS_INTERSECT_OP_ID 0xd000000
 
 TASK_DECL_3(sylvan::MTBDD, transitions_intersection_op, sylvan::MTBDD *, sylvan::MTBDD *, uint64_t);
 
@@ -37,6 +38,8 @@ TASK_DECL_2(sylvan::MTBDD, transform_macrostates_to_ints_op, sylvan::MTBDD, uint
 TASK_DECL_3(sylvan::MTBDD, build_pad_closure_fronier_op, sylvan::MTBDD*, sylvan::MTBDD*, u64);
 TASK_DECL_3(sylvan::MTBDD, add_pad_transitions_op, sylvan::MTBDD*, sylvan::MTBDD*, u64);
 
+TASK_DECL_3(sylvan::MTBDD, transitions_intersection2_op, sylvan::MTBDD *, sylvan::MTBDD *, uint64_t);
+
 typedef struct
 {
     State new_final_state;      // Final state to be added if the saturation property is broken
@@ -48,12 +51,6 @@ typedef struct
     State *final_states;
     uint32_t final_states_cnt;
 } Pad_Closure_Info;
-
-struct Pad_Closure_Info2 {
-    State origin_state;
-    State new_final_state;
-    std::set<State>* final_states;
-};
 
 typedef struct
 {
@@ -98,5 +95,22 @@ fragment_dest_states_using_partition(const std::set<State>& dest_states, const s
 
 template<typename C>
 std::string states_to_str(const C& states);
+
+struct Pad_Closure_Info2 {
+    State origin_state;
+    State new_final_state;
+    std::set<State>* final_states;
+};
+
+struct Intersection_Discovery {
+    State left;
+    State right;
+    State handle;
+};
+
+struct Intersection_Info2 {
+    std::map<std::pair<State, State>, State> seen_products;
+    std::vector<Intersection_Discovery>& work_queue;
+};
 
 #endif

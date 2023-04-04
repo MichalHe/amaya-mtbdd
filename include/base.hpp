@@ -21,8 +21,10 @@ using sylvan::BDDSET;
 typedef int64_t State;
 
 typedef uint64_t u64;
+typedef uint32_t u32;
 typedef uint8_t  u8;
 typedef int64_t  s64;
+typedef int32_t  s32;
 
 struct Transition {
     State from;
@@ -58,14 +60,20 @@ struct NFA {
 
     void add_transition(State from, State to, u64 symbol, u64 quantified_bits_mask);
     void add_transition(State from, State to, u8* symbol);
+    void add_transition(State from, State to, std::vector<u8>&& symbol);
 
     std::string show_transitions() const;
     std::vector<Transition> get_symbolic_transitions_for_state(State state) const;
 };
 
+NFA compute_nfa_intersection(NFA& left, NFA& right);
 
 std::vector<struct Transition> nfa_unpack_transitions(struct NFA& nfa);
 std::string transition_to_str(const struct Transition& transition);
 bool transition_is_same_as(const struct Transition& transition_a, const struct Transition& transition_b);
+
+template<typename T>
+std::ostream& operator<<(std::ostream& output, const std::set<T>& set);
+std::ostream& operator<<(std::ostream& output, const NFA& nfa);
 
 #endif
