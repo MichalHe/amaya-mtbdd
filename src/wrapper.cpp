@@ -66,7 +66,7 @@ void init_machinery()
 	const size_t stack_size = 1LL << 20;
     lace_startup(0, NULL, NULL);
 
-	sylvan_set_limits(500LL*1024*1024, 3, 5); // Allocate 100MB
+	sylvan_set_limits(500LL*1024*1024, 5, 5);
 	//sylvan_set_sizes(1LL << 27, 1LL << 26, 1LL << 26, 1LL << 20);
 	//sylvan_set_sizes(1LL << 24, 1LL << 28, 1LL << 24, 1LL << 28);
     sylvan_init_package();
@@ -849,6 +849,9 @@ State* amaya_get_states_in_mtbdd_leaves(
 
 void amaya_mtbdd_ref(MTBDD dd)
 {
+    if (dd == 511) {
+        std::cout << "Incref on 511" << std::endl;
+    }
 	mtbdd_ref(dd);
 }
 
@@ -955,7 +958,6 @@ struct Serialized_DFA* amaya_minimize_hopcroft(struct Serialized_DFA* serialized
         dfa.vars = sylvan::mtbdd_set_add(dfa.vars, serialized_dfa->vars[i]);
 
     struct NFA minimized_dfa = minimize_hopcroft(dfa);
-    
     auto output_dfa = serialize_dfa(minimized_dfa, serialized_dfa->vars, serialized_dfa->var_count); 
     return output_dfa;
 }
