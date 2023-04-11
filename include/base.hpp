@@ -66,9 +66,15 @@ struct NFA {
 
     std::string show_transitions() const;
     std::vector<Transition> get_symbolic_transitions_for_state(State state) const;
+
+    std::set<State> get_state_post(State state);
+
+    void remove_states(std::set<State>& states_to_remove);
 };
 
 NFA compute_nfa_intersection(NFA& left, NFA& right);
+void remove_nonfinishing_states(NFA& nfa);
+std::set<State> compute_states_reaching_set(NFA nfa, std::set<State>& states_to_reach);
 
 std::vector<struct Transition> nfa_unpack_transitions(struct NFA& nfa);
 std::string transition_to_str(const struct Transition& transition);
@@ -109,6 +115,23 @@ bool is_set_intersection_empty(InputIterator1 left_begin, ReverseInputIterator1 
 template <typename T>
 bool is_set_intersection_empty(const std::set<T>& left, const std::set<T>& right) {
     return is_set_intersection_empty(left.begin(), left.rbegin(), left.end(), right.begin(), right.rbegin(), right.end());
+}
+
+template <typename T>
+void in_place_set_difference(std::set<T>& left, const std::set<T>& right) {
+    auto left_it = left.begin();
+    auto right_it = right.begin();
+
+    while (left_it != left.end() && right_it != right.end()) {
+        if (*left_it < *right_it) {
+            ++left_it;
+        } else if (*right_it < *left_it) {
+            ++right_it;
+        } else {
+            left_it = left.erase(left_it);
+            ++right_it;
+        }
+    }
 }
 
 #endif

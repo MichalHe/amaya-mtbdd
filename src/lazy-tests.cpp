@@ -12,7 +12,6 @@ typedef Quantified_Atom_Conjunction Formula;
 using std::vector;
 using std::unordered_map;
 
-
 void assert_dfas_are_isomorphic(const NFA& expected, const NFA& actual) {
     CHECK(expected.initial_states.size() == 1);
     CHECK(actual.initial_states.size() == 1);
@@ -33,8 +32,6 @@ void assert_dfas_are_isomorphic(const NFA& expected, const NFA& actual) {
         CHECK(actual_state_it != isomorphism.end());
         auto actual_state = actual_state_it->second;
 
-        std::cout << "Checking " << actual_state << "<->" << expected_state << std::endl;
-
         auto expected_transitions = expected.get_symbolic_transitions_for_state(expected_state);
         auto actual_transitions   = actual.get_symbolic_transitions_for_state(actual_state);
 
@@ -44,7 +41,6 @@ void assert_dfas_are_isomorphic(const NFA& expected, const NFA& actual) {
             // Find a transition matching origin and the transition symbol; make sure that there is exactly 1 as the automaton is a DFA
             Transition& matching_transition = actual_transitions[0];
             u64 match_count = 0;
-            std::cout << "Checking transition: " << transition_to_str(matching_transition) << std::endl;
             for (auto& actual_transition: actual_transitions) {
                 if (actual_transition.symbol == expected_transition.symbol) {
                     matching_transition = actual_transition;
@@ -450,6 +446,41 @@ TEST_CASE("NFA::intersection (simple)") {
     expected_nfa.add_transition(1, 2, {0, 0});
     expected_nfa.add_transition(2, 3, {0, 0});
     assert_dfas_are_isomorphic(expected_nfa, result);
+}
+
+TEST_CASE("remove_nonfinishing_states :: simple") {
+    u32 var_arr[] = {1, 2};
+    BDDSET vars = sylvan::mtbdd_set_from_array(var_arr, 2);
+
+    NFA dfa = {
+        .states = {1, 2, 3, 4, 5, 6},
+        .final_states = {3},
+        .initial_states = {1},
+        .vars = vars,
+        .var_count = 2,
+    };
+    dfa.add_transition(1, 2, {0, 0});
+    dfa.add_transition(2, 3, {0, 0});
+
+    // Transitions to states not reaching any of the final states
+    dfa.add_transition(1, 4, {0, 1});
+    dfa.add_transition(1, 5, {1, 0});
+    dfa.add_transition(2, 5, {1, 1});
+    dfa.add_transition(4, 5, {1, 1});
+
+    remove_nonfinishing_states(dfa);
+
+    NFA expected_dfa = {
+        .states = {1, 2, 3},
+        .final_states = {3},
+        .initial_states = {1},
+        .vars = vars,
+        .var_count = 2,
+    };
+    expected_dfa.add_transition(1, 2, {0, 0});
+    expected_dfa.add_transition(2, 3, {0, 0});
+
+    assert_dfas_are_isomorphic(expected_dfa, dfa);
 }
 
 int main() {

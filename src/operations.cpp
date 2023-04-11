@@ -750,6 +750,7 @@ TASK_IMPL_3(MTBDD, add_pad_transitions_op, MTBDD *, p_transitions, MTBDD *, p_fr
     return mtbdd_invalid;
 }
 
+
 TASK_IMPL_3(MTBDD, transitions_intersection2_op, MTBDD *, pa, MTBDD *, pb, uint64_t, param) {
     MTBDD a = *pa, b = *pb;
 
@@ -813,4 +814,23 @@ TASK_IMPL_2(MTBDD, replace_macrostates_with_handles_op, MTBDD, dd, uint64_t, par
 
     MTBDD new_leaf = make_set_leaf(&new_leaf_contents);
     return new_leaf;
+}
+
+TASK_IMPL_2(MTBDD, remove_states2_op, MTBDD, dd, uint64_t, param) {
+    if (dd == mtbdd_false) return mtbdd_false;
+
+    if (mtbdd_isleaf(dd)) {
+        auto states_to_remove = reinterpret_cast<std::set<State>*>(param);
+        auto leaf_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(dd));
+
+        Transition_Destination_Set new_leaf_contents;
+        std::set_difference(leaf_contents->destination_set.begin(), leaf_contents->destination_set.end(),
+                            states_to_remove->begin(), states_to_remove->end(),
+                            std::inserter(new_leaf_contents.destination_set, new_leaf_contents.destination_set.begin()));
+
+        MTBDD leaf = make_set_leaf(&new_leaf_contents);
+        return leaf;
+    }
+
+    return mtbdd_invalid;
 }

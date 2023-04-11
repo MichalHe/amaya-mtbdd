@@ -17,6 +17,7 @@
 #define AMAYA_ADD_PAD_TRANSITIONS_OP_ID 0xc000000
 #define AMAYA_TRANSITIONS_INTERSECT_OP_ID 0xdd00000
 #define AMAYA_REPLACE_MACROSTATES_WITH_HANDLES_OP 0xe000000
+#define AMAYA_REMOVE_STATES_OP 0xf000000
 
 /**
  * The *abstraction* F definition.
@@ -39,6 +40,7 @@ TASK_DECL_3(sylvan::MTBDD, add_pad_transitions_op, sylvan::MTBDD*, sylvan::MTBDD
 
 TASK_DECL_3(sylvan::MTBDD, transitions_intersection2_op, sylvan::MTBDD *, sylvan::MTBDD *, uint64_t);
 TASK_DECL_2(sylvan::MTBDD, replace_macrostates_with_handles_op, sylvan::MTBDD, uint64_t);
+TASK_DECL_2(sylvan::MTBDD, remove_states2_op, sylvan::MTBDD, uint64_t);
 
 typedef struct
 {

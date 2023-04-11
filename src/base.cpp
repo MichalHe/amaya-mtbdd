@@ -2,6 +2,7 @@
 #include "../include/custom_leaf.hpp"
 #include "../include/operations.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <iostream>
 #include <set>
@@ -135,11 +136,17 @@ void NFA::add_transition(State from, State to, u8* rich_symbol) {
 
     LACE_ME;
     auto [present_key_val_it, was_inserted] = transitions.emplace(from, transition_mtbdd);
-    if (!was_inserted) {
+    if (was_inserted) {
+        sylvan::mtbdd_ref(transition_mtbdd);
+    } else {
         auto existing_transitions = present_key_val_it->second;
 
         using namespace sylvan; // Pull the entire sylvan namespace because mtbdd_applyp is a macro
         sylvan::MTBDD updated_mtbdd = mtbdd_applyp(existing_transitions, transition_mtbdd, 0u, TASK(transitions_union_op), AMAYA_UNION_OP_ID);
+
+        sylvan::mtbdd_deref(existing_transitions);
+        sylvan::mtbdd_ref(updated_mtbdd);
+
         transitions[from] = updated_mtbdd;
     }
 }
@@ -236,6 +243,163 @@ void NFA::perform_pad_closure(u64 leaf_type_id) {
     }
 }
 
+void collect_reachable_states_from_mtbdd_leaves(MTBDD root, std::set<State>& output) {
+    // @Todo: This should be implemented as a proper sylvan (standalong) task utilizing cache
+    if (root == sylvan::mtbdd_false) {
+        return;
+    }
+
+    if (sylvan::mtbdd_isleaf(root)) {
+        auto raw_leaf_value = sylvan::mtbdd_getvalue(root);
+        auto leaf_contents = reinterpret_cast<Transition_Destination_Set*>(raw_leaf_value);
+
+        output.insert(leaf_contents->destination_set.begin(), leaf_contents->destination_set.end());
+    } else {
+        collect_reachable_states_from_mtbdd_leaves(sylvan::mtbdd_getlow(root), output);
+        collect_reachable_states_from_mtbdd_leaves(sylvan::mtbdd_gethigh(root), output);
+    }
+}
+
+std::set<State> NFA::get_state_post(State state) {
+    std::set<State> reachable_states;
+
+#if 0
+    MTBDD transition_mtbdd = transitions[state];
+
+    BDDSET relevant_vars = this->vars;
+    u8 symbol[this->var_count];
+
+    MTBDD leaf = sylvan::mtbdd_enum_first(transition_mtbdd, relevant_vars, symbol, NULL);
+    while (leaf != sylvan::mtbdd_false) {
+        auto raw_leaf_value = sylvan::mtbdd_getvalue(leaf);
+        auto leaf_contents = reinterpret_cast<Transition_Destination_Set*>(raw_leaf_value);
+
+        reachable_states.insert(leaf_contents->destination_set.begin(), leaf_contents->destination_set.end());
+
+        leaf = sylvan::mtbdd_enum_next(transition_mtbdd, relevant_vars, symbol, NULL);
+    }
+#else
+    collect_reachable_states_from_mtbdd_leaves(transitions[state], reachable_states);
+#endif
+
+    return reachable_states;
+}
+
+void NFA::remove_states(std::set<State>& states_to_remove) {
+    LACE_ME;
+    for (auto transitions_it = transitions.begin(); transitions_it != transitions.end(); ) {
+        auto [state, state_transitions] = *transitions_it;
+
+        if (states_to_remove.contains(state)) {
+            transitions_it = transitions.erase(transitions_it);
+        } else {
+            using namespace sylvan;
+            MTBDD new_state_transitions = mtbdd_uapply(state_transitions, TASK(remove_states2_op), reinterpret_cast<u64>(&states_to_remove));
+            sylvan::mtbdd_deref(state_transitions);
+            sylvan::mtbdd_ref(new_state_transitions);
+            transitions[state] = new_state_transitions;
+            ++transitions_it;
+        }
+    }
+
+    in_place_set_difference(states, states_to_remove);
+    in_place_set_difference(final_states, states_to_remove);
+    in_place_set_difference(initial_states, states_to_remove);
+}
+
+MTBDD compute_states_reaching_set_by_repeated_symbol(NFA& nfa, std::set<State>& states_to_reach) {
+    LACE_ME;
+
+    Transition_Destination_Set frontier_init;
+    frontier_init.destination_set = std::set<State>(states_to_reach);
+
+    MTBDD frontier = sylvan::mtbdd_makeleaf(mtbdd_leaf_type_set, reinterpret_cast<u64>(&frontier_init));
+    sylvan::mtbdd_refs_push(frontier);
+
+    bool was_frontier_modified = true;
+    while (was_frontier_modified) {
+        MTBDD new_frontier = frontier;
+        sylvan::mtbdd_refs_push(new_frontier);
+
+        for (auto& [origin, state_mtbdd]: nfa.transitions) {
+            using namespace sylvan;
+            new_frontier = mtbdd_applyp(state_mtbdd, new_frontier, origin, TASK(build_pad_closure_fronier_op), AMAYA_EXTEND_FRONTIER_OP_ID);
+            sylvan::mtbdd_refs_pop(1);
+            sylvan::mtbdd_refs_push(new_frontier);
+        }
+
+        was_frontier_modified = (new_frontier != frontier);
+
+        frontier = new_frontier;
+        sylvan::mtbdd_refs_pop(1);
+        sylvan::mtbdd_refs_push(frontier);
+    }
+
+    return frontier;
+}
+
+
+std::set<State> compute_states_reaching_set(NFA nfa, std::set<State>& states_to_reach) {
+    std::set<State> reaching_states(states_to_reach);
+    std::set<State> potential_states;
+    std::set_difference(nfa.states.begin(), nfa.states.end(),
+                        states_to_reach.begin(), states_to_reach.end(),
+                        std::inserter(potential_states, potential_states.end()));
+
+    // @Optimize: A hash table would not be needed here, if we are sure that nfa states always span integers in [0, states.size()-1]
+    std::unordered_map<State, std::set<State>> state_posts;
+    for (State state: potential_states) {
+        state_posts[state] = nfa.get_state_post(state);
+    }
+
+    bool was_fixed_point_found = false;
+    u64 reaching_set_size = reaching_states.size();  // It is sufficient to just check whether the state partition is still growing
+
+    while (!was_fixed_point_found) {
+        for (auto potential_states_it = potential_states.begin(); potential_states_it != potential_states.end(); ) {
+            auto state = *potential_states_it;
+            auto& state_post = state_posts[state];
+
+            if (!is_set_intersection_empty(state_post, reaching_states)) {
+                reaching_states.insert(state);
+                potential_states_it = potential_states.erase(potential_states_it);
+            } else {
+                ++potential_states_it;
+            }
+        }
+        was_fixed_point_found = reaching_set_size == reaching_states.size();
+        reaching_set_size = reaching_states.size();
+    }
+
+    return reaching_states;
+}
+
+
+void remove_nonfinishing_states(NFA& nfa) {
+    if (nfa.states.empty()) return;
+
+    auto states_reaching_final = compute_states_reaching_set(nfa, nfa.final_states);
+
+    std::set<State> states_to_remove;
+    std::set_difference(nfa.states.begin(), nfa.states.end(),
+                        states_reaching_final.begin(), states_reaching_final.end(),
+                        std::inserter(states_to_remove, states_to_remove.begin()));
+
+    nfa.remove_states(states_to_remove);
+
+    if (nfa.states.empty()) {
+        nfa.states.insert(1);
+        nfa.initial_states.insert(1);
+
+        u8 symbol[nfa.var_count];
+        for (u64 i = 0; i < nfa.var_count; i++) {
+            symbol[i] = 2;
+        }
+        nfa.add_transition(1, 1, symbol);
+    }
+}
+
+
 NFA compute_nfa_intersection(NFA& left, NFA& right) {
     LACE_ME;
     typedef std::pair<State, State> Product_State;
@@ -286,6 +450,8 @@ NFA compute_nfa_intersection(NFA& left, NFA& right) {
         sylvan::mtbdd_ref(product_mtbdd);
         intersection_nfa.transitions[explored_product.handle] = product_mtbdd;
     }
+
+    remove_nonfinishing_states(intersection_nfa);
 
     return intersection_nfa;
 }
