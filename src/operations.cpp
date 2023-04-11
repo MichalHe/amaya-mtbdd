@@ -25,7 +25,6 @@
 #include <string>
 #include <sstream>
 
-using std::cout;
 using std::endl;
 using std::set;
 using std::vector;
@@ -33,114 +32,35 @@ using std::stringstream;
 using std::string;
 using std::map;
 using std::pair;
-using std::unordered_set;
 
 using sylvan::MTBDD;
 using sylvan::mtbdd_makeleaf;
-using sylvan::mtbdd_makenode;
 using sylvan::mtbdd_false;
 using sylvan::mtbdd_isleaf;
 using sylvan::mtbdd_getvalue;
 using sylvan::mtbdd_invalid;
 using sylvan::mtbdd_applyp_CALL;
-using sylvan::mtbdd_support_CALL;
 using sylvan::mtbdd_enum_first;
 using sylvan::mtbdd_enum_next;
-using sylvan::mtbdd_set_count;
 
 extern uint64_t mtbdd_leaf_type_set;
 
 /**
  * Global variables:
  */
-void*		REMOVE_STATES_OP_PARAM = NULL;
-uint64_t 	REMOVE_STATES_OP_COUNTER = 0;
-void*		ADD_TRAPSTATE_OP_PARAM = NULL;
-
-Intersection_State* intersection_state = NULL;
-uint64_t INTERSECTION_OP_COUNTER = (1LL << 35);
+void*       REMOVE_STATES_OP_PARAM = NULL;
+uint64_t    REMOVE_STATES_OP_COUNTER = 0;
+void*       ADD_TRAPSTATE_OP_PARAM = NULL;
 
 State_Rename_Op_Info *STATE_RENAME_OP_PARAM = NULL;
 Transform_Macrostates_To_Ints_State *TRANSFORM_MACROSTATES_TO_INTS_STATE = NULL;
 
 Pad_Closure_Info *PAD_CLOSURE_OP_STATE = NULL;
-uint64_t 	PAD_CLOSURE_OP_COUNTER = 64;
+uint64_t    PAD_CLOSURE_OP_COUNTER = 64;
 
-uint64_t 	ADD_TRAPSTATE_OP_COUNTER = (1LL << 32);
-uint64_t 	STATE_RENAME_OP_COUNTER = (1LL << 33);
+uint64_t  ADD_TRAPSTATE_OP_COUNTER = (1LL << 32);
+uint64_t  STATE_RENAME_OP_COUNTER = (1LL << 33);
 uint64_t  TRANSFORM_MACROSTATES_TO_INTS_COUNTER = (1LL << 34);
-
-/**
- * Compute intersection of two transition sets represented as MTBDDs. The tuples of states that are created
- * must be renamed to an integer right after they are created to as automaton states are represented by integers.
- * Furthermore, the assignment of a state number to a tuple must be consistent across all invocations for
- * the automaton to which the transitions belong. Currently, a global intersection state is kept to preserve
- * the mapping of state numbers to produced tuples.
- */
-TASK_IMPL_3(MTBDD, transitions_intersection_op, MTBDD *, pa, MTBDD *, pb, uint64_t, param) {
-    MTBDD a = *pa, b = *pb;
-
-    if (a == mtbdd_false || b == mtbdd_false) {
-        return mtbdd_false; // The result is an empty set when one of the operands is an empty set (mtbdd_false)
-    }
-
-    if (!mtbdd_isleaf(a) || !mtbdd_isleaf(b)) {
-        // @Note: According to the GMP implementation in Sylvan source code, swapping pointers should increase the cache
-        // performance. However, doing a pointer swap causes some of the tests to fail, not sure what is up with it.
-
-        return mtbdd_invalid;
-    }
-
-    auto intersect_info = reinterpret_cast<Intersection_Op_Info*>(param);
-
-    auto left_leaf_contents  = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(a));
-    auto right_leaf_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(b));
-
-    if (left_leaf_contents->destination_set.empty() || right_leaf_contents->destination_set.empty()) {
-        return mtbdd_false;  // Equivalent to a leaf with an empty set
-    }
-
-    auto known_product_states = intersection_state->intersection_state_pairs_numbers;
-
-    Transition_Destination_Set leaf_contents;
-
-    for (auto left_state : left_leaf_contents->destination_set) {
-        for (auto right_state : right_leaf_contents->destination_set) {
-
-            std::pair<State, State> product_state = std::make_pair(left_state, right_state);
-            State product_handle = known_product_states->size();
-
-            auto [existing_entry_it, did_insert] = known_product_states->emplace(product_state, product_handle);
-
-            if (did_insert) {
-                // Check (if early pruning is on) whether the state should be pruned.
-                if (intersection_state->should_do_early_prunining) {
-                    auto final_states = intersection_state->prune_final_states;
-                    const bool is_left_in_pruned  = (final_states->find(left_state) != final_states->end());
-                    const bool is_right_in_pruned = (final_states->find(right_state) != final_states->end());
-
-                    // Pruning is performed only when exactly one of the states is in the pruned set
-                    if (is_left_in_pruned != is_right_in_pruned) {
-                        continue;
-                    }
-                }
-
-                // Store the triple (left_state, right_state, ID) to make sure Python side knows about a new state
-                intersect_info->discoveries->push_back(left_state);
-                intersect_info->discoveries->push_back(right_state);
-                intersect_info->discoveries->push_back(product_handle);
-            } else {
-                product_handle = existing_entry_it->second;  // Use the previously assigned state handle
-            }
-
-            leaf_contents.destination_set.insert(product_handle);
-        }
-    }
-
-    MTBDD intersection_leaf = make_set_leaf(&leaf_contents);
-
-    return intersection_leaf;
-}
 
 /**
  * Unites the two transition MTBDDs.
@@ -167,7 +87,7 @@ TASK_IMPL_3(MTBDD, transitions_union_op, MTBDD *, left_op_ptr, MTBDD *, right_op
         return union_leaf;
     }
 
-	return sylvan::mtbdd_invalid;
+    return sylvan::mtbdd_invalid;
 }
 
 /**
@@ -186,33 +106,33 @@ TASK_IMPL_3(MTBDD, project_variable_away_abstract_op, MTBDD, left_mtbdd, MTBDD, 
  * a result from some previous remove-states-op application.
  */
 TASK_IMPL_2(MTBDD, remove_states_op, MTBDD, dd, uint64_t, param) {
-	if (dd == mtbdd_false) return mtbdd_false;
+    if (dd == mtbdd_false) return mtbdd_false;
 
-	if (mtbdd_isleaf(dd)) {
-		// Param is ignored, instead use the global variable REMOVE_STATES_OP_PARAM
-		(void) param;
+    if (mtbdd_isleaf(dd)) {
+        // Param is ignored, instead use the global variable REMOVE_STATES_OP_PARAM
+        (void) param;
 
-		auto states_to_remove = (set<State>*) (REMOVE_STATES_OP_PARAM);
-		auto tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
+        auto states_to_remove = (set<State>*) (REMOVE_STATES_OP_PARAM);
+        auto tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
 
-		auto new_tds = new Transition_Destination_Set(*tds); // Make leaf value copy.
+        auto new_tds = new Transition_Destination_Set(*tds); // Make leaf value copy.
 
-		for (auto state : tds->destination_set) {
-			bool should_be_removed = states_to_remove->find(state) != states_to_remove->end();
-			if (should_be_removed) new_tds->destination_set.erase(state);
-		}
+        for (auto state : tds->destination_set) {
+            bool should_be_removed = states_to_remove->find(state) != states_to_remove->end();
+            if (should_be_removed) new_tds->destination_set.erase(state);
+        }
 
-		if (new_tds->destination_set.empty()) {
-			delete new_tds;
-			return mtbdd_false;
-		}
+        if (new_tds->destination_set.empty()) {
+            delete new_tds;
+            return mtbdd_false;
+        }
 
-		MTBDD leaf = make_set_leaf(new_tds);
-		delete new_tds;
-		return leaf;
-	}
+        MTBDD leaf = make_set_leaf(new_tds);
+        delete new_tds;
+        return leaf;
+    }
 
-	return mtbdd_invalid;
+    return mtbdd_invalid;
 }
 
 /**
@@ -226,21 +146,21 @@ TASK_IMPL_2(MTBDD, remove_states_op, MTBDD, dd, uint64_t, param) {
  */
 TASK_IMPL_2(MTBDD, complete_transition_with_trapstate_op, MTBDD, dd, uint64_t, param)
 {
-	// param is used just to avoid sylvan cache-miss
-	if (dd == mtbdd_false) {
-		(void) param;
-		auto op_info = reinterpret_cast<Complete_With_Trapstate_Op_Info*>(ADD_TRAPSTATE_OP_PARAM);
+    // param is used just to avoid sylvan cache-miss
+    if (dd == mtbdd_false) {
+        (void) param;
+        auto op_info = reinterpret_cast<Complete_With_Trapstate_Op_Info*>(ADD_TRAPSTATE_OP_PARAM);
 
-		Transition_Destination_Set leaf_contents;
-		leaf_contents.destination_set.insert(op_info->trapstate);
+        Transition_Destination_Set leaf_contents;
+        leaf_contents.destination_set.insert(op_info->trapstate);
 
-		op_info->had_effect = true;
-		MTBDD leaf = make_set_leaf(&leaf_contents);
-		return leaf;
-	} else if (mtbdd_isleaf(dd)) {
-		return dd;
-	}
-	return mtbdd_invalid;
+        op_info->had_effect = true;
+        MTBDD leaf = make_set_leaf(&leaf_contents);
+        return leaf;
+    } else if (mtbdd_isleaf(dd)) {
+        return dd;
+    }
+    return mtbdd_invalid;
 }
 
 
@@ -263,7 +183,7 @@ inline bool contains_final_state(Pad_Closure_Info* pci, Transition_Destination_S
  */
 TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, op_param)
 {
-	MTBDD left = *p_left, right = *p_right;
+    MTBDD left = *p_left, right = *p_right;
 
     if (left == mtbdd_false) {
         // The pre-state (left) leads to nothing, nothing can be propagated
@@ -322,86 +242,86 @@ TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, 
 
 
 TASK_IMPL_2(MTBDD, rename_states_op, MTBDD, dd, uint64_t, param) {
-	if (dd == mtbdd_false) return mtbdd_false;
+    if (dd == mtbdd_false) return mtbdd_false;
 
-	if (mtbdd_isleaf(dd)) {
-		(void) param;
-		auto state_rename_info = STATE_RENAME_OP_PARAM;
-		auto old_tds = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(dd));
+    if (mtbdd_isleaf(dd)) {
+        (void) param;
+        auto state_rename_info = STATE_RENAME_OP_PARAM;
+        auto old_tds = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(dd));
 
         // Do a heap allocation here, so that we can call mtbdd_makeleaf directly, avoiding copying state contents.
         auto new_leaf_contents = new Transition_Destination_Set();
 
-		for (auto state : old_tds->destination_set) {
-			auto new_name_it = state_rename_info->states_rename_map->find(state);
+        for (auto state : old_tds->destination_set) {
+            auto new_name_it = state_rename_info->states_rename_map->find(state);
 
-			if (new_name_it == state_rename_info->states_rename_map->end()) {
-				printf("We have found a leaf state with no mapping for it??");
-				printf("State name: %lu\n", state);
-				printf("Available mappings:");
-				for (auto mapping : *state_rename_info->states_rename_map) {
-					printf("(%lu, %lu)", mapping.first, mapping.second);
-				}
+            if (new_name_it == state_rename_info->states_rename_map->end()) {
+                printf("We have found a leaf state with no mapping for it??");
+                printf("State name: %lu\n", state);
+                printf("Available mappings:");
+                for (auto mapping : *state_rename_info->states_rename_map) {
+                    printf("(%lu, %lu)", mapping.first, mapping.second);
+                }
 
-				assert(false);
-			}
+                assert(false);
+            }
 
-			auto new_state_name = new_name_it->second;
-			new_leaf_contents->destination_set.insert(new_state_name);
-		}
+            auto new_state_name = new_name_it->second;
+            new_leaf_contents->destination_set.insert(new_state_name);
+        }
 
-		return mtbdd_makeleaf(mtbdd_leaf_type_set, reinterpret_cast<uint64_t>(new_leaf_contents));
-	}
+        return mtbdd_makeleaf(mtbdd_leaf_type_set, reinterpret_cast<uint64_t>(new_leaf_contents));
+    }
 
-	return mtbdd_invalid;
+    return mtbdd_invalid;
 }
 
 
 TASK_IMPL_2(MTBDD, transform_macrostates_to_ints_op, MTBDD, dd, uint64_t, param) {
-	if (dd == mtbdd_false) return mtbdd_false;
+    if (dd == mtbdd_false) return mtbdd_false;
 
-	if (mtbdd_isleaf(dd)) {
-		(void) param;
+    if (mtbdd_isleaf(dd)) {
+        (void) param;
 
-		auto transform_state = TRANSFORM_MACROSTATES_TO_INTS_STATE;
-		auto old_tds = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(dd));
+        auto transform_state = TRANSFORM_MACROSTATES_TO_INTS_STATE;
+        auto old_tds = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(dd));
 
-		State macrostate_state_number;
-		bool is_cache_miss = false;
-		auto iterator = transform_state->alias_map->find(old_tds->destination_set);
-		if (iterator == transform_state->alias_map->end()) {
-			macrostate_state_number = transform_state->first_available_state_number++;
-		} else {
+        State macrostate_state_number;
+        bool is_cache_miss = false;
+        auto iterator = transform_state->alias_map->find(old_tds->destination_set);
+        if (iterator == transform_state->alias_map->end()) {
+            macrostate_state_number = transform_state->first_available_state_number++;
+        } else {
             // Cache entry for this leaf must have gotten evicted, we need to
             // return the previously returned leaf with the same alias number.
-			is_cache_miss = true;
-			macrostate_state_number = iterator->second;
-		}
+            is_cache_miss = true;
+            macrostate_state_number = iterator->second;
+        }
 
-		// @Warn: This relies on the fact that the state sets are represented in a canoical fashion - the std::set
-		// 		  keeps them sorted. That means that two macrostates e.g {1, 2, 3} and {3, 2, 1} will get always hashed to the
-		// 		  same value --- Otherwise the same macrostates would get more than 1 ID which would cause troubles.
+        // @Warn: This relies on the fact that the state sets are represented in a canoical fashion - the std::set
+        //        keeps them sorted. That means that two macrostates e.g {1, 2, 3} and {3, 2, 1} will get always hashed to the
+        //        same value --- Otherwise the same macrostates would get more than 1 ID which would cause troubles.
 
-		Transition_Destination_Set new_leaf_contents;
-		new_leaf_contents.destination_set.insert(macrostate_state_number);
+        Transition_Destination_Set new_leaf_contents;
+        new_leaf_contents.destination_set.insert(macrostate_state_number);
 
-		if (!is_cache_miss) {
-			// Serialize the current macrostate, so that the python side will get notified about the created mapping.
-			for (auto state : old_tds->destination_set) {
-				transform_state->serialized_macrostates->push_back(state);
-			}
+        if (!is_cache_miss) {
+            // Serialize the current macrostate, so that the python side will get notified about the created mapping.
+            for (auto state : old_tds->destination_set) {
+                transform_state->serialized_macrostates->push_back(state);
+            }
 
-			transform_state->macrostates_sizes->push_back(old_tds->destination_set.size());
-			transform_state->macrostates_cnt += 1;
+            transform_state->macrostates_sizes->push_back(old_tds->destination_set.size());
+            transform_state->macrostates_cnt += 1;
 
-			transform_state->alias_map->emplace(old_tds->destination_set, macrostate_state_number);
-		}
+            transform_state->alias_map->emplace(old_tds->destination_set, macrostate_state_number);
+        }
 
-		MTBDD leaf = make_set_leaf(&new_leaf_contents);
-		return leaf;
-	}
+        MTBDD leaf = make_set_leaf(&new_leaf_contents);
+        return leaf;
+    }
 
-	return mtbdd_invalid;
+    return mtbdd_invalid;
 }
 
 
@@ -524,7 +444,6 @@ inline sylvan::MTBDD traverse_mtbdd_along_variables(sylvan::MTBDD mtbdd, uint32_
     return mtbdd;
 }
 
-
 struct NFA minimize_hopcroft(struct NFA& nfa)
 {
     LACE_ME;
@@ -535,7 +454,7 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
                         nfa.final_states.begin(), nfa.final_states.end(),
                         std::inserter(nonfinal_states_ordered, nonfinal_states_ordered.begin()));
 #if DEBUG
-    std::cout << "Minimizing automaton " << nfa_to_str(nfa) << std::endl;
+    std::cout << "Minimizing automaton " << nfa << std::endl;
 #endif
 
     std::vector<std::set<State>> partitions_to_check {nfa.final_states, nonfinal_states_ordered};
@@ -552,19 +471,23 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
         partitions_to_check.pop_back();
 
 #if DEBUG
-        std::cout << "Processing partition: " << states_to_str(current_partition) << "(size :: " << current_partition.size() << ")" << std::endl;
+        std::cout << "Processing partition: " << states_to_str(current_partition) << " (size=" << current_partition.size() << ")" << std::endl;
 #endif
 
         // Compute MTBDD encoding all outgoing transitions of the current partition
         MTBDD partition_mtbdd = mtbdd_false;
+        sylvan::mtbdd_refs_push(partition_mtbdd);
         for (auto state : current_partition){
             MTBDD mtbdd_for_current_partition_component = nfa.transitions[state];
 
-            partition_mtbdd = mtbdd_applyp(partition_mtbdd,
-                                           mtbdd_for_current_partition_component,
-                                           (uint64_t) 0,
-                                           TASK(transitions_union_op),
-                                           AMAYA_UNION_OP_ID);
+            MTBDD new_partition_mtbdd = mtbdd_applyp(partition_mtbdd,
+                                                     mtbdd_for_current_partition_component,
+                                                     (uint64_t) 0,
+                                                     TASK(transitions_union_op),
+                                                     AMAYA_UNION_OP_ID);
+            sylvan::mtbdd_refs_pop(1);
+            sylvan::mtbdd_refs_push(new_partition_mtbdd);
+            partition_mtbdd = new_partition_mtbdd;
         }
 
         // Iterate over all leaves of the created MTBDD. Every such a leaf represents a single post set over a symbol
@@ -639,6 +562,7 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
 
             leaf = mtbdd_enum_next(partition_mtbdd, nfa.vars, path_in_mtbdd_to_leaf, NULL);
         }
+        sylvan::mtbdd_refs_pop(1);
     }
 
 #if DEBUG
@@ -694,6 +618,8 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
 
         // Compute transitions - create MTBDD of this partition
         MTBDD mtbdd_for_current_partition_index = sylvan::mtbdd_false;
+        sylvan::mtbdd_refs_push(mtbdd_for_current_partition_index);
+
         MTBDD mtbdd_for_some_state              = nfa.transitions[some_state];
         MTBDD leaf                              = mtbdd_enum_first(mtbdd_for_some_state, nfa.vars, path_in_mtbdd_to_leaf, NULL);
 
@@ -723,7 +649,10 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
             MTBDD dest_mtbdd = sylvan::mtbdd_cube(nfa.vars, path_in_mtbdd_to_leaf, dest_leaf);
 
             // Add the created MTBDD to the other transitions originating in the current state
-            mtbdd_for_current_partition_index = mtbdd_applyp(mtbdd_for_current_partition_index, dest_mtbdd, (uint64_t) 0, TASK(transitions_union_op), AMAYA_UNION_OP_ID);
+            MTBDD new_mtbdd_for_current_part_idx = mtbdd_applyp(mtbdd_for_current_partition_index, dest_mtbdd, (uint64_t) 0, TASK(transitions_union_op), AMAYA_UNION_OP_ID);
+            sylvan::mtbdd_refs_pop(1);
+            sylvan::mtbdd_refs_push(new_mtbdd_for_current_part_idx);
+            mtbdd_for_current_partition_index = new_mtbdd_for_current_part_idx;
 
             // Check whether we have already explored the destination partition
             if (!was_dest_partition_explored) {
@@ -736,30 +665,18 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
 
             leaf = mtbdd_enum_next(mtbdd_for_some_state, nfa.vars, path_in_mtbdd_to_leaf, NULL);
         }
+
+        // @Note: We cannot ref all transition mtbdds at the end becaouse GC might trigger during the execution
+        //        of the contruction of the result
+        sylvan::mtbdd_ref(mtbdd_for_current_partition_index);
+        sylvan::mtbdd_refs_pop(1);
         result_nfa.transitions[partition_index] = mtbdd_for_current_partition_index;
     }
 #if DEBUG
     std::cout << "Result has #states=" << result_nfa.states.size() << std::endl;
 #endif
+
     return result_nfa;
-}
-
-template <typename T>
-bool is_set_intersection_empty(const std::set<T>& left, const std::set<T>& right) {
-    if (left.empty() || right.empty()) return true;
-
-    typename std::set<T>::const_iterator left_begin = left.begin(), left_end = left.end();
-    typename std::set<T>::const_iterator right_begin = right.begin(), right_end = right.end();
-
-    if (*left_begin > *right.rbegin() || *right_begin > *left.rbegin()) return true;
-
-    while (left_begin != left_end && right_begin != right_end) {
-        if (*left_begin == *right_begin) return false;
-        else if (*left_begin < *right_begin) ++left_begin;
-        else ++right_begin;
-    }
-
-    return true;
 }
 
 TASK_IMPL_3(MTBDD, build_pad_closure_fronier_op, MTBDD *, p_extension, MTBDD *, p_frontier, u64, raw_extension_origin_state)
@@ -863,14 +780,37 @@ TASK_IMPL_3(MTBDD, transitions_intersection2_op, MTBDD *, pa, MTBDD *, pb, uint6
             State product_handle = intersect_info->seen_products.size();
 
             auto [existing_entry_it, did_insert] = intersect_info->seen_products.emplace(product_state, product_handle);
-            leaf_contents.destination_set.insert(product_handle);
 
             Intersection_Discovery discovery = {.left = left_state, .right = right_state, .handle = product_handle};
-            if (did_insert) intersect_info->work_queue.push_back(discovery);
+            if (did_insert) {
+                intersect_info->work_queue.push_back(discovery);
+            } else {
+                product_handle = existing_entry_it->second;
+            }
+            leaf_contents.destination_set.insert(product_handle);
         }
     }
 
     MTBDD intersection_leaf = make_set_leaf(&leaf_contents);
-
     return intersection_leaf;
+}
+
+TASK_IMPL_2(MTBDD, replace_macrostates_with_handles_op, MTBDD, dd, uint64_t, param) {
+    if (!sylvan::mtbdd_isleaf(dd)) return sylvan::mtbdd_invalid;
+
+    auto raw_leaf_contents = sylvan::mtbdd_getvalue(dd);
+    auto leaf_contents = reinterpret_cast<Transition_Destination_Set*>(raw_leaf_contents);
+    Macrostate macrostate(leaf_contents->destination_set.begin(), leaf_contents->destination_set.end());
+
+    auto ctx = reinterpret_cast<Determinization_Context*>(param);
+    auto [known_macrostates_elem, was_inserted] = ctx->known_macrostates.emplace(macrostate, ctx->known_macrostates.size());
+
+    if (was_inserted) ctx->work_queue.push_back(&(*known_macrostates_elem));
+
+    State macrostate_handle = known_macrostates_elem->second;
+    Transition_Destination_Set new_leaf_contents;
+    new_leaf_contents.destination_set.insert(macrostate_handle);
+
+    MTBDD new_leaf = make_set_leaf(&new_leaf_contents);
+    return new_leaf;
 }

@@ -11,6 +11,7 @@
 
 using sylvan::MTBDD;
 
+
 Transition_Destination_Set::Transition_Destination_Set(const Transition_Destination_Set &other) {
     // NOTE: Copy is called when a new leaf is created
     this->destination_set = std::set<State>(other.destination_set);
@@ -282,11 +283,64 @@ NFA compute_nfa_intersection(NFA& left, NFA& right) {
         using namespace sylvan;
         sylvan::MTBDD product_mtbdd = mtbdd_applyp(left_mtbdd, right_mtbdd, reinterpret_cast<u64>(&intersection_info),
                                                    TASK(transitions_intersection2_op), AMAYA_TRANSITIONS_INTERSECT_OP_ID);
-        sylvan::mtbdd_protect(&product_mtbdd);
+        sylvan::mtbdd_ref(product_mtbdd);
         intersection_nfa.transitions[explored_product.handle] = product_mtbdd;
     }
 
     return intersection_nfa;
+}
+
+NFA determinize_nfa(NFA& nfa) {
+    LACE_ME;
+    NFA result = {.vars = nfa.vars, .var_count = nfa.var_count};
+
+    std::vector<std::pair<const Macrostate, State>*> work_queue;
+    Determinization_Context ctx = {.known_macrostates = {}, .work_queue = work_queue};
+    {
+        Macrostate initial_state(nfa.initial_states.begin(), nfa.initial_states.end());
+        State initial_handle = 0;
+        auto emplace_status = ctx.known_macrostates.emplace(initial_state, 0);
+        work_queue.push_back(&(*emplace_status.first));
+    }
+
+    u8 path_in_transitions_mtbdd[nfa.var_count];
+
+    while (!work_queue.empty()) {
+        auto current_macrostate_entry = work_queue.back();
+        work_queue.pop_back();
+
+        auto& macrostate = current_macrostate_entry->first;
+        auto& handle = current_macrostate_entry->second;
+
+        result.states.insert(handle);
+        if (!is_set_intersection_empty(macrostate.begin(), macrostate.rbegin(), macrostate.end(),
+                                       nfa.final_states.begin(), nfa.final_states.rbegin(), nfa.final_states.end())) {
+            nfa.final_states.insert(handle);
+        }
+
+        sylvan::MTBDD macrostate_transitions = sylvan::mtbdd_false;
+        sylvan::mtbdd_refs_push(macrostate_transitions);
+        for (auto& macrostate_member: macrostate) {
+            auto& member_mtbdd = nfa.transitions[macrostate_member];
+
+            using namespace sylvan;
+            sylvan::MTBDD new_macrostate_transitions = mtbdd_applyp(macrostate_transitions, member_mtbdd, 0u,
+                                                       TASK(transitions_union_op), AMAYA_UNION_OP_ID);
+            sylvan::mtbdd_refs_pop(1);
+            sylvan::mtbdd_refs_push(new_macrostate_transitions);
+            macrostate_transitions = new_macrostate_transitions;
+        }
+
+        using namespace sylvan;
+        MTBDD transition_mtbdd = mtbdd_uapply(macrostate_transitions,
+                                             TASK(replace_macrostates_with_handles_op),
+                                             reinterpret_cast<u64>(&(ctx)));
+        sylvan::mtbdd_ref(transition_mtbdd);
+        sylvan::mtbdd_refs_pop(1);
+        result.transitions.emplace(handle, transition_mtbdd);
+    }
+
+    return nfa;
 }
 
 template<typename T>

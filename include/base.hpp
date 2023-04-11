@@ -18,13 +18,15 @@ using std::unordered_map;
 using sylvan::MTBDD;
 using sylvan::BDDSET;
 
-typedef int64_t State;
-
 typedef uint64_t u64;
 typedef uint32_t u32;
 typedef uint8_t  u8;
 typedef int64_t  s64;
 typedef int32_t  s32;
+
+typedef int64_t State;
+
+typedef std::vector<State> Macrostate;
 
 struct Transition {
     State from;
@@ -75,5 +77,38 @@ bool transition_is_same_as(const struct Transition& transition_a, const struct T
 template<typename T>
 std::ostream& operator<<(std::ostream& output, const std::set<T>& set);
 std::ostream& operator<<(std::ostream& output, const NFA& nfa);
+
+template <>
+struct std::hash<Macrostate> {
+    std::size_t operator() (const Macrostate& macrostate) const {
+        std::size_t hash = 0;
+        for (auto state: macrostate) {
+            std::size_t atom_val_hash = std::hash<State>{}(state);
+            hash = hash + 0x9e3779b9 + (atom_val_hash << 6) + (atom_val_hash >> 2);
+        }
+        return hash;
+    }
+};
+
+template <typename InputIterator1, typename ReverseInputIterator1, typename InputIterator2, typename ReverseInputIterator2>
+bool is_set_intersection_empty(InputIterator1 left_begin, ReverseInputIterator1 left_rbegin, InputIterator1 left_end,
+                               InputIterator2 right_begin, ReverseInputIterator2 right_rbegin, InputIterator2 right_end) {
+
+    if (left_begin == left_end || right_begin == right_end) return true;
+    if (*left_begin > *right_rbegin || *right_begin > *left_rbegin) return true;
+
+    while (left_begin != left_end && right_begin != right_end) {
+        if (*left_begin == *right_begin) return false;
+        else if (*left_begin < *right_begin) ++left_begin;
+        else ++right_begin;
+    }
+
+    return true;
+}
+
+template <typename T>
+bool is_set_intersection_empty(const std::set<T>& left, const std::set<T>& right) {
+    return is_set_intersection_empty(left.begin(), left.rbegin(), left.end(), right.begin(), right.rbegin(), right.end());
+}
 
 #endif

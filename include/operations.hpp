@@ -15,9 +15,8 @@
 #define AMAYA_UNION_OP_ID 0x4000000
 #define AMAYA_EXTEND_FRONTIER_OP_ID 0x8000000
 #define AMAYA_ADD_PAD_TRANSITIONS_OP_ID 0xc000000
-#define AMAYA_TRANSITIONS_INTERSECT_OP_ID 0xd000000
-
-TASK_DECL_3(sylvan::MTBDD, transitions_intersection_op, sylvan::MTBDD *, sylvan::MTBDD *, uint64_t);
+#define AMAYA_TRANSITIONS_INTERSECT_OP_ID 0xdd00000
+#define AMAYA_REPLACE_MACROSTATES_WITH_HANDLES_OP 0xe000000
 
 /**
  * The *abstraction* F definition.
@@ -39,6 +38,7 @@ TASK_DECL_3(sylvan::MTBDD, build_pad_closure_fronier_op, sylvan::MTBDD*, sylvan:
 TASK_DECL_3(sylvan::MTBDD, add_pad_transitions_op, sylvan::MTBDD*, sylvan::MTBDD*, u64);
 
 TASK_DECL_3(sylvan::MTBDD, transitions_intersection2_op, sylvan::MTBDD *, sylvan::MTBDD *, uint64_t);
+TASK_DECL_2(sylvan::MTBDD, replace_macrostates_with_handles_op, sylvan::MTBDD, uint64_t);
 
 typedef struct
 {
@@ -57,18 +57,6 @@ typedef struct
     bool had_effect;
     State trapstate;
 } Complete_With_Trapstate_Op_Info;
-
-typedef struct
-{
-    std::vector<State> *discoveries; // Flat array of [macrostate_left_part, macrostate_right_part, state, ...]
-} Intersection_Op_Info;
-
-typedef struct
-{
-    bool should_do_early_prunining;
-    std::unordered_set<State> *prune_final_states;
-    std::map<std::pair<State, State>, State> *intersection_state_pairs_numbers;
-} Intersection_State;
 
 typedef struct
 {
@@ -111,6 +99,11 @@ struct Intersection_Discovery {
 struct Intersection_Info2 {
     std::map<std::pair<State, State>, State> seen_products;
     std::vector<Intersection_Discovery>& work_queue;
+};
+
+struct Determinization_Context {
+    std::unordered_map<Macrostate, State> known_macrostates;
+    std::vector<std::pair<const Macrostate, State>*>& work_queue;
 };
 
 #endif

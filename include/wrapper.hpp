@@ -10,15 +10,16 @@
 
 #include <inttypes.h>
 
-struct Serialized_DFA {
-    State*          states;
-    uint64_t        state_count;
-    State           initial_state;
-    State*          final_states;
-    uint64_t        final_state_count;
+struct Serialized_NFA {
+    State*     states;
+    u64        state_count;
+    State*     initial_states;
+		u64 			 initial_state_count;
+    State*     final_states;
+    u64        final_state_count;
     sylvan::MTBDD*  mtbdds;
-    uint64_t*       vars;
-    uint64_t        var_count;
+    u64*       vars;
+    u64        var_count;
 };
 
 struct Serialized_Atom {
@@ -38,7 +39,8 @@ struct Serialized_Quantified_Atom_Conjunction {
     u64              quantified_var_cnt;
 };
 
-Serialized_DFA* serialize_dfa(NFA& nfa, u64* vars, u64 var_count);
+Serialized_NFA* serialize_nfa(NFA& nfa);
+NFA deserialize_nfa(Serialized_NFA& nfa);
 
 extern "C" {
 
@@ -142,48 +144,6 @@ extern "C" {
 			State** 	dest_states,
 			uint32_t** 	dest_states_cnt);
 
-	/**
-	 * Calculate the intersection of two mtbdds (Operation on leaves is set intersection).
-	 * @param a 				Some transition MTBDD
-	 * @param b 				Other transition MTBDD
-	 * @param discovered_states 		Flat array of discovered macrostates and their generated int.
-	 * 									[macrostate_left, macrostate_right, state_int ...]
-	 * @param discovered_states_cnt 	Discovered_states count (size/3).
-	 * @returns A MTBDD that contains only transitions that are present in both given MTBDDs.
-	 */
-	sylvan::MTBDD amaya_mtbdd_intersection(
-			sylvan::MTBDD a,
-			sylvan::MTBDD b,
-			State**  	discovered_states,         // OUT
-			uint32_t*  	discovered_states_cnt);    // OUT
-
-
-	/**
-	 * Marks the beginning of intersection. Setups global std::map that holds
-	 * information about which intersection macrostates (pairs) were mapped to which values.
-	 */
-	void amaya_begin_intersection(
-			bool 		should_do_early_prunining,
-			State* 		prune_final_states,
-			uint32_t 	final_states_cnt);
-
-	/**
-	 * Updates the intersection state information by inserting provided macrostates (flat 2d array)
-	 * and their corresponding mappings into intersection state.
-	 *
-	 * @param macrostates  			Flattened 2D array containing the intersection macrostates (always a pair)
-	 * @param renamed_macrostates  	Renamed macrostates.
-	 * @param cnt 					Count of the macrostates.
-	 */
-	void amaya_update_intersection_state(
-			State* 	 macrostates,
-			State* 	 renamed_macrostates,
-			uint32_t macrostates_cnt);
-	/**
-	 * Marks the end of intersection and frees up resources.
-	 */
-	void amaya_end_intersection();
-
 	void amaya_set_debugging(bool debug);
 
 	void amaya_do_free(void *ptr);
@@ -258,22 +218,21 @@ extern "C" {
 		State *final_states,
 		uint32_t final_states_cnt);
 
-    struct Serialized_DFA* amaya_minimize_hopcroft(struct Serialized_DFA* serialized_dfa);
+    Serialized_NFA* amaya_minimize_hopcroft(struct Serialized_NFA* serialized_dfa);
+    Serialized_NFA* amaya_construct_dfa_for_atom_conjunction(Serialized_Quantified_Atom_Conjunction* raw_formula);
+		Serialized_NFA* amaya_compute_nfa_intersection(Serialized_NFA* left_serialized, Serialized_NFA* right_serialized);
 
-    struct Serialized_DFA* amaya_construct_dfa_for_atom_conjunction(Serialized_Quantified_Atom_Conjunction* raw_formula);
+	  void amaya_end_pad_closure();
 
-	void amaya_end_pad_closure();
+	  void amaya_mtbdd_ref(sylvan::MTBDD mtbdd);
+	  void amaya_mtbdd_deref(sylvan::MTBDD mtbdd);
+	  void amaya_sylvan_gc();
+	  void amaya_sylvan_try_performing_gc();
 
-	void amaya_mtbdd_ref(sylvan::MTBDD mtbdd);
-	void amaya_mtbdd_deref(sylvan::MTBDD mtbdd);
-	void amaya_sylvan_gc();
-	void amaya_sylvan_try_performing_gc();
+	  void amaya_sylvan_clear_cache();
 
-	void amaya_sylvan_clear_cache();
-
-	void shutdown_machinery();
-	void init_machinery();
-
+	  void shutdown_machinery();
+	  void init_machinery();
 }
 
 Transition_Destination_Set* _get_transition_target(
