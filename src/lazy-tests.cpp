@@ -85,8 +85,7 @@ void assert_dfas_are_isomorphic(const NFA& expected, const NFA& actual) {
 }
 
 
-TEST_CASE("lazy_construct `\\exists x (x + y <= 0)`"
-    * doctest::skip(true))
+TEST_CASE("lazy_construct `\\exists x (x + y <= 0)`")
 {
     Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 1})}, .bound_vars = {0}, .var_count = 2};
     Formula_Pool pool = Formula_Pool();
@@ -121,8 +120,7 @@ TEST_CASE("lazy_construct `\\exists x (x + y <= 0)`"
 }
 
 
-TEST_CASE("lazy_construct simple atoms"
-    * doctest::skip(true))
+TEST_CASE("lazy_construct simple atoms")
 {
     SUBCASE("atom `x - y <= 2`") {
         Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 1})}, .bound_vars = {}, .var_count = 2};
@@ -287,8 +285,7 @@ TEST_CASE("lazy_construct simple atoms"
     }
 }
 
-TEST_CASE("lazy_construct `\\exists y,m (x - y <= -1 && y <= -1 && -m <= 0 && m <= 1 && m - y ~ 0 (mod 3))`"
-    * doctest::skip(true))
+TEST_CASE("lazy_construct `\\exists y,m (x - y <= -1 && y <= -1 && -m <= 0 && m <= 1 && m - y ~ 0 (mod 3))`")
 {
     Formula formula = {
         .atoms = {
@@ -342,8 +339,7 @@ TEST_CASE("lazy_construct `\\exists y,m (x - y <= -1 && y <= -1 && -m <= 0 && m 
     assert_dfas_are_isomorphic(expected_nfa, actual_nfa);
 }
 
-TEST_CASE("lazy_construct `\\exists y,m (x - y <= -1 && && m - z <= -1 && y <= -1 && -m <= 0 && m <= 1 && m - y ~ 0 (mod 299993))`"
-          * doctest::skip(true))
+TEST_CASE("lazy_construct `\\exists y,m (x - y <= -1 && && m - z <= -1 && y <= -1 && -m <= 0 && m <= 1 && m - y ~ 0 (mod 299993))`")
 {
     /* (exists ((y Int), (m Int))
      *   (land
@@ -483,7 +479,7 @@ TEST_CASE("remove_nonfinishing_states :: simple") {
     assert_dfas_are_isomorphic(expected_dfa, dfa);
 }
 
-int main() {
+int main(int argc, char* argv[]) {
     init_mtbdd_libs();
 
     // const s64 modulo = 33;
@@ -521,12 +517,12 @@ int main() {
     // auto actual_nfa = build_nfa_with_formula_entailement(pool, initial_state, vars);
     // std::cout << "#states: " << actual_nfa.states.size() << std::endl;
 
-    doctest::Context context;
+    doctest::Context context(argc, argv);
 
     int test_overall_rc = context.run();
 
     if(context.shouldExit()) {
-      //return test_overall_rc;
+        return test_overall_rc;
     }
 
     return 0;

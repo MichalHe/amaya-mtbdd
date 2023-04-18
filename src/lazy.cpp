@@ -931,11 +931,7 @@ NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_St
     NFA nfa = {.initial_states = {0u}, .vars = bdd_vars, .var_count = init_state.formula->var_count};
 
     Alphabet_Iterator alphabet_iter = Alphabet_Iterator(init_state.formula->var_count, init_state.formula->bound_vars);
-    u64 processed_states = 0;
     while (!work_queue.empty()) {
-        if (processed_states % 1000 == 0) {
-            std::cout << "Processed states " << processed_states << std::endl;
-        }
         auto macrostate = work_queue.back();
         work_queue.pop_back();
 
@@ -945,7 +941,6 @@ NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_St
         }
 
         explore_macrostate(nfa, macrostate, alphabet_iter, formula_pool, known_macrostates, accepting_macrostates, work_queue);
-        processed_states += 1;
     }
     
     nfa.perform_pad_closure(mtbdd_leaf_type_set);

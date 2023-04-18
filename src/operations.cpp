@@ -734,8 +734,16 @@ TASK_IMPL_3(MTBDD, add_pad_transitions_op, MTBDD *, p_transitions, MTBDD *, p_fr
         auto transition_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(transitions));
         auto frontier_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(frontier));
 
+        // It must be possible to reach a final state from the current origin
         if (!frontier_contents->destination_set.contains(pad_closure_info->origin_state))
             return transitions;
+
+        // Make sure that also its post is contained in the frontier as states that are final are contained in the frontier
+        // but they do not necesserily can have a path to another final state via the symbol
+        // @FixMe: Maybe we should fix the frontier instead to not contain the final states (exclude epsilon reachablility)
+        if (is_set_intersection_empty(transition_contents->destination_set, frontier_contents->destination_set)) {
+            return transitions;
+        }
 
         if (is_set_intersection_empty(transition_contents->destination_set, *pad_closure_info->final_states)) {
             Transition_Destination_Set new_transition_contents(*transition_contents);
