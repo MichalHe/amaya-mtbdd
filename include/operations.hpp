@@ -101,6 +101,14 @@ struct Intersection_Discovery {
 struct Intersection_Info2 {
     std::map<std::pair<State, State>, State> seen_products;
     std::vector<Intersection_Discovery>& work_queue;
+
+#if INTERSECTION_DETECT_STATES_WITH_NO_POST
+    u64 skipped_states_with_no_post;
+    std::set<State>* left_final_states;
+    std::set<State>* right_final_states;
+    std::vector<State> left_states_without_post;
+    std::vector<State> right_states_without_post;
+#endif
 };
 
 struct Determinization_Context {

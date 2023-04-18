@@ -349,18 +349,25 @@ std::set<State> compute_states_reaching_set(NFA nfa, std::set<State>& states_to_
     // @Optimize: A hash table would not be needed here, if we are sure that nfa states always span integers in [0, states.size()-1]
     std::unordered_map<State, std::set<State>> state_posts;
     for (State state: potential_states) {
-        state_posts[state] = nfa.get_state_post(state);
+        state_posts[state] = nfa.get_state_post(state);;
     }
 
     bool was_fixed_point_found = false;
     u64 reaching_set_size = reaching_states.size();  // It is sufficient to just check whether the state partition is still growing
+
+    u64 total_post_size = 0;
+    for (auto [state, post]: state_posts) {
+        total_post_size += post.size();
+    }
+
+    // std::cout << "Average post size: " << static_cast<double>(total_post_size) / static_cast<double>(state_posts.size()) << std::endl;
 
     while (!was_fixed_point_found) {
         for (auto potential_states_it = potential_states.begin(); potential_states_it != potential_states.end(); ) {
             auto state = *potential_states_it;
             auto& state_post = state_posts[state];
 
-            if (!is_set_intersection_empty(state_post, reaching_states)) {
+            if (!is_set_intersection_empty(state_post.begin(), state_post.rbegin(), state_post.end(), reaching_states.begin(), reaching_states.rbegin(), reaching_states.end())) {
                 reaching_states.insert(state);
                 potential_states_it = potential_states.erase(potential_states_it);
             } else {
@@ -400,12 +407,33 @@ void remove_nonfinishing_states(NFA& nfa) {
 }
 
 
+void setup_intersection_info_for_postless_pruning(Intersection_Info2& info, NFA& left, NFA& right) {
+#if INTERSECTION_DETECT_STATES_WITH_NO_POST
+    for (auto& final_state: left.final_states) {
+        if (left.transitions[final_state] == sylvan::mtbdd_false) {
+            info.left_states_without_post.push_back(final_state);
+        }
+    }
+    for (auto& final_state: right.final_states) {
+        if (right.transitions[final_state] == sylvan::mtbdd_false) {
+            info.right_states_without_post.push_back(final_state);
+        }
+    }
+
+    info.left_final_states  = &left.final_states;
+    info.right_final_states = &right.final_states;
+#endif
+}
+
+
 NFA compute_nfa_intersection(NFA& left, NFA& right) {
     LACE_ME;
     typedef std::pair<State, State> Product_State;
 
     std::vector<Intersection_Discovery> work_queue;
     Intersection_Info2 intersection_info = {.seen_products = {}, .work_queue = work_queue};
+
+    setup_intersection_info_for_postless_pruning(intersection_info, left, right);
 
     sylvan::BDDSET intersection_vars = left.vars;
 
@@ -451,7 +479,9 @@ NFA compute_nfa_intersection(NFA& left, NFA& right) {
         intersection_nfa.transitions[explored_product.handle] = product_mtbdd;
     }
 
+#if INTERSECTION_REMOVE_NONFINISHING_STATES
     remove_nonfinishing_states(intersection_nfa);
+#endif
 
     return intersection_nfa;
 }

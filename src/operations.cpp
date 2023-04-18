@@ -750,6 +750,26 @@ TASK_IMPL_3(MTBDD, add_pad_transitions_op, MTBDD *, p_transitions, MTBDD *, p_fr
     return mtbdd_invalid;
 }
 
+inline
+bool skip_product_state_due_to_no_post(Intersection_Info2& info, std::pair<State, State>& product) {
+#ifdef INTERSECTION_DETECT_STATES_WITH_NO_POST
+    auto left_pos_in_postless = std::find(info.left_states_without_post.begin(), info.left_states_without_post.end(), product.first);
+    auto right_pos_in_postless = std::find(info.right_states_without_post.begin(), info.right_states_without_post.end(), product.second);
+
+    bool is_left_postless = (left_pos_in_postless != info.left_states_without_post.end());
+    bool is_right_postless = (right_pos_in_postless != info.right_states_without_post.end());
+
+    if (is_left_postless || is_right_postless) {
+        bool product_has_lang = (info.left_final_states->contains(product.first) && info.right_final_states->contains(product.second));
+        return !product_has_lang;
+    }
+    return false;
+#else
+    return false;
+#endif
+}
+
+
 
 TASK_IMPL_3(MTBDD, transitions_intersection2_op, MTBDD *, pa, MTBDD *, pb, uint64_t, param) {
     MTBDD a = *pa, b = *pb;
@@ -778,6 +798,12 @@ TASK_IMPL_3(MTBDD, transitions_intersection2_op, MTBDD *, pa, MTBDD *, pb, uint6
     for (auto left_state : left_leaf_contents->destination_set) {
         for (auto right_state : right_leaf_contents->destination_set) {
             std::pair<State, State> product_state = std::make_pair(left_state, right_state);
+
+            if (skip_product_state_due_to_no_post(*intersect_info, product_state)) {
+                ++intersect_info->skipped_states_with_no_post;
+                continue;
+            }
+
             State product_handle = intersect_info->seen_products.size();
 
             auto [existing_entry_it, did_insert] = intersect_info->seen_products.emplace(product_state, product_handle);

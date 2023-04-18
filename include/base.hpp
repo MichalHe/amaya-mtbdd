@@ -3,6 +3,9 @@
 
 #define DEBUG 0
 
+#define INTERSECTION_DETECT_STATES_WITH_NO_POST 1
+#define INTERSECTION_REMOVE_NONFINISHING_STATES 0
+
 #include <vector>
 #include <set>
 #include <unordered_map>
