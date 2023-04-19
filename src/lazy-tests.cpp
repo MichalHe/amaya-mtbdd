@@ -119,7 +119,6 @@ TEST_CASE("lazy_construct `\\exists x (x + y <= 0)`")
     assert_dfas_are_isomorphic(expected_nfa, actual_nfa);
 }
 
-
 TEST_CASE("lazy_construct simple atoms")
 {
     SUBCASE("atom `x - y <= 2`") {
@@ -191,7 +190,6 @@ TEST_CASE("lazy_construct simple atoms")
     }
 
     SUBCASE("atom `2x - y = 0`") {
-        std::cout << "Now\n";
         Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_EQ, {2, -1})}, .bound_vars = {}, .var_count = 2};
         Formula_Pool pool = Formula_Pool();
         auto formula_id = pool.store_formula(formula);
@@ -408,6 +406,41 @@ TEST_CASE("NFA::pad_closure (simple)") {
     for (auto& expected_transition: expected_transitions) {
         CHECK(std::find(transitions.begin(), transitions.end(), expected_transition) != transitions.end());
     }
+}
+
+
+TEST_CASE("NFA::determinize (simple)") {
+    BDDSET vars = sylvan::mtbdd_set_empty();
+    vars = sylvan::mtbdd_set_add(vars, 1);
+    NFA nfa = {.states = {1, 2, 3}, .final_states = {3}, .initial_states = {1}, .vars = vars, .var_count = 1};
+
+    nfa.add_transition(1, 1, vector<u8>{0});
+    nfa.add_transition(1, 2, vector<u8>{0});
+    nfa.add_transition(2, 3, vector<u8>{0});
+
+    auto actual_dfa = determinize_nfa(nfa);
+
+    NFA expected_dfa = {
+        .states = {
+            1, // {1}
+            2, // {1, 2}
+            3, // {1, 2, 3}
+            4, // trap
+        },
+        .final_states = {3}, .initial_states = {1}, .vars = vars, .var_count = 1
+    };
+    expected_dfa.add_transition(1, 2, vector<u8>{0});
+    expected_dfa.add_transition(1, 4, vector<u8>{1});
+
+    expected_dfa.add_transition(2, 3, vector<u8>{0});
+    expected_dfa.add_transition(2, 4, vector<u8>{1});
+
+    expected_dfa.add_transition(3, 3, vector<u8>{0});
+    expected_dfa.add_transition(3, 4, vector<u8>{1});
+
+    expected_dfa.add_transition(4, 4, vector<u8>{2});
+
+    assert_dfas_are_isomorphic(expected_dfa, actual_dfa);
 }
 
 
