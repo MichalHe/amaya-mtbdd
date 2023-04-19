@@ -831,6 +831,17 @@ TASK_IMPL_3(MTBDD, transitions_intersection2_op, MTBDD *, pa, MTBDD *, pb, uint6
 }
 
 TASK_IMPL_2(MTBDD, replace_macrostates_with_handles_op, MTBDD, dd, uint64_t, param) {
+    if (dd == mtbdd_false) {
+        auto ctx = reinterpret_cast<Determinization_Context*>(param);
+        ctx->is_trapstate_needed = true;
+
+        Transition_Destination_Set new_leaf_contents;
+        new_leaf_contents.destination_set.insert(ctx->trapstate_handle);
+        MTBDD new_leaf = make_set_leaf(&new_leaf_contents);
+
+        return new_leaf;
+    }
+
     if (!sylvan::mtbdd_isleaf(dd)) return sylvan::mtbdd_invalid;
 
     auto raw_leaf_contents = sylvan::mtbdd_getvalue(dd);

@@ -114,6 +114,8 @@ struct Intersection_Info2 {
 struct Determinization_Context {
     std::unordered_map<Macrostate, State> known_macrostates;
     std::vector<std::pair<const Macrostate, State>*>& work_queue;
+    bool is_trapstate_needed;
+    State trapstate_handle;
 };
 
 #endif

@@ -491,11 +491,22 @@ NFA determinize_nfa(NFA& nfa) {
     NFA result = {.vars = nfa.vars, .var_count = nfa.var_count};
 
     std::vector<std::pair<const Macrostate, State>*> work_queue;
-    Determinization_Context ctx = {.known_macrostates = {}, .work_queue = work_queue};
+    Determinization_Context ctx = {.known_macrostates = {}, .work_queue = work_queue, .is_trapstate_needed=false};
+
+    // Speculatively prepare trap state in case it is needed
+    {
+        Macrostate trap_macrostate{};
+        State trapstate_handle = static_cast<State>(ctx.known_macrostates.size());
+        auto emplace_status = ctx.known_macrostates.emplace(trap_macrostate, trapstate_handle);
+        ctx.trapstate_handle = trapstate_handle;
+    }
+
+    // Prepare intitial state and populate work queue
     {
         Macrostate initial_state(nfa.initial_states.begin(), nfa.initial_states.end());
-        State initial_handle = 0;
-        auto emplace_status = ctx.known_macrostates.emplace(initial_state, 0);
+        State initial_handle = static_cast<State>(ctx.known_macrostates.size());
+        auto emplace_status = ctx.known_macrostates.emplace(initial_state, initial_handle);
+        result.initial_states.insert(initial_handle);
         work_queue.push_back(&(*emplace_status.first));
     }
 
@@ -511,7 +522,7 @@ NFA determinize_nfa(NFA& nfa) {
         result.states.insert(handle);
         if (!is_set_intersection_empty(macrostate.begin(), macrostate.rbegin(), macrostate.end(),
                                        nfa.final_states.begin(), nfa.final_states.rbegin(), nfa.final_states.end())) {
-            nfa.final_states.insert(handle);
+            result.final_states.insert(handle);
         }
 
         sylvan::MTBDD macrostate_transitions = sylvan::mtbdd_false;
@@ -521,7 +532,7 @@ NFA determinize_nfa(NFA& nfa) {
 
             using namespace sylvan;
             sylvan::MTBDD new_macrostate_transitions = mtbdd_applyp(macrostate_transitions, member_mtbdd, 0u,
-                                                       TASK(transitions_union_op), AMAYA_UNION_OP_ID);
+                                                                    TASK(transitions_union_op), AMAYA_UNION_OP_ID);
             sylvan::mtbdd_refs_pop(1);
             sylvan::mtbdd_refs_push(new_macrostate_transitions);
             macrostate_transitions = new_macrostate_transitions;
@@ -536,7 +547,13 @@ NFA determinize_nfa(NFA& nfa) {
         result.transitions.emplace(handle, transition_mtbdd);
     }
 
-    return nfa;
+    if (ctx.is_trapstate_needed) {
+        result.states.insert(ctx.trapstate_handle);
+        u64 all_bits_dont_care_mask = static_cast<u64>(-1);
+        result.add_transition(ctx.trapstate_handle, ctx.trapstate_handle, 0, all_bits_dont_care_mask);
+    }
+
+    return result;
 }
 
 template<typename T>
