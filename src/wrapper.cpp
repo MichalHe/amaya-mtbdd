@@ -903,3 +903,10 @@ Serialized_NFA* amaya_compute_nfa_intersection(Serialized_NFA* left_serialized, 
     auto serialized_result = serialize_nfa(result);
     return serialized_result;
 }
+
+Serialized_NFA* amaya_determinize(Serialized_NFA* serialized_nfa) {
+    NFA nfa = deserialize_nfa(*serialized_nfa);
+    NFA dfa = determinize_nfa(nfa);
+    auto output_dfa = serialize_nfa(dfa);
+    return output_dfa;
+}

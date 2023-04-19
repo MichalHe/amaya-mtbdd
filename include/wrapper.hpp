@@ -213,14 +213,12 @@ extern "C" {
 		uint32_t mtbdd_cnt,
 		uint32_t* out_state_cnt);
 
-	void amaya_begin_pad_closure(
-        State new_final_state,
-		State *final_states,
-		uint32_t final_states_cnt);
+	  void amaya_begin_pad_closure(State new_final_state, State *final_states, uint32_t final_states_cnt);
 
     Serialized_NFA* amaya_minimize_hopcroft(struct Serialized_NFA* serialized_dfa);
     Serialized_NFA* amaya_construct_dfa_for_atom_conjunction(Serialized_Quantified_Atom_Conjunction* raw_formula);
 		Serialized_NFA* amaya_compute_nfa_intersection(Serialized_NFA* left_serialized, Serialized_NFA* right_serialized);
+		Serialized_NFA* amaya_determinize(Serialized_NFA* nfa);
 
 	  void amaya_end_pad_closure();
 
