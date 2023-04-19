@@ -191,6 +191,7 @@ TEST_CASE("lazy_construct simple atoms")
     }
 
     SUBCASE("atom `2x - y = 0`") {
+        std::cout << "Now\n";
         Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_EQ, {2, -1})}, .bound_vars = {}, .var_count = 2};
         Formula_Pool pool = Formula_Pool();
         auto formula_id = pool.store_formula(formula);
@@ -208,6 +209,7 @@ TEST_CASE("lazy_construct simple atoms")
                 1,  // {0, F}
                 2,  // {-1}
                 3,  // {-1, F}
+                4,  // Trap
             },
             .final_states = {1, 3},
             .initial_states = {0},
@@ -218,16 +220,26 @@ TEST_CASE("lazy_construct simple atoms")
         vector<Transition> symbolic_transitions {
             /* {0} */
             {.from = 0, .to = 1, .symbol = {0, 0}},
+            {.from = 0, .to = 4, .symbol = {0, 1}},
             {.from = 0, .to = 2, .symbol = {1, 0}},
+            {.from = 0, .to = 4, .symbol = {1, 1}},
             /* {0, F} */
             {.from = 1, .to = 1, .symbol = {0, 0}},
+            {.from = 1, .to = 4, .symbol = {0, 1}},
             {.from = 1, .to = 2, .symbol = {1, 0}},
+            {.from = 1, .to = 4, .symbol = {1, 1}},
             /* {-1} */
+            {.from = 2, .to = 4, .symbol = {0, 0}},
             {.from = 2, .to = 0, .symbol = {0, 1}},
+            {.from = 2, .to = 4, .symbol = {1, 0}},
             {.from = 2, .to = 3, .symbol = {1, 1}},
             /* {-1, F} */
+            {.from = 3, .to = 4, .symbol = {0, 0}},
             {.from = 3, .to = 0, .symbol = {0, 1}},
+            {.from = 3, .to = 4, .symbol = {1, 0}},
             {.from = 3, .to = 3, .symbol = {1, 1}},
+            /* Trap */
+            {.from = 4, .to = 4, .symbol = {2, 2}},
         };
 
         for (auto it: symbolic_transitions) expected_nfa.add_transition(it.from, it.to, it.symbol.data());

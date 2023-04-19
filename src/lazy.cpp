@@ -736,10 +736,7 @@ std::ostream& operator<<(std::ostream& output, const Structured_Macrostate& macr
 void explore_macrostate(NFA& constructed_nfa,
                         Structured_Macrostate& macrostate,
                         Alphabet_Iterator& alphabet_iter,
-                        Formula_Pool& formula_pool,
-                        unordered_map<Structured_Macrostate, u64>& known_macrostates,
-                        unordered_set<u64>& accepting_macrostates,
-                        vector<Structured_Macrostate>& output_queue)
+                        Lazy_Construction_State& constr_state)
 {
     alphabet_iter.reset();
 
@@ -758,19 +755,22 @@ void explore_macrostate(NFA& constructed_nfa,
                 for (auto& state: states) {
                     auto maybe_successor = state.successor_along_symbol(symbol);
 
-                    if (!maybe_successor.has_value()) continue;
+                    if (!maybe_successor.has_value()) {
+                        continue;
+                    };
+
                     auto successor = maybe_successor.value();
 
-                    auto entailment_result = compute_entailed_formula(formula_pool, successor);
+                    auto entailment_result = compute_entailed_formula(constr_state.formula_pool, successor);
 
                     if (entailment_result.state.has_value()) {
                         successor = entailment_result.state.value();
                     }
 
-                    if (successor.formula == &formula_pool.top) {
+                    if (successor.formula == &constr_state.formula_pool.top) {
                         assert(false); // @TODO: Make the entire post lead to \\top here
                         break;
-                    } else if (successor.formula != &formula_pool.bottom) {
+                    } else if (successor.formula != &constr_state.formula_pool.bottom) {
                         insert_successor_into_post_if_valuable(post, successor);
                     }
 
@@ -795,18 +795,22 @@ void explore_macrostate(NFA& constructed_nfa,
 #endif
         }
 
-        if (post.formulae.empty()) continue;
+        if (post.formulae.empty()) {
+            constr_state.is_trap_state_needed = true;
+            constructed_nfa.add_transition(macrostate.handle, constr_state.trap_state_handle, transition_symbol, alphabet_iter.quantified_bits_mask);
+            continue;
+        };
 
         // Assign a unique integer to every state
-        post.handle = known_macrostates.size();
-        auto [element_iter, was_inserted] = known_macrostates.emplace(post, post.handle);
+        post.handle = constr_state.known_macrostates.size();
+        auto [element_iter, was_inserted] = constr_state.known_macrostates.emplace(post, post.handle);
         if (was_inserted) {
             // @Simplicity: Maybe the known_macrostates should be a set instead of a map since we are storing the handle
             //              inside the macrostate either way.
-            output_queue.push_back(post);
+            constr_state.output_queue.push_back(post);
 
             if (post.is_accepting) { // Do the hash-query only if we see the macrostate for the first time
-                accepting_macrostates.emplace(post.handle);
+                constr_state.accepting_macrostates.emplace(post.handle);
             }
         } else {
             post.handle = element_iter->second;  // Use the already existing handle
@@ -915,20 +919,36 @@ NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_St
     // Use map instead of unordered_map so that we can serialize its contents in an canonical fashion
     Structured_Macrostate post;
 
-    unordered_map<Structured_Macrostate, u64> known_macrostates;
-    unordered_set<u64> accepting_macrostates;
-
     vector<Structured_Macrostate> work_queue;
+    Lazy_Construction_State constr_state = {.formula_pool = formula_pool, .output_queue = work_queue};
+
+    // Prepare a trapstate in case it is needed
+    {
+        Conjuction_State trap_state {.formula = &formula_pool.bottom, .constants = {}};
+        list<Conjuction_State> bottom_states {trap_state};
+        map<const Formula*, list<Conjuction_State>> trap_macrostate_formulae = { {trap_state.formula, bottom_states} };
+        Structured_Macrostate trap_macrostate = { .is_accepting = false, .formulae = trap_macrostate_formulae };
+
+        auto [container_pos, was_insterted] = constr_state.known_macrostates.emplace(trap_macrostate, constr_state.known_macrostates.size());
+        constr_state.trap_state_handle = container_pos->second;
+    }
+
+    // Populate the queue with the initial states
+    const u64 init_state_handle = constr_state.known_macrostates.size();
     {
         list<Conjuction_State> init_list = {init_state};
         map<const Formula*, list<Conjuction_State>> init_macrostate_formulae = { {init_state.formula, init_list} };
-        Structured_Macrostate init_macrostate = { .is_accepting = false, .formulae = init_macrostate_formulae };
+        Structured_Macrostate init_macrostate = { .is_accepting = false, .handle = init_state_handle, .formulae = init_macrostate_formulae};
         work_queue.push_back(init_macrostate);
 
-        known_macrostates.emplace(init_macrostate, known_macrostates.size());
+        auto [container_pos, was_inserted] = constr_state.known_macrostates.emplace(init_macrostate, constr_state.known_macrostates.size());
     }
 
-    NFA nfa = {.initial_states = {0u}, .vars = bdd_vars, .var_count = init_state.formula->var_count};
+    NFA nfa = {
+        .initial_states = {static_cast<State>(init_state_handle)},
+        .vars = bdd_vars,
+        .var_count = init_state.formula->var_count
+    };
 
     Alphabet_Iterator alphabet_iter = Alphabet_Iterator(init_state.formula->var_count, init_state.formula->bound_vars);
     while (!work_queue.empty()) {
@@ -940,9 +960,15 @@ NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_St
             nfa.final_states.insert(macrostate.handle);
         }
 
-        explore_macrostate(nfa, macrostate, alphabet_iter, formula_pool, known_macrostates, accepting_macrostates, work_queue);
+        explore_macrostate(nfa, macrostate, alphabet_iter, constr_state);
     }
-    
+
+    if (constr_state.is_trap_state_needed) {
+        nfa.states.insert(constr_state.trap_state_handle);
+        u64 all_bits_dont_care_mask = static_cast<u64>(-1);
+        nfa.add_transition(constr_state.trap_state_handle, constr_state.trap_state_handle, 0u, all_bits_dont_care_mask);
+    }
+
     nfa.perform_pad_closure(mtbdd_leaf_type_set);
 
     return nfa;

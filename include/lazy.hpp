@@ -240,6 +240,8 @@ struct Structured_Macrostate {
     bool operator==(const Structured_Macrostate& other) const;
 };
 
+
+
 template <>
 struct std::hash<Structured_Macrostate> {
     std::size_t operator() (const Structured_Macrostate& macrostate) const {
@@ -277,5 +279,15 @@ char convert_cube_bit_to_char(u8 cube_bit);
 void show_transitions_from_state(std::stringstream& output, const NFA& nfa, State origin, sylvan::MTBDD mtbdd);
 NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_State& init_state, sylvan::BDDSET bdd_vars);
 void init_mtbdd_libs();
+
+struct Lazy_Construction_State {
+    Formula_Pool& formula_pool;
+    vector<Structured_Macrostate>& output_queue;
+    unordered_map<Structured_Macrostate, u64> known_macrostates;
+    unordered_set<u64> accepting_macrostates;
+
+    bool is_trap_state_needed;
+    State trap_state_handle;
+};
 
 #endif
