@@ -18,9 +18,6 @@
 using std::set;
 using std::unordered_map;
 
-using sylvan::MTBDD;
-using sylvan::BDDSET;
-
 typedef uint64_t u64;
 typedef uint32_t u32;
 typedef uint8_t  u8;

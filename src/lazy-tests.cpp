@@ -389,7 +389,7 @@ TEST_CASE("lazy_construct `\\exists y,m (x - y <= -1 && && m - z <= -1 && y <= -
 
 
 TEST_CASE("NFA::pad_closure (simple)") {
-    BDDSET vars = sylvan::mtbdd_set_empty();
+    sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
     vars = sylvan::mtbdd_set_add(vars, 1);
     NFA nfa = {.states = {1, 2, 3}, .final_states = {3}, .initial_states = {1}, .vars = vars, .var_count = 1};
 
@@ -410,7 +410,7 @@ TEST_CASE("NFA::pad_closure (simple)") {
 
 
 TEST_CASE("NFA::determinize (simple)") {
-    BDDSET vars = sylvan::mtbdd_set_empty();
+    sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
     vars = sylvan::mtbdd_set_add(vars, 1);
     NFA nfa = {.states = {1, 2, 3}, .final_states = {3}, .initial_states = {1}, .vars = vars, .var_count = 1};
 
@@ -446,7 +446,7 @@ TEST_CASE("NFA::determinize (simple)") {
 
 TEST_CASE("NFA::intersection (simple)") {
     u32 var_ids[] = {1, 2};
-    BDDSET vars = sylvan::mtbdd_set_from_array(var_ids, 2);
+    sylvan::BDDSET vars = sylvan::mtbdd_set_from_array(var_ids, 2);
 
     NFA left_nfa, right_nfa;
     {
@@ -491,7 +491,7 @@ TEST_CASE("NFA::intersection (simple)") {
 
 TEST_CASE("remove_nonfinishing_states :: simple") {
     u32 var_arr[] = {1, 2};
-    BDDSET vars = sylvan::mtbdd_set_from_array(var_arr, 2);
+    sylvan::BDDSET vars = sylvan::mtbdd_set_from_array(var_arr, 2);
 
     NFA dfa = {
         .states = {1, 2, 3, 4, 5, 6},
