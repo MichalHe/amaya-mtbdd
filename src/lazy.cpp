@@ -858,9 +858,8 @@ char convert_cube_bit_to_char(u8 cube_bit) {
 void show_transitions_from_state(std::stringstream& output, const NFA& nfa, State origin, sylvan::MTBDD mtbdd) {
     u8 symbol[nfa.var_count];
 
-
-	MTBDD leaf = sylvan::mtbdd_enum_first(mtbdd, nfa.vars, symbol, NULL);
- 	while (leaf != sylvan::mtbdd_false) {
+    sylvan::MTBDD leaf = sylvan::mtbdd_enum_first(mtbdd, nfa.vars, symbol, NULL);
+    while (leaf != sylvan::mtbdd_false) {
         output << origin << " (" << convert_cube_bit_to_char(symbol[0]);
         for (u64 symbol_i = 1; symbol_i < nfa.var_count; symbol_i++) {
             output << ", " << convert_cube_bit_to_char(symbol[symbol_i]);
@@ -884,7 +883,7 @@ void show_transitions_from_state(std::stringstream& output, const NFA& nfa, Stat
 
  	    leaf = sylvan::mtbdd_enum_next(mtbdd, nfa.vars, symbol, NULL);
         if (leaf != sylvan::mtbdd_false) output << "\n";
- 	}
+    }
 }
 
 std::string NFA::show_transitions() const {
