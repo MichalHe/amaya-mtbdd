@@ -10,7 +10,10 @@ TASK_IMPL_4(MTBDD, mtbdd_uapplyp, MTBDD, dd, mtbdd_uapply_op, op, size_t, opid, 
         return result;
     }
 
+    // WRAP will call the op with the given params. The operation id is only for caching
+    // purposes and the op does not care about it.
     result = WRAP(op, dd, param);
+
     if (result != mtbdd_invalid) {
         cache_put3(opid, dd, (size_t) op, param, result);
         return result;
