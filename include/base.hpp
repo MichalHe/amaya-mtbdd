@@ -72,6 +72,7 @@ struct NFA {
     void add_transition(State from, State to, u64 symbol, u64 quantified_bits_mask);
     void add_transition(State from, State to, u8* symbol);
     void add_transition(State from, State to, std::vector<u8>&& symbol);
+    void add_universal_transition(State from, State to);
 
     std::string show_transitions() const;
     std::vector<Transition> get_symbolic_transitions_for_state(State state) const;

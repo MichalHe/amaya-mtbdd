@@ -567,3 +567,31 @@ TASK_IMPL_2(MTBDD, remove_states2_op, MTBDD, dd, uint64_t, param) {
 
     return mtbdd_invalid;
 }
+
+
+/*
+ * MTBDD tasks facilitating efficient minimization support.
+ */
+Replace_States_With_Partition_Info* g_replace_states_with_partition_info = nullptr;
+
+TASK_IMPL_2(MTBDD, replace_states_with_partition_ids_op, MTBDD, dd, uint64_t, iteration_number) {
+    if (dd == mtbdd_false) return dd;
+
+    assert(g_replace_states_with_partition_info);
+    const Replace_States_With_Partition_Info* op_info = g_replace_states_with_partition_info;
+
+    if (mtbdd_isleaf(dd)) {
+        auto leaf_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(dd));
+        assert(leaf_contents->destination_set.size() == 1);
+
+        State dest_state = *leaf_contents->destination_set.begin();
+        State eq_class_id = op_info->state_to_eq_class_id.at(dest_state);
+
+        Transition_Destination_Set new_leaf_contents;
+        new_leaf_contents.destination_set.insert(eq_class_id);
+        MTBDD leaf = make_set_leaf(&new_leaf_contents);
+        return leaf;
+    }
+
+    return mtbdd_invalid;
+}

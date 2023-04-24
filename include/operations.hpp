@@ -66,6 +66,14 @@ TASK_DECL_3(sylvan::MTBDD, transitions_intersection2_op, sylvan::MTBDD *, sylvan
 TASK_DECL_2(sylvan::MTBDD, replace_macrostates_with_handles_op, sylvan::MTBDD, uint64_t);
 TASK_DECL_2(sylvan::MTBDD, remove_states2_op, sylvan::MTBDD, uint64_t);
 
+
+struct Replace_States_With_Partition_Info {
+    std::unordered_map<State, State> state_to_eq_class_id;
+};
+extern Replace_States_With_Partition_Info* g_replace_states_with_partition_info;
+
+TASK_DECL_2(sylvan::MTBDD, replace_states_with_partition_ids_op, sylvan::MTBDD, uint64_t);
+
 typedef struct
 {
     State new_final_state;      // Final state to be added if the saturation property is broken

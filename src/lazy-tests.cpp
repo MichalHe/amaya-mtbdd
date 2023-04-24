@@ -524,6 +524,71 @@ TEST_CASE("remove_nonfinishing_states :: simple") {
     assert_dfas_are_isomorphic(expected_dfa, dfa);
 }
 
+TEST_CASE("Minimization - already minimal DFA ") {
+    u32 var_arr[] = {1};
+    sylvan::BDDSET vars = sylvan::mtbdd_set_from_array(var_arr, 1);
+    NFA already_minimal_dfa = {.states = {1, 2, 3},  .final_states = {2}, .initial_states = {1}, .vars = vars, .var_count = 1};
+
+    already_minimal_dfa.add_transition(1, 1, (std::vector<u8>){0});
+    already_minimal_dfa.add_transition(1, 2, (std::vector<u8>){1});
+    already_minimal_dfa.add_transition(2, 2, (std::vector<u8>){0});
+    already_minimal_dfa.add_transition(2, 3, (std::vector<u8>){1});
+    already_minimal_dfa.add_transition(3, 3, (std::vector<u8>){2});
+
+    NFA result = minimize_hopcroft(already_minimal_dfa);
+
+    assert_dfas_are_isomorphic(already_minimal_dfa, result);
+}
+
+TEST_CASE("Minimization - Wiki automaton") {
+    u32 var_arr[] = {1};
+    sylvan::BDDSET vars = sylvan::mtbdd_set_from_array(var_arr, 1);
+
+    NFA input = {
+        .states = {
+            1, // a
+            2, // b
+            3, // c
+            4, // d
+            5, // e
+            6, // f
+        },
+        .final_states = {3, 4, 5},
+        .initial_states = {1},
+        .vars = vars,
+        .var_count = 1
+    };
+
+    input.add_transition(1, 2, (std::vector<u8>){0});
+    input.add_transition(1, 3, (std::vector<u8>){1});
+
+    input.add_transition(2, 1, (std::vector<u8>){0});
+    input.add_transition(2, 4, (std::vector<u8>){1});
+
+    input.add_transition(3, 5, (std::vector<u8>){0});
+    input.add_transition(3, 6, (std::vector<u8>){1});
+
+    input.add_transition(4, 5, (std::vector<u8>){0});
+    input.add_transition(4, 6, (std::vector<u8>){1});
+
+    input.add_transition(5, 5, (std::vector<u8>){0});
+    input.add_transition(5, 6, (std::vector<u8>){1});
+
+    input.add_transition(6, 6, (std::vector<u8>){2});
+
+    NFA expected_result = {.states = {1, 2, 3},  .final_states = {2}, .initial_states = {1}, .vars = vars, .var_count = 1};
+    expected_result.add_transition(1, 1, (std::vector<u8>){0});
+    expected_result.add_transition(1, 2, (std::vector<u8>){1});
+    expected_result.add_transition(2, 2, (std::vector<u8>){0});
+    expected_result.add_transition(2, 3, (std::vector<u8>){1});
+    expected_result.add_transition(3, 3, (std::vector<u8>){2});
+
+    NFA result = minimize_hopcroft(input);
+
+    assert_dfas_are_isomorphic(expected_result, result);
+}
+
+
 int main(int argc, char* argv[]) {
     init_mtbdd_libs();
 

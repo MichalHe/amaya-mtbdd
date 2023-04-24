@@ -154,6 +154,11 @@ void NFA::add_transition(State from, State to, u8* rich_symbol) {
     }
 }
 
+void NFA::add_universal_transition(State from, State to) {
+    u64 all_bits_dont_care_mask = static_cast<u64>(-1);
+    add_transition(from, to, 0, all_bits_dont_care_mask);
+}
+
 
 std::vector<Transition> nfa_unpack_transitions(struct NFA& nfa) {
     LACE_ME;
@@ -639,15 +644,15 @@ bool should_explore_partition(std::vector<std::set<State>>& to_explore, std::set
 }
 
 
-std::pair<std::set<State>, std::set<State>> fragment_dest_states_using_partition(const std::set<State>& dest_states, const std::set<State>& partition) {
+std::pair<std::set<State>, std::set<State>> fragment_partition_using_dest(const std::set<State>& partition, const std::set<State>& dest_states) {
     std::set<State> intersection, difference;
 
-    std::set_intersection(dest_states.begin(), dest_states.end(),
-                          partition.begin(), partition.end(),
+    std::set_intersection(partition.begin(), partition.end(),
+                          dest_states.begin(), dest_states.end(),
                           std::inserter(intersection, intersection.begin()));
 
     // @Optimize: Do not compute the difference if we know that intersection is the same as dest_states
-    std::set_difference(dest_states.begin(), dest_states.end(),
+    std::set_difference(partition.begin(), partition.end(),
                         intersection.begin(), intersection.end(),
                         std::inserter(difference, difference.begin()));
 
@@ -655,8 +660,41 @@ std::pair<std::set<State>, std::set<State>> fragment_dest_states_using_partition
 }
 
 
+struct Partition_Refinement {
+    MTBDD eq_class_mtbdd;
+    State previous_eq_class_id;
+
+    bool operator==(const Partition_Refinement& other) const {
+        return eq_class_mtbdd == other.eq_class_mtbdd && previous_eq_class_id && other.previous_eq_class_id;
+    }
+};
+
+template <>
+struct std::hash<Partition_Refinement> {
+    std::size_t operator() (const Partition_Refinement& part_refinement) const {
+        std::size_t mtbdd_hash = std::hash<State>{}(part_refinement.eq_class_mtbdd);
+        std::size_t previous_eq_class_hash = std::hash<State>{}(part_refinement.previous_eq_class_id);
+        std::size_t hash = previous_eq_class_hash + 0x9e3779b9 + (mtbdd_hash << 6) + (mtbdd_hash >> 2);
+        return hash;
+    }
+};
+
+
 NFA minimize_hopcroft(NFA& nfa) {
     LACE_ME;
+
+    if (nfa.final_states.empty()) {
+        NFA result = {.states = {0}, .initial_states = {0}, .vars = nfa.vars, .var_count = nfa.var_count};
+        result.add_universal_transition(0, 0);
+        return result;
+    }
+
+    if (nfa.final_states.size() == nfa.states.size()) {
+        NFA result = {.states = {0, 1}, .final_states = {1}, .initial_states = {0}, .vars = nfa.vars, .var_count = nfa.var_count};
+        result.add_universal_transition(0, 1);
+        result.add_universal_transition(1, 1);
+        return result;
+    }
 
     // Create initial partitions
     std::set<State> nonfinal_states_ordered;
@@ -666,225 +704,117 @@ NFA minimize_hopcroft(NFA& nfa) {
 
     PRINT_DEBUG("Minimizing automaton " << nfa);
 
-    std::vector<std::set<State>> partitions_to_check {nfa.final_states, nonfinal_states_ordered};
-    std::set<std::set<State>> existing_partitions {nfa.final_states, nonfinal_states_ordered};
+    typedef std::set<State> EqClass;
+    std::map<EqClass, State> partition = {
+        {nfa.final_states, 0},
+        {nonfinal_states_ordered, 1},
+    };
 
-    uint8_t path_in_mtbdd_to_leaf[nfa.var_count];
-    uint32_t vars_to_check[nfa.var_count];
-    sylvan::mtbdd_set_to_array(nfa.vars, vars_to_check);
+    std::unordered_set<State, u64> state_to_partition_id_map;
+    state_to_partition_id_map.reserve(nfa.states.size());
+
+    Replace_States_With_Partition_Info replace_states_with_partition_info;
+    g_replace_states_with_partition_info = &replace_states_with_partition_info;
 
     // Refine partitions untill fixpoint
-    while (!partitions_to_check.empty()) {
-        auto current_partition = partitions_to_check.back();
-        bool was_current_partition_fragmented = false;
-        partitions_to_check.pop_back();
+    u64 iteration_num = 0;
+    u64 operation_id = get_next_operation_id();
 
-        PRINT_DEBUG("Processing partition: " << current_partition << " (size=" << current_partition.size() << ")");
+    bool was_partition_refined = false;
+    std::unordered_map<Partition_Refinement, EqClass> mtbdd_to_eq_class;
 
-        // Compute MTBDD encoding all outgoing transitions of the current partition
-        MTBDD partition_mtbdd = sylvan::mtbdd_false;
-        sylvan::mtbdd_refs_push(partition_mtbdd);
-        for (auto state : current_partition){
-            MTBDD mtbdd_for_current_partition_component = nfa.transitions[state];
+    do {
+        sylvan::mtbdd_refs_pop(mtbdd_to_eq_class.size());
+        mtbdd_to_eq_class.clear();
 
+        // Create mapping to map states to their equivalence class
+        for (auto& [eq_class, eq_class_id]: partition) {
+            for (auto& state: eq_class) {
+                replace_states_with_partition_info.state_to_eq_class_id[state] = eq_class_id;
+            }
+        }
+
+        // Apply uapply on every state MTBDD that converts the leaf contents {<some_state>} into {[<some_state>]_current_partition}
+        for (auto [state, state_mtbdd]: nfa.transitions) {
             using namespace sylvan;
-            MTBDD new_partition_mtbdd = mtbdd_applyp(partition_mtbdd,
-                                                     mtbdd_for_current_partition_component,
-                                                     (uint64_t) 0,
-                                                     TASK(transitions_union_op),
-                                                     AMAYA_UNION_OP_ID);
-            sylvan::mtbdd_refs_pop(1);
-            sylvan::mtbdd_refs_push(new_partition_mtbdd);
-            partition_mtbdd = new_partition_mtbdd;
+            sylvan::MTBDD state_eq_mtbdd = mtbdd_uapplyp(state_mtbdd,
+                                                         TASK(replace_states_with_partition_ids_op),
+                                                         operation_id,
+                                                         iteration_num);
+
+            State previous_eq_class_id = replace_states_with_partition_info.state_to_eq_class_id[state];
+            Partition_Refinement refinement = {.eq_class_mtbdd = state_eq_mtbdd, .previous_eq_class_id = previous_eq_class_id};
+
+            auto [container_pos, was_inserted] = mtbdd_to_eq_class.emplace(refinement, (std::set<State>){state});
+            if (was_inserted) {
+                sylvan::mtbdd_refs_push(state_eq_mtbdd);
+            } else {
+                container_pos->second.insert(state);
+            }
         }
 
-        // Iterate over all leaves of the created MTBDD. Every such a leaf represents a single post set over a symbol
-        // given implicitly by the path in the MTBDD.
-        MTBDD leaf = sylvan::mtbdd_enum_first(partition_mtbdd, nfa.vars, path_in_mtbdd_to_leaf, NULL);
-
-        while (leaf != sylvan::mtbdd_false && !was_current_partition_fragmented) {
-            // See whether the states reachable via this symbol belong to the same equivalence class
-            Transition_Destination_Set* leaf_contents = (Transition_Destination_Set*) sylvan::mtbdd_getvalue(leaf);
-
-            // If the entire partition leads to one state it cannot be fragmented using this single state
-            if (false && leaf_contents->destination_set.size() == 1) {
-                leaf = sylvan::mtbdd_enum_next(partition_mtbdd, nfa.vars, path_in_mtbdd_to_leaf, NULL);
-                continue;
-            }
-
-            // Check if the entire destination set belongs to same equivalence class, or we need to fragment it
-            for (auto existing_partition: existing_partitions) {
-                // @Optimize: Pass in references to sets - reuse them, and avoid needless allocations
-                auto fragment = fragment_dest_states_using_partition(leaf_contents->destination_set, existing_partition);
-
-                PRINT_DEBUG("Fragmented " << current_partition << " using " << existing_partition << " into " << fragment.first << " " << fragment.second);
-
-                auto dest_states_from_existing_partition = fragment.first;
-                auto dest_states_not_from_existing_partition = fragment.second;
-
-                if (dest_states_from_existing_partition.size() && dest_states_not_from_existing_partition.size()) {
-                    // @Optimize: For now, we compute fragments of the current partition iteratively. Instead, we should keep the information
-                    //            about what state led to a component of the destination set in the MTBDD
-
-                    std::set<State> fragment_leading_to_partition, fragment_not_leading_to_partition;
-
-                    // Iterate over the states in current partition and divide them into those that lead to the existing partition, and those that do not
-                    for (auto state: current_partition) {
-                        MTBDD state_mtbdd = nfa.transitions[state];
-
-                        state_mtbdd = traverse_mtbdd_along_variables(state_mtbdd, vars_to_check, nfa.var_count, path_in_mtbdd_to_leaf);
-
-                        Transition_Destination_Set* tds = (Transition_Destination_Set*) sylvan::mtbdd_getvalue(state_mtbdd);
-
-                        assert(tds->destination_set.size() == 1);  // We should be dealing with complete DFAs
-                        State dest_state = *(tds->destination_set.begin());
-
-                        if (existing_partition.find(dest_state) != existing_partition.end()) {
-                            fragment_leading_to_partition.insert(state);
-                        } else {
-                            fragment_not_leading_to_partition.insert(state);
-                        }
-                    }
-
-
-                    assert(fragment_not_leading_to_partition.size());
-                    assert(fragment_leading_to_partition.size());
-
-                    // Update the overall partitions with the fragments
-                    existing_partitions.erase(current_partition);
-                    existing_partitions.insert(fragment_leading_to_partition);
-                    existing_partitions.insert(fragment_not_leading_to_partition);
-
-                    if (should_explore_partition(partitions_to_check, existing_partitions, fragment_leading_to_partition)) {
-                        partitions_to_check.push_back(fragment_leading_to_partition);
-                    }
-
-                    if (should_explore_partition(partitions_to_check, existing_partitions, fragment_not_leading_to_partition)) {
-                        partitions_to_check.push_back(fragment_not_leading_to_partition);
-                    }
-
-                    was_current_partition_fragmented = true;
-                    break;
-                }
-            }
-
-            leaf = sylvan::mtbdd_enum_next(partition_mtbdd, nfa.vars, path_in_mtbdd_to_leaf, NULL);
+#if DEBUG
+        std::cout << "Refined this:\n";
+        for (auto [eq_class, eq_class_idx]: partition) {
+            std::cout << eq_class_idx << " - " << eq_class << "\n";
         }
-        sylvan::mtbdd_refs_pop(1);
-    }
+        std::cout << "into:\n";
+        for (auto [mtbdd, eq_class]: mtbdd_to_eq_class) {
+            std::cout << " - " << eq_class << "\n";
+        }
+#endif
+
+        std::map<EqClass, State> new_partition;
+        for (auto [eq_class_mtbdd, eq_class]: mtbdd_to_eq_class) {
+            new_partition.emplace(eq_class, new_partition.size());
+        }
+        if (mtbdd_to_eq_class.size() != partition.size()) {
+            partition.swap(new_partition);
+            was_partition_refined = true;
+        } else {
+            was_partition_refined = false;
+        }
+
+        iteration_num++;
+    } while (was_partition_refined);
+
+    g_replace_states_with_partition_info = nullptr;
 
 #if DEBUG
     std::cout << "Fixpoint found. Partitions:" << std::endl;
-    for (auto partition: existing_partitions) {
-        std::cout << " - " << partition << std::endl;
+    for (auto [eq_class, eq_class_id]: partition) {
+        std::cout << " - " << eq_class << std::endl;
     }
 #endif
 
     // Construct the NFA with states resulting from condensation according to computed eq. partitions
-    NFA result_nfa;
-    result_nfa.vars      = nfa.vars;
-    result_nfa.var_count = nfa.var_count;
+    NFA result_nfa = {.vars = nfa.vars, .var_count = nfa.var_count};
 
-    std::map<State, const std::set<State>*> state_to_its_parition;
-    for (auto& partition: existing_partitions) {
-        for (auto state: partition) {
-            state_to_its_parition[state] = &partition;
+    // Setup result's initial state
+    {
+        State initial_state = *nfa.initial_states.begin();  // It is an DFA, therefore there is only one final state
+        auto initial_eq_class_id = replace_states_with_partition_info.state_to_eq_class_id[initial_state];
+        result_nfa.initial_states.insert(initial_eq_class_id);
+    }
+
+    // Use the computed MTBDDs from partition refining as they are already correct to setup result's transition
+    {
+        for (auto& [class_refinement, eq_class]: mtbdd_to_eq_class) {
+            assert(!eq_class.empty());
+            State class_state = *eq_class.begin();
+            State class_id = replace_states_with_partition_info.state_to_eq_class_id[class_state];
+            result_nfa.transitions[class_id] = class_refinement.eq_class_mtbdd;
+
+            sylvan::mtbdd_ref(class_refinement.eq_class_mtbdd);
+
+            result_nfa.states.insert(class_id);
+            if (nfa.final_states.contains(class_state)) {
+                result_nfa.final_states.insert(class_id);
+            }
         }
     }
 
-    State partition_index = 0;
-    State next_available_partition_index = 1;
-    State initial_state = *nfa.initial_states.begin();  // It is an DFA, therefore there is only one final state
-    auto initial_partition_ptr = state_to_its_parition[initial_state];
-
-    // We cannot populate the partition_to_state_index right now, since some partitions
-    // might not be reachable and we would like to avoid assigning them a state number
-    // However, we know that the initial partition will have its state number = 0
-    std::map<const std::set<State>*, State> partition_ptr_to_state_index {{initial_partition_ptr, 0}};
-    result_nfa.initial_states.insert(0);
-
-    // Start with the partition containing the initial state and discover reachable partitions from there
-    std::set<const std::set<State>*> partitions_to_add_to_minimized_dfa{initial_partition_ptr};
-
-    while (!partitions_to_add_to_minimized_dfa.empty()) {
-        auto current_part_it = partitions_to_add_to_minimized_dfa.begin();
-        partitions_to_add_to_minimized_dfa.erase(current_part_it);
-
-        auto current_partition_ptr = *current_part_it;
-
-        auto partition_index_ptr = &partition_ptr_to_state_index[current_partition_ptr];
-        partition_index = *partition_index_ptr; // Partition index will not have its uppermost bit 1
-        *partition_index_ptr |= (1ul << 63);    // Set the topmost bit to 1 to indicate that we already did explore the partition
-
-        PRINTF_DEBUG("Processing state=%lu (value=%lu)\n", (partition_index & ~(1ul << 63)), partition_index);
-
-        result_nfa.states.insert(partition_index);
-
-        // It is sufficient to check only one state, as there cannot be a partition with containing a final and a nonfinal state
-        State some_state = *current_partition_ptr->begin();
-        if (nfa.final_states.find(some_state) != nfa.final_states.end())
-            result_nfa.final_states.insert(partition_index);
-
-        // Compute transitions - create MTBDD of this partition
-        MTBDD mtbdd_for_current_partition_index = sylvan::mtbdd_false;
-        sylvan::mtbdd_refs_push(mtbdd_for_current_partition_index);
-
-        MTBDD mtbdd_for_some_state = nfa.transitions[some_state];
-        MTBDD leaf                 = sylvan::mtbdd_enum_first(mtbdd_for_some_state, nfa.vars, path_in_mtbdd_to_leaf, NULL);
-
-        while (leaf != sylvan::mtbdd_false) {
-            auto tds = reinterpret_cast<Transition_Destination_Set*>(sylvan::mtbdd_getvalue(leaf));
-            State tds_state = *tds->destination_set.begin();
-
-            auto tds_partition_ptr = state_to_its_parition[tds_state];
-
-            // Check if we have already seen the destination partition before and it already has a number
-            State dest_partition_index;
-            bool was_dest_partition_explored = false;
-            auto partition_ptr_to_state_index_iter = partition_ptr_to_state_index.find(tds_partition_ptr);
-            if (partition_ptr_to_state_index_iter != partition_ptr_to_state_index.end()) {
-                dest_partition_index = (*partition_ptr_to_state_index_iter).second;
-                was_dest_partition_explored = (1ul << 63) & dest_partition_index; // Get the topmost bit - was explorated info
-                dest_partition_index &= ~(1ul << 63); // Zero out the topmost bit
-            } else {
-                dest_partition_index = next_available_partition_index;
-                partition_ptr_to_state_index[tds_partition_ptr] = next_available_partition_index++;
-            }
-
-            // Create a MTBDD encoding only the transition to the state resulting from condensing the partition in which was the state located
-            Transition_Destination_Set destination_tds;
-            destination_tds.destination_set = {dest_partition_index};
-
-            MTBDD dest_leaf  = sylvan::mtbdd_makeleaf(mtbdd_leaf_type_set, (uint64_t) &destination_tds);
-            MTBDD dest_mtbdd = sylvan::mtbdd_cube(nfa.vars, path_in_mtbdd_to_leaf, dest_leaf);
-
-            // Add the created MTBDD to the other transitions originating in the current state
-            using namespace sylvan;
-            MTBDD new_mtbdd_for_current_part_idx = mtbdd_applyp(mtbdd_for_current_partition_index,
-                                                                dest_mtbdd,
-                                                                static_cast<u64>(0),
-                                                                TASK(transitions_union_op),
-                                                                AMAYA_UNION_OP_ID);
-            sylvan::mtbdd_refs_pop(1);
-            sylvan::mtbdd_refs_push(new_mtbdd_for_current_part_idx);
-            mtbdd_for_current_partition_index = new_mtbdd_for_current_part_idx;
-
-            // Check whether we have already explored the destination partition
-            if (!was_dest_partition_explored) {
-                partitions_to_add_to_minimized_dfa.insert(tds_partition_ptr);
-            } else {
-                PRINT_DEBUG("Reachable partition " << *tds_partition_ptr << " aka " << tds_state << " was already explored.");
-            }
-
-            leaf = mtbdd_enum_next(mtbdd_for_some_state, nfa.vars, path_in_mtbdd_to_leaf, NULL);
-        }
-
-        // @Note: We cannot ref all transition mtbdds at the end becaouse GC might trigger during the execution
-        //        of the contruction of the result
-        sylvan::mtbdd_ref(mtbdd_for_current_partition_index);
-        sylvan::mtbdd_refs_pop(1);
-        result_nfa.transitions[partition_index] = mtbdd_for_current_partition_index;
-    }
+    sylvan::mtbdd_refs_pop(mtbdd_to_eq_class.size());
 
     PRINT_DEBUG("Result has #states=" << result_nfa.states.size());
 
