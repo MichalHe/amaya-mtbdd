@@ -11,13 +11,37 @@
 
 #include <sylvan.h>
 
-#define AMAYA_EXISTS_OPERATION_ID 0x2000000
-#define AMAYA_UNION_OP_ID 0x4000000
-#define AMAYA_EXTEND_FRONTIER_OP_ID 0x8000000
-#define AMAYA_ADD_PAD_TRANSITIONS_OP_ID 0xc000000
-#define AMAYA_TRANSITIONS_INTERSECT_OP_ID 0xdd00000
-#define AMAYA_REPLACE_MACROSTATES_WITH_HANDLES_OP 0xe000000
-#define AMAYA_REMOVE_STATES_OP 0xf000000
+/**
+Operation IDs are shifted by 40, because of the way sylvan combines the operation ID with other value parameters
+to query the operation cache.
+*/
+#define AMAYA_EXISTS_OPERATION_ID                 (90llu) << 40u
+#define AMAYA_UNION_OP_ID                         (91llu) << 40u
+#define AMAYA_EXTEND_FRONTIER_OP_ID               (92llu) << 40u
+
+/* Dynamic operation ID management
+ * -------------------------------
+ * Some operations e.g. determinization need a different operation id everytime they are
+ * performed (on a different automaton) as reusing operation ID would cause cached values
+ * from previous invocations to be used as result. Since the macrostate to handle renaming
+ * that is performed is unique to the input NFA, the results cannot be reused.
+ */
+#define AMAYA_DYNAMIC_OP_ID_START                 (100llu) << 40u
+u64 get_next_operation_id();
+
+/**
+* Global constant information used troughout a single invocation of a pad closure
+*/
+struct Pad_Closure_Info2 {
+    const State new_final_state;
+    const std::set<State>* final_states;
+};
+extern Pad_Closure_Info2* g_pad_closure_info;
+
+#define AMAYA_ADD_PAD_TRANSITIONS_OP_ID           (93llu) << 40u
+#define AMAYA_TRANSITIONS_INTERSECT_OP_ID         (94llu) << 40u
+#define AMAYA_REMOVE_STATES_OP                    (96llu) << 40u
+#define AMAYA_REPLACE_MACROSTATES_WITH_HANDLES_OP (95llu) << 40u
 
 /**
  * The *abstraction* F definition.
@@ -85,12 +109,6 @@ fragment_dest_states_using_partition(const std::set<State>& dest_states, const s
 
 template<typename C>
 std::string states_to_str(const C& states);
-
-struct Pad_Closure_Info2 {
-    State origin_state;
-    State new_final_state;
-    std::set<State>* final_states;
-};
 
 struct Intersection_Discovery {
     State left;

@@ -1,6 +1,10 @@
 #include "../include/base.hpp"
 #include "../include/custom_leaf.hpp"
 #include "../include/operations.hpp"
+#include "../include/sylvan-extra.h"
+
+#include <lace.h>
+#include <sylvan.h>
 
 #include <algorithm>
 #include <cassert>
@@ -11,7 +15,6 @@
 #include <string>
 
 using sylvan::MTBDD;
-
 
 Transition_Destination_Set::Transition_Destination_Set(const Transition_Destination_Set &other) {
     // NOTE: Copy is called when a new leaf is created
@@ -216,7 +219,7 @@ void NFA::perform_pad_closure(u64 leaf_type_id) {
     while (was_frontier_modified) {
         MTBDD new_frontier = frontier;
         for (auto& [origin, state_mtbdd]: transitions) {
-            new_frontier = mtbdd_applyp(state_mtbdd, new_frontier, origin, TASK(build_pad_closure_fronier_op), AMAYA_EXTEND_FRONTIER_OP_ID );
+            new_frontier = mtbdd_applyp(state_mtbdd, new_frontier, origin, TASK(build_pad_closure_fronier_op), AMAYA_EXTEND_FRONTIER_OP_ID);
         }
         was_frontier_modified = (new_frontier != frontier);
         frontier = new_frontier;
@@ -224,16 +227,21 @@ void NFA::perform_pad_closure(u64 leaf_type_id) {
 
 
     State new_final_state = *states.rbegin() + 1;
+
     Pad_Closure_Info2 pad_closure_info = {.new_final_state = new_final_state, .final_states = &final_states};
+    g_pad_closure_info = &pad_closure_info;
+
+    const u64 current_pad_closure_id = get_next_operation_id();
 
     bool was_any_transition_added = false;
     for (auto& state_transition_pair: transitions) {
-        pad_closure_info.origin_state = state_transition_pair.first;
+        State origin_state = state_transition_pair.first;
         MTBDD old_mtbdd = state_transition_pair.second;
         state_transition_pair.second = mtbdd_applyp(state_transition_pair.second,
                                                     frontier,
-                                                    reinterpret_cast<u64>(&pad_closure_info),
-                                                    TASK(add_pad_transitions_op), AMAYA_ADD_PAD_TRANSITIONS_OP_ID);
+                                                    static_cast<u64>(origin_state),
+                                                    TASK(add_pad_transitions_op),
+                                                    current_pad_closure_id);
         if (old_mtbdd != state_transition_pair.second) was_any_transition_added = true;
     }
 
@@ -459,6 +467,8 @@ NFA compute_nfa_intersection(NFA& left, NFA& right) {
         }
     }
 
+    const u64 current_intersection_op_id = get_next_operation_id();
+
     while (!work_queue.empty()) {
         auto explored_product = work_queue.back();
         work_queue.pop_back();
@@ -474,7 +484,7 @@ NFA compute_nfa_intersection(NFA& left, NFA& right) {
 
         using namespace sylvan;
         sylvan::MTBDD product_mtbdd = mtbdd_applyp(left_mtbdd, right_mtbdd, reinterpret_cast<u64>(&intersection_info),
-                                                   TASK(transitions_intersection2_op), AMAYA_TRANSITIONS_INTERSECT_OP_ID);
+                                                   TASK(transitions_intersection2_op), current_intersection_op_id);
         sylvan::mtbdd_ref(product_mtbdd);
         intersection_nfa.transitions[explored_product.handle] = product_mtbdd;
     }
@@ -512,6 +522,8 @@ NFA determinize_nfa(NFA& nfa) {
 
     u8 path_in_transitions_mtbdd[nfa.var_count];
 
+    const u64 current_determinization_op_id = get_next_operation_id();
+
     while (!work_queue.empty()) {
         auto current_macrostate_entry = work_queue.back();
         work_queue.pop_back();
@@ -539,9 +551,11 @@ NFA determinize_nfa(NFA& nfa) {
         }
 
         using namespace sylvan;
-        MTBDD transition_mtbdd = mtbdd_uapply(macrostate_transitions,
-                                             TASK(replace_macrostates_with_handles_op),
-                                             reinterpret_cast<u64>(&(ctx)));
+        MTBDD transition_mtbdd = mtbdd_uapplyp(macrostate_transitions,
+                                               TASK(replace_macrostates_with_handles_op),
+                                               current_determinization_op_id,
+                                               reinterpret_cast<u64>(&(ctx)));
+
         sylvan::mtbdd_ref(transition_mtbdd);
         sylvan::mtbdd_refs_pop(1);
         result.transitions.emplace(handle, transition_mtbdd);

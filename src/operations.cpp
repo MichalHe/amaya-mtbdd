@@ -63,6 +63,21 @@ uint64_t  STATE_RENAME_OP_COUNTER = (1LL << 33);
 uint64_t  TRANSFORM_MACROSTATES_TO_INTS_COUNTER = (1LL << 34);
 
 /**
+ * Dynamic operation ID management.
+ */
+u64 g_operation_id = AMAYA_DYNAMIC_OP_ID_START;
+u64 get_next_operation_id() {
+    u64 operation_id = g_operation_id;
+    g_operation_id += AMAYA_DYNAMIC_OP_ID_START;
+    return operation_id;
+}
+
+/**
+* Data necessary for applying pad closure to a single automaton.
+*/
+Pad_Closure_Info2* g_pad_closure_info = nullptr;
+
+/**
  * Unites the two transition MTBDDs.
  */
 TASK_IMPL_3(MTBDD, transitions_union_op, MTBDD *, left_op_ptr, MTBDD *, right_op_ptr, uint64_t, param)
@@ -499,7 +514,7 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
             Transition_Destination_Set* leaf_contents = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
 
             // If the entire partition leads to one state it cannot be fragmented using this single state
-            if (leaf_contents->destination_set.size() == 1) {
+            if (false && leaf_contents->destination_set.size() == 1) {
                 leaf = mtbdd_enum_next(partition_mtbdd, nfa.vars, path_in_mtbdd_to_leaf, NULL);
                 continue;
             }
@@ -508,6 +523,9 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
             for (auto existing_partition: existing_partitions) {
                 // @Optimize: Pass in references to sets - reuse them, and avoid needless allocations
                 auto fragment = fragment_dest_states_using_partition(leaf_contents->destination_set, existing_partition);
+#if DEBUG
+                std::cout << "Fragmented " << current_partition << " using " << existing_partition << " into " << fragment.first << " " << fragment.second << "\n";
+#endif
                 auto dest_states_from_existing_partition = fragment.first;
                 auto dest_states_not_from_existing_partition = fragment.second;
 
@@ -524,7 +542,6 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
                         state_mtbdd = traverse_mtbdd_along_variables(state_mtbdd, vars_to_check, nfa.var_count, path_in_mtbdd_to_leaf);
 
                         Transition_Destination_Set* tds = (Transition_Destination_Set*) sylvan::mtbdd_getvalue(state_mtbdd);
-
 
                         assert(tds->destination_set.size() == 1);  // We should be dealing with complete DFAs
                         State dest_state = *(tds->destination_set.begin());
@@ -599,8 +616,10 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
     std::set<const std::set<State>*> partitions_to_add_to_minimized_dfa{initial_partition_ptr};
 
     while (!partitions_to_add_to_minimized_dfa.empty()) {
-        auto current_partition_ptr = *partitions_to_add_to_minimized_dfa.begin();
-        partitions_to_add_to_minimized_dfa.erase(current_partition_ptr);
+        auto current_part_it = partitions_to_add_to_minimized_dfa.begin();
+        partitions_to_add_to_minimized_dfa.erase(current_part_it);
+
+        auto current_partition_ptr = *current_part_it;
 
         auto partition_index_ptr = &partition_ptr_to_state_index[current_partition_ptr];
         partition_index = *partition_index_ptr; // Partition index will not have its uppermost bit 1
@@ -620,12 +639,13 @@ struct NFA minimize_hopcroft(struct NFA& nfa)
         MTBDD mtbdd_for_current_partition_index = sylvan::mtbdd_false;
         sylvan::mtbdd_refs_push(mtbdd_for_current_partition_index);
 
-        MTBDD mtbdd_for_some_state              = nfa.transitions[some_state];
-        MTBDD leaf                              = mtbdd_enum_first(mtbdd_for_some_state, nfa.vars, path_in_mtbdd_to_leaf, NULL);
+        MTBDD mtbdd_for_some_state = nfa.transitions[some_state];
+        MTBDD leaf                 = mtbdd_enum_first(mtbdd_for_some_state, nfa.vars, path_in_mtbdd_to_leaf, NULL);
 
         while (leaf != mtbdd_false) {
-            Transition_Destination_Set* tds = (Transition_Destination_Set*) mtbdd_getvalue(leaf);
+            auto tds = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(leaf));
             State tds_state = *tds->destination_set.begin();
+
             auto tds_partition_ptr = state_to_its_parition[tds_state];
 
             // Check if we have already seen the destination partition before and it already has a number
@@ -696,7 +716,6 @@ TASK_IMPL_3(MTBDD, build_pad_closure_fronier_op, MTBDD *, p_extension, MTBDD *, 
         auto extension_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(extension));
         auto frontier_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(frontier));
 
-
         if (frontier_contents->destination_set.contains(extension_origin_state)) {
             return frontier;
         }
@@ -717,9 +736,12 @@ TASK_IMPL_3(MTBDD, build_pad_closure_fronier_op, MTBDD *, p_extension, MTBDD *, 
     return mtbdd_invalid;
 }
 
-TASK_IMPL_3(MTBDD, add_pad_transitions_op, MTBDD *, p_transitions, MTBDD *, p_frontier, u64, raw_pad_closure_info)
-{
-    Pad_Closure_Info2* pad_closure_info = reinterpret_cast<Pad_Closure_Info2*>(raw_pad_closure_info);
+TASK_IMPL_3(MTBDD, add_pad_transitions_op, MTBDD *, p_transitions, MTBDD *, p_frontier, u64, raw_origin_state) {
+    State origin_state = static_cast<State>(raw_origin_state);
+
+    assert(g_pad_closure_info != nullptr);
+    const Pad_Closure_Info2* pad_closure_info = g_pad_closure_info;
+
     MTBDD transitions = *p_transitions, frontier = *p_frontier;
 
     if (transitions == mtbdd_false) {
@@ -735,7 +757,7 @@ TASK_IMPL_3(MTBDD, add_pad_transitions_op, MTBDD *, p_transitions, MTBDD *, p_fr
         auto frontier_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(frontier));
 
         // It must be possible to reach a final state from the current origin
-        if (!frontier_contents->destination_set.contains(pad_closure_info->origin_state))
+        if (!frontier_contents->destination_set.contains(origin_state))
             return transitions;
 
         // Make sure that also its post is contained in the frontier as states that are final are contained in the frontier
