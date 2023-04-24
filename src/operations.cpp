@@ -340,26 +340,7 @@ TASK_IMPL_2(MTBDD, transform_macrostates_to_ints_op, MTBDD, dd, uint64_t, param)
 }
 
 
-template<typename C>
-std::string states_to_str(C const& states) {
-    std::stringstream partition_str;
-
-    partition_str << "{";
-    if (!states.empty()) {
-        auto state_it = states.begin();
-        partition_str << *(state_it++);
-        for (; state_it != states.end(); ++state_it) {
-            partition_str << ", " << *state_it;
-        }
-    }
-    partition_str << "}";
-
-    return partition_str.str();
-}
-
-
-void write_mtbdd_dot_to_tmp_file(const std::string& filename, sylvan::MTBDD mtbdd)
-{
+void write_mtbdd_dot_to_tmp_file(const std::string& filename, sylvan::MTBDD mtbdd) {
     std::string output_path = "/tmp/" + filename;
     auto output_file_handle = fopen(output_path.c_str(), "w");
     sylvan::mtbdd_fprintdot(output_file_handle, mtbdd);
@@ -367,8 +348,7 @@ void write_mtbdd_dot_to_tmp_file(const std::string& filename, sylvan::MTBDD mtbd
 }
 
 template<typename T>
-std::string array_to_str(T* array, const uint64_t array_size)
-{
+std::string array_to_str(T* array, const uint64_t array_size) {
     stringstream string_stream;
     string_stream << "[";
     if (!array_size) {

@@ -663,9 +663,8 @@ NFA minimize_hopcroft(NFA& nfa) {
     std::set_difference(nfa.states.begin(), nfa.states.end(),
                         nfa.final_states.begin(), nfa.final_states.end(),
                         std::inserter(nonfinal_states_ordered, nonfinal_states_ordered.begin()));
-#if DEBUG
-    std::cout << "Minimizing automaton " << nfa << std::endl;
-#endif
+
+    PRINT_DEBUG("Minimizing automaton " << nfa);
 
     std::vector<std::set<State>> partitions_to_check {nfa.final_states, nonfinal_states_ordered};
     std::set<std::set<State>> existing_partitions {nfa.final_states, nonfinal_states_ordered};
@@ -680,9 +679,7 @@ NFA minimize_hopcroft(NFA& nfa) {
         bool was_current_partition_fragmented = false;
         partitions_to_check.pop_back();
 
-#if DEBUG
-        std::cout << "Processing partition: " << states_to_str(current_partition) << " (size=" << current_partition.size() << ")" << std::endl;
-#endif
+        PRINT_DEBUG("Processing partition: " << current_partition << " (size=" << current_partition.size() << ")");
 
         // Compute MTBDD encoding all outgoing transitions of the current partition
         MTBDD partition_mtbdd = sylvan::mtbdd_false;
@@ -719,9 +716,9 @@ NFA minimize_hopcroft(NFA& nfa) {
             for (auto existing_partition: existing_partitions) {
                 // @Optimize: Pass in references to sets - reuse them, and avoid needless allocations
                 auto fragment = fragment_dest_states_using_partition(leaf_contents->destination_set, existing_partition);
-#if DEBUG
-                std::cout << "Fragmented " << current_partition << " using " << existing_partition << " into " << fragment.first << " " << fragment.second << "\n";
-#endif
+
+                PRINT_DEBUG("Fragmented " << current_partition << " using " << existing_partition << " into " << fragment.first << " " << fragment.second);
+
                 auto dest_states_from_existing_partition = fragment.first;
                 auto dest_states_not_from_existing_partition = fragment.second;
 
@@ -750,10 +747,8 @@ NFA minimize_hopcroft(NFA& nfa) {
                     }
 
 
-#if DEBUG
                     assert(fragment_not_leading_to_partition.size());
                     assert(fragment_leading_to_partition.size());
-#endif
 
                     // Update the overall partitions with the fragments
                     existing_partitions.erase(current_partition);
@@ -781,7 +776,7 @@ NFA minimize_hopcroft(NFA& nfa) {
 #if DEBUG
     std::cout << "Fixpoint found. Partitions:" << std::endl;
     for (auto partition: existing_partitions) {
-        std::cout << " - " << states_to_str(partition) << std::endl;
+        std::cout << " - " << partition << std::endl;
     }
 #endif
 
@@ -821,9 +816,8 @@ NFA minimize_hopcroft(NFA& nfa) {
         partition_index = *partition_index_ptr; // Partition index will not have its uppermost bit 1
         *partition_index_ptr |= (1ul << 63);    // Set the topmost bit to 1 to indicate that we already did explore the partition
 
-#if DEBUG
-        printf("Processing state=%lu (value=%lu)\n", (partition_index & ~(1ul << 63)), partition_index);
-#endif
+        PRINTF_DEBUG("Processing state=%lu (value=%lu)\n", (partition_index & ~(1ul << 63)), partition_index);
+
         result_nfa.states.insert(partition_index);
 
         // It is sufficient to check only one state, as there cannot be a partition with containing a final and a nonfinal state
@@ -879,9 +873,7 @@ NFA minimize_hopcroft(NFA& nfa) {
             if (!was_dest_partition_explored) {
                 partitions_to_add_to_minimized_dfa.insert(tds_partition_ptr);
             } else {
-#if DEBUG
-                std::cout << "Reachable partition " << states_to_str(*tds_partition_ptr) << " aka " << tds_state << " was already explored." << std::endl;
-#endif
+                PRINT_DEBUG("Reachable partition " << *tds_partition_ptr << " aka " << tds_state << " was already explored.");
             }
 
             leaf = mtbdd_enum_next(mtbdd_for_some_state, nfa.vars, path_in_mtbdd_to_leaf, NULL);
@@ -893,9 +885,8 @@ NFA minimize_hopcroft(NFA& nfa) {
         sylvan::mtbdd_refs_pop(1);
         result_nfa.transitions[partition_index] = mtbdd_for_current_partition_index;
     }
-#if DEBUG
-    std::cout << "Result has #states=" << result_nfa.states.size() << std::endl;
-#endif
+
+    PRINT_DEBUG("Result has #states=" << result_nfa.states.size());
 
     return result_nfa;
 }

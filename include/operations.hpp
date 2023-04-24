@@ -98,11 +98,6 @@ typedef struct
     State first_available_state_number;
 } Transform_Macrostates_To_Ints_State;
 
-struct NFA minimize_hopcroft(struct NFA& nfa);
-
-template<typename C>
-std::string states_to_str(const C& states);
-
 struct Intersection_Discovery {
     State left;
     State right;

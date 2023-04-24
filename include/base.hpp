@@ -15,6 +15,15 @@
 
 #include <sylvan.h>
 
+#if DEBUG
+#define PRINT_DEBUG(it) do { std::cerr << it << std::endl; } while (0)
+#define PRINTF_DEBUG(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
+#else
+#define PRINT_DEBUG(it)
+#define PRINTF_DEBUG(...)
+#endif
+
+
 using std::set;
 using std::unordered_map;
 
