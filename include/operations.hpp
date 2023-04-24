@@ -100,13 +100,6 @@ typedef struct
 
 struct NFA minimize_hopcroft(struct NFA& nfa);
 
-
-// NFA operations
-void nfa_print_transitions(struct NFA& nfa);
-
-std::pair<std::set<State>, std::set<State>>
-fragment_dest_states_using_partition(const std::set<State>& dest_states, const std::set<State>& partition);
-
 template<typename C>
 std::string states_to_str(const C& states);
 

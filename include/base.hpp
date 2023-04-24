@@ -76,6 +76,8 @@ NFA compute_nfa_intersection(NFA& left, NFA& right);
 void remove_nonfinishing_states(NFA& nfa);
 std::set<State> compute_states_reaching_set(NFA nfa, std::set<State>& states_to_reach);
 NFA determinize_nfa(NFA& nfa);
+NFA minimize_hopcroft(NFA& nfa);
+
 
 std::vector<struct Transition> nfa_unpack_transitions(struct NFA& nfa);
 std::string transition_to_str(const struct Transition& transition);
