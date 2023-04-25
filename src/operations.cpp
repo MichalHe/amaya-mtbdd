@@ -334,7 +334,7 @@ TASK_IMPL_3(MTBDD, add_pad_transitions_op, MTBDD *, p_transitions, MTBDD *, p_fr
 
 inline
 bool skip_product_state_due_to_no_post(Intersection_Info2& info, std::pair<State, State>& product) {
-#ifdef INTERSECTION_DETECT_STATES_WITH_NO_POST
+#if INTERSECTION_DETECT_STATES_WITH_NO_POST
     auto left_pos_in_postless = std::find(info.left_states_without_post.begin(), info.left_states_without_post.end(), product.first);
     auto right_pos_in_postless = std::find(info.right_states_without_post.begin(), info.right_states_without_post.end(), product.second);
 
@@ -343,6 +343,9 @@ bool skip_product_state_due_to_no_post(Intersection_Info2& info, std::pair<State
 
     if (is_left_postless || is_right_postless) {
         bool product_has_lang = (info.left_final_states->contains(product.first) && info.right_final_states->contains(product.second));
+        if (!product_has_lang) {
+            ++info.skipped_states_with_no_post;
+        }
         return !product_has_lang;
     }
     return false;
@@ -382,7 +385,6 @@ TASK_IMPL_3(MTBDD, transitions_intersection2_op, MTBDD *, pa, MTBDD *, pb, uint6
             std::pair<State, State> product_state = std::make_pair(left_state, right_state);
 
             if (skip_product_state_due_to_no_post(*intersect_info, product_state)) {
-                ++intersect_info->skipped_states_with_no_post;
                 continue;
             }
 
