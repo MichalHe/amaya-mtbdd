@@ -968,7 +968,7 @@ NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_St
         nfa.add_transition(constr_state.trap_state_handle, constr_state.trap_state_handle, 0u, all_bits_dont_care_mask);
     }
 
-    nfa.perform_pad_closure(mtbdd_leaf_type_set);
+    nfa.perform_pad_closure();
 
     return nfa;
 }

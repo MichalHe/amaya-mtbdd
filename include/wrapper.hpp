@@ -219,6 +219,7 @@ extern "C" {
     Serialized_NFA* amaya_construct_dfa_for_atom_conjunction(Serialized_Quantified_Atom_Conjunction* raw_formula);
 		Serialized_NFA* amaya_compute_nfa_intersection(Serialized_NFA* left_serialized, Serialized_NFA* right_serialized);
 		Serialized_NFA* amaya_determinize(Serialized_NFA* nfa);
+		Serialized_NFA* amaya_perform_pad_closure(Serialized_NFA* serialized_nfa);
 
 	  void amaya_end_pad_closure();
 

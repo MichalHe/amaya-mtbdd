@@ -210,7 +210,7 @@ The MTBDD pad closure works in two steps:
    can be reached directly, but it can be reached via a series of transitions along
    certain alhabet symbol (decided using the frontier)
  */
-void NFA::perform_pad_closure(u64 leaf_type_id) {
+void NFA::perform_pad_closure() {
     if (states.empty()) return;
 
     LACE_ME;
@@ -218,7 +218,9 @@ void NFA::perform_pad_closure(u64 leaf_type_id) {
 
     Transition_Destination_Set frontier_init;
     frontier_init.destination_set = std::set<State>(this->final_states);
-    MTBDD frontier = sylvan::mtbdd_makeleaf(leaf_type_id, reinterpret_cast<u64>(&frontier_init));
+
+    MTBDD frontier = sylvan::mtbdd_makeleaf(mtbdd_leaf_type_set, reinterpret_cast<u64>(&frontier_init));
+    sylvan::mtbdd_refs_push(frontier);
 
     bool was_frontier_modified = true;
     while (was_frontier_modified) {
@@ -227,9 +229,11 @@ void NFA::perform_pad_closure(u64 leaf_type_id) {
             new_frontier = mtbdd_applyp(state_mtbdd, new_frontier, origin, TASK(build_pad_closure_fronier_op), AMAYA_EXTEND_FRONTIER_OP_ID);
         }
         was_frontier_modified = (new_frontier != frontier);
-        frontier = new_frontier;
-    }
 
+        frontier = new_frontier;
+        sylvan::mtbdd_refs_pop(1);
+        sylvan::mtbdd_refs_push(frontier);
+    }
 
     State new_final_state = *states.rbegin() + 1;
 
@@ -247,6 +251,13 @@ void NFA::perform_pad_closure(u64 leaf_type_id) {
                                                     static_cast<u64>(origin_state),
                                                     TASK(add_pad_transitions_op),
                                                     current_pad_closure_id);
+        // Increase the ref counter regardless of whether the automaton has been modified
+        // to maintain the invariant that any automaton resulting from an operation should
+        // have all of its mtbdds referenced. Therefore, an input automaton from Python
+        // will have all its MTBDDs ref'd, the output automaton will have its MTBDD's ref'd
+        // separetely, and thus python GC will correctly decrement ref counts for both automatons.
+        sylvan::mtbdd_ref(state_transition_pair.second);
+
         if (old_mtbdd != state_transition_pair.second) was_any_transition_added = true;
     }
 
@@ -254,6 +265,8 @@ void NFA::perform_pad_closure(u64 leaf_type_id) {
         states.insert(new_final_state);
         final_states.insert(new_final_state);
     }
+
+    sylvan::mtbdd_refs_pop(1); // -frontier
 }
 
 void collect_reachable_states_from_mtbdd_leaves(MTBDD root, std::set<State>& output) {
@@ -819,4 +832,11 @@ NFA minimize_hopcroft(NFA& nfa) {
     PRINT_DEBUG("Result has #states=" << result_nfa.states.size());
 
     return result_nfa;
+}
+
+NFA perform_pad_closure(NFA& nfa) {
+    // We have to do a copy first becasu
+    NFA nfa_copy = NFA(nfa);
+    nfa_copy.perform_pad_closure();
+    return nfa_copy;
 }

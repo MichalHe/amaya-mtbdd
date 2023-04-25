@@ -397,7 +397,7 @@ State* amaya_mtbdd_get_leaves(
 
 void amaya_replace_leaf_contents_with(void *leaf_tds, State* new_contents, uint32_t contents_size)
 {
-  assert(false);
+    assert(false);
     auto leaf_contents = reinterpret_cast<Transition_Destination_Set*>(leaf_tds);
     leaf_contents->destination_set.clear();
     for (uint32_t i = 0; i < contents_size; i++) {
@@ -909,4 +909,11 @@ Serialized_NFA* amaya_determinize(Serialized_NFA* serialized_nfa) {
     NFA dfa = determinize_nfa(nfa);
     auto output_dfa = serialize_nfa(dfa);
     return output_dfa;
+}
+
+Serialized_NFA* amaya_perform_pad_closure(Serialized_NFA* serialized_nfa) {
+    NFA nfa = deserialize_nfa(*serialized_nfa);
+    nfa.perform_pad_closure();
+    auto output = serialize_nfa(nfa);
+    return output;
 }
