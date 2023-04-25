@@ -51,11 +51,9 @@ extern Pad_Closure_Info2* g_pad_closure_info;
  * still <k> number of variables in the variable set passed to abstract_apply.
  */
 TASK_DECL_3(sylvan::MTBDD, project_variable_away_abstract_op, sylvan::MTBDD, sylvan::MTBDD, int);
-TASK_DECL_3(sylvan::MTBDD, pad_closure_op, sylvan::MTBDD *, sylvan::MTBDD *, uint64_t);
 TASK_DECL_3(sylvan::MTBDD, transitions_union_op, sylvan::MTBDD *, sylvan::MTBDD *, uint64_t);
 
 TASK_DECL_2(sylvan::MTBDD, remove_states_op, sylvan::MTBDD, uint64_t);
-TASK_DECL_2(sylvan::MTBDD, complete_transition_with_trapstate_op, sylvan::MTBDD, uint64_t);
 TASK_DECL_2(sylvan::MTBDD, rename_states_op, sylvan::MTBDD, uint64_t);
 TASK_DECL_2(sylvan::MTBDD, transform_macrostates_to_ints_op, sylvan::MTBDD, uint64_t);
 
@@ -73,24 +71,6 @@ struct Replace_States_With_Partition_Info {
 extern Replace_States_With_Partition_Info* g_replace_states_with_partition_info;
 
 TASK_DECL_2(sylvan::MTBDD, replace_states_with_partition_ids_op, sylvan::MTBDD, uint64_t);
-
-typedef struct
-{
-    State new_final_state;      // Final state to be added if the saturation property is broken
-    State left_state;           // For debug purposes
-    State right_state;          // Actually used
-
-    std::unordered_map<State, std::pair<sylvan::MTBDD, uint64_t>> *operation_id_cache;
-    uint64_t first_available_r_cache_id;
-    State *final_states;
-    uint32_t final_states_cnt;
-} Pad_Closure_Info;
-
-typedef struct
-{
-    bool had_effect;
-    State trapstate;
-} Complete_With_Trapstate_Op_Info;
 
 typedef struct
 {

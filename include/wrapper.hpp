@@ -107,24 +107,7 @@ extern "C" {
 	 * @param post_size (out) The size of the returned array.
 	 * @returns array containing the post set.
 	 */
-	State* amaya_mtbdd_get_state_post(
-			sylvan::MTBDD  m,
-			uint32_t* 	   post_size);
-
-	/**
-	 * Apply the padding closure to a state with transition function `left`, with successor's function `right`.
-	 * @param left 			The transitions of state into which we want to propagate finishing symbols.
-	 * @param right 		The transitions of a state that has some transitions leading to the final state.
-	 * @param final_states 		Pointer to an array containing the final states of the automaton.
-	 * @param final_states_cnt 	Number of states in the final_state array.
-	 * @returns The newly created MTBDD. If the MTBDD has the same value as the left_dd,
-     *          then the pad_closure had no effect.
-	 */
-	sylvan::MTBDD amaya_mtbdd_do_pad_closure(
-			State 			left_state,
-			sylvan::MTBDD 	left_dd,
-			State 			right_state,
-			sylvan::MTBDD 	right_dd);
+	State* amaya_mtbdd_get_state_post(sylvan::MTBDD m, uint32_t* post_size);
 
 	/**
 	 * Debug function that allows to retrieve all paths inside the MTBDD and corresponding destinations.
@@ -167,11 +150,6 @@ extern "C" {
 			uint64_t*			out_macrostates_cnt);
 
 
-	sylvan::MTBDD amaya_complete_mtbdd_with_trapstate(
-			sylvan::MTBDD mtbdd,
-			State 		trapstate,
-			bool* 		had_effect);
-
 	/**
 	 * Walks the MTBDD building a set of reachable states encoded within the MTBDD. For
 	 * every located state also notes the transition symbol via which can the state be reached.
@@ -213,15 +191,12 @@ extern "C" {
 		uint32_t mtbdd_cnt,
 		uint32_t* out_state_cnt);
 
-	  void amaya_begin_pad_closure(State new_final_state, State *final_states, uint32_t final_states_cnt);
-
     Serialized_NFA* amaya_minimize_hopcroft(struct Serialized_NFA* serialized_dfa);
     Serialized_NFA* amaya_construct_dfa_for_atom_conjunction(Serialized_Quantified_Atom_Conjunction* raw_formula);
 		Serialized_NFA* amaya_compute_nfa_intersection(Serialized_NFA* left_serialized, Serialized_NFA* right_serialized);
 		Serialized_NFA* amaya_determinize(Serialized_NFA* nfa);
 		Serialized_NFA* amaya_perform_pad_closure(Serialized_NFA* serialized_nfa);
 
-	  void amaya_end_pad_closure();
 
 	  void amaya_mtbdd_ref(sylvan::MTBDD mtbdd);
 	  void amaya_mtbdd_deref(sylvan::MTBDD mtbdd);

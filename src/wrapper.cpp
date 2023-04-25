@@ -21,7 +21,6 @@ using std::set;
 using std::vector;
 using std::stringstream;
 using std::map;
-using std::pair;
 
 static bool DEBUG_ON = false;
 
@@ -35,9 +34,6 @@ extern State_Rename_Op_Info   *STATE_RENAME_OP_PARAM;
 
 extern uint64_t    TRANSFORM_MACROSTATES_TO_INTS_COUNTER;
 extern Transform_Macrostates_To_Ints_State *TRANSFORM_MACROSTATES_TO_INTS_STATE;
-
-extern uint64_t   PAD_CLOSURE_OP_COUNTER;
-extern Pad_Closure_Info *PAD_CLOSURE_OP_STATE;
 
 NFA deserialize_nfa(Serialized_NFA& serialized_nfa) {
     // Deserialize the DFA
@@ -189,22 +185,6 @@ MTBDD amaya_mtbdd_build_single_terminal(
     }
 
     return mtbdd;
-}
-
-MTBDD amaya_complete_mtbdd_with_trapstate(MTBDD dd, State trapstate, bool* had_effect) {
-
-    Complete_With_Trapstate_Op_Info op_info = {};
-    op_info.trapstate = trapstate;
-    op_info.had_effect = false;
-
-    LACE_ME;
-    ADD_TRAPSTATE_OP_PARAM = &op_info;
-    MTBDD result = mtbdd_uapply(dd, TASK(complete_transition_with_trapstate_op), ADD_TRAPSTATE_OP_COUNTER);
-    ADD_TRAPSTATE_OP_COUNTER += (1LL << 5);
-
-    if (DEBUG_ON) printf("Had the complete with trapstate effect? %s\n", (op_info.had_effect ? "Yes": "No"));
-    *had_effect = op_info.had_effect;
-    return result;
 }
 
 Transition_Destination_Set* _get_transition_target(
@@ -506,111 +486,6 @@ State* amaya_mtbdd_get_state_post(MTBDD dd, uint32_t *post_size)
   return result;
 }
 
-
-void amaya_begin_pad_closure(
-        State new_final_state,
-    State *final_states,
-    uint32_t final_states_cnt)
-{
-  PAD_CLOSURE_OP_STATE = (Pad_Closure_Info*) malloc(sizeof(Pad_Closure_Info));
-  assert(PAD_CLOSURE_OP_STATE != NULL);
-
-    // Make a copy of the final states, because they will be deallocated after
-    // the Python function returns. The +1 is for the new_final_state.
-  State* final_states_cpy = (State*) malloc(sizeof(State) * (final_states_cnt + 1));
-  assert(final_states_cpy != NULL);
-
-  std::memcpy(final_states_cpy, final_states, (sizeof(State) * final_states_cnt));
-
-    // Treat new_final_state as if it was already present in the automaton, so that
-    // no reallocs will need to happen during the pad closure
-    final_states_cpy[final_states_cnt] = new_final_state;
-
-    PAD_CLOSURE_OP_STATE->new_final_state  = new_final_state;
-  PAD_CLOSURE_OP_STATE->final_states     = final_states_cpy;
-  PAD_CLOSURE_OP_STATE->final_states_cnt = final_states_cnt + 1; // Include the new one aswell
-
-    // TODO: Is the cache even operational?
-  PAD_CLOSURE_OP_STATE->operation_id_cache = new std::unordered_map<State, std::pair<MTBDD, uint64_t>>();
-  PAD_CLOSURE_OP_STATE->first_available_r_cache_id = (1LL << 33);
-}
-
-void amaya_end_pad_closure()
-{
-  free(PAD_CLOSURE_OP_STATE->final_states);
-  delete PAD_CLOSURE_OP_STATE->operation_id_cache;
-  free(PAD_CLOSURE_OP_STATE);
-  PAD_CLOSURE_OP_STATE = NULL;
-
-  PAD_CLOSURE_OP_COUNTER += (1LL << 38);
-}
-
-
-MTBDD amaya_mtbdd_do_pad_closure(
-    State     left_state,
-    MTBDD     left_dd,
-    State     right_state,
-    MTBDD     right_dd)
-{
-  // @Note: When performing pad closure the finality of states does not change, therefore, the final states are constant.
-  //      This means that the operation really depends only on the provided mtbdds, and not so much on the param.
-  //      The only *problem* is that the same mtbdds (or their parts) might be created in different automata, but the
-  //      final states are different. ---> Provide transaction like interface.
-
-  PAD_CLOSURE_OP_STATE->right_state = right_state;
-  PAD_CLOSURE_OP_STATE->left_state  = left_state;
-
-  // When we use the same R mtbdd **with the same r state** but with different L mtbbds we might reuse cache
-  // This means that operation parameters which control the cache selection process can be chosen in such a way
-  // that every time we encounter the same R mtbdd the result from previous applications sharing the same R will
-  // be reused.
-  auto r_state_op_cache_it = PAD_CLOSURE_OP_STATE->operation_id_cache->find(right_state);
-  uint64_t r_op_cache_id;
-  if (r_state_op_cache_it != PAD_CLOSURE_OP_STATE->operation_id_cache->end()) {
-    // We have some cache for this r-state, check whether the r-mtbdd matches the stored one
-    // IF not, that means the mtbdd for r-state was already modified during pad closure (at a different time)
-    // And therefore new operation chache needs to be "assigned"
-    auto r_cache_entry = r_state_op_cache_it->second;
-
-    if (r_cache_entry.first != right_dd) {
-      // The cache entry is not valid anymore
-      r_op_cache_id = PAD_CLOSURE_OP_STATE->first_available_r_cache_id;
-
-      PAD_CLOSURE_OP_STATE->operation_id_cache->insert(
-          std::make_pair(
-            right_state,
-            std::make_pair(right_dd, r_op_cache_id)));
-
-      PAD_CLOSURE_OP_STATE->first_available_r_cache_id += (1LL << 10);
-    } else {
-      r_op_cache_id = r_cache_entry.second;
-    }
-  } else {
-      // There is no cache entry, generate new one.
-      r_op_cache_id = PAD_CLOSURE_OP_STATE->first_available_r_cache_id;
-
-      PAD_CLOSURE_OP_STATE->operation_id_cache->insert(
-          std::make_pair(
-            right_state,
-            std::make_pair(right_dd, r_op_cache_id)));
-
-      PAD_CLOSURE_OP_STATE->first_available_r_cache_id += (1LL << 10);
-  }
-
-  LACE_ME;
-  //sylvan_clear_cache();
-
-  PAD_CLOSURE_OP_COUNTER += (1LL << 38);
-
-  MTBDD result =  mtbdd_applyp(
-      left_dd,
-      right_dd,
-      1LL,               // Allows using caches for the same R-state + R-MTBDD results
-      TASK(pad_closure_op),
-      PAD_CLOSURE_OP_COUNTER); // Identifies the overall padding closure being performed,
-
-  return result;
-}
 
 uint8_t* amaya_mtbdd_get_transitions(
     MTBDD     root,   // The mtbdd

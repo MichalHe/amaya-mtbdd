@@ -25,12 +25,9 @@
 #include <string>
 #include <sstream>
 
-using std::endl;
 using std::set;
-using std::vector;
 using std::stringstream;
 using std::string;
-using std::map;
 using std::pair;
 
 using sylvan::MTBDD;
@@ -40,8 +37,6 @@ using sylvan::mtbdd_isleaf;
 using sylvan::mtbdd_getvalue;
 using sylvan::mtbdd_invalid;
 using sylvan::mtbdd_applyp_CALL;
-using sylvan::mtbdd_enum_first;
-using sylvan::mtbdd_enum_next;
 
 extern uint64_t mtbdd_leaf_type_set;
 
@@ -54,9 +49,6 @@ void*       ADD_TRAPSTATE_OP_PARAM = NULL;
 
 State_Rename_Op_Info *STATE_RENAME_OP_PARAM = NULL;
 Transform_Macrostates_To_Ints_State *TRANSFORM_MACROSTATES_TO_INTS_STATE = NULL;
-
-Pad_Closure_Info *PAD_CLOSURE_OP_STATE = NULL;
-uint64_t    PAD_CLOSURE_OP_COUNTER = 64;
 
 uint64_t  ADD_TRAPSTATE_OP_COUNTER = (1LL << 32);
 uint64_t  STATE_RENAME_OP_COUNTER = (1LL << 33);
@@ -150,111 +142,6 @@ TASK_IMPL_2(MTBDD, remove_states_op, MTBDD, dd, uint64_t, param) {
     return mtbdd_invalid;
 }
 
-/**
- * Completes the given transition MTBDD by adding transitions along missing symbols leading to a trapstate.
- *
- * NOTE:
- * The param is not used - sylvan cachce problems, see remove_states_op. Instead the information
- * needed for the operation (like automaton ID and trapstate value) is passed via global variable
- * ADD_TRAPSTATE_OP_PARAM. This should be used with combination with ADD_TRAPSTATE_OP_COUNTER to
- * achieve cache utilization only for the the current completition.
- */
-TASK_IMPL_2(MTBDD, complete_transition_with_trapstate_op, MTBDD, dd, uint64_t, param)
-{
-    // param is used just to avoid sylvan cache-miss
-    if (dd == mtbdd_false) {
-        (void) param;
-        auto op_info = reinterpret_cast<Complete_With_Trapstate_Op_Info*>(ADD_TRAPSTATE_OP_PARAM);
-
-        Transition_Destination_Set leaf_contents;
-        leaf_contents.destination_set.insert(op_info->trapstate);
-
-        op_info->had_effect = true;
-        MTBDD leaf = make_set_leaf(&leaf_contents);
-        return leaf;
-    } else if (mtbdd_isleaf(dd)) {
-        return dd;
-    }
-    return mtbdd_invalid;
-}
-
-
-inline bool contains_final_state(Pad_Closure_Info* pci, Transition_Destination_Set* tds)
-{
-    for (State current_post_state: tds->destination_set) {
-        for (uint32_t i = 0; i < pci->final_states_cnt; i++) {
-            if (current_post_state == pci->final_states[i])
-                return true;
-        }
-    }
-    return false;
-}
-
-
-/**
- * Performs pad closure on the two given transitions. Information about which states are final
- * and (out) information about whether the pad closure had any effect (the left transition was
- * modified) are passed via `op_param` (a pointer to Pad_Closure_Info struct).
- */
-TASK_IMPL_3(MTBDD, pad_closure_op, MTBDD *, p_left, MTBDD *, p_right, uint64_t, op_param)
-{
-    MTBDD left = *p_left, right = *p_right;
-
-    if (left == mtbdd_false) {
-        // The pre-state (left) leads to nothing, nothing can be propagated
-        return mtbdd_false;
-    }
-
-    if (right == mtbdd_false) {
-        // The state (right) leads to nothing, nothing can be propagated
-        // Return the unmodified left leaf (no change)
-        return left;
-    }
-
-    if (mtbdd_isleaf(left) && mtbdd_isleaf(right)) {
-        // Both are leaves, do the actual padding closure
-        auto left_tds  = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(left));
-        auto right_tds = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(right));
-
-        auto pci = PAD_CLOSURE_OP_STATE;
-
-        // Check whether the MTBDD of the pre-state (left) even leads to the current state (right)
-        if (left_tds->destination_set.find(pci->right_state) == left_tds->destination_set.end()) {
-            // Does not lead to the current state, therefore, the saturation property was not broken (here)
-            return left;
-        }
-
-        // Check whether any final state is present in the post of the current state
-        bool is_final_reachable_from_current = contains_final_state(pci, right_tds);
-
-        if (!is_final_reachable_from_current) {
-            // If there is no final state in the post of the current state
-            // the saturation cannot be broken here
-            return left; // No propagation
-        }
-
-        // Some final state is reachable from the current state via the current symbol
-        // Check that some final state is reachable from the pre-state aswell, otherwise
-        // the saturation property is broken
-        bool is_final_reachable_from_pre = contains_final_state(pci, left_tds);
-
-        if (is_final_reachable_from_pre) {
-            // Some final state is reachable from both the pre-state, and the current state
-            // the saturation property is satisfied.
-            return left;  // Nothing to propagate
-        }
-
-        // The saturation property is broken, fix it by adding the new final state to the pre-state (left) TDS
-        Transition_Destination_Set new_leaf_contents(*left_tds);
-        new_leaf_contents.destination_set.insert(pci->new_final_state);
-        MTBDD leaf = make_set_leaf(&new_leaf_contents);
-
-        return leaf;
-    }
-
-    return mtbdd_invalid;
-}
-
 
 TASK_IMPL_2(MTBDD, rename_states_op, MTBDD, dd, uint64_t, param) {
     if (dd == mtbdd_false) return mtbdd_false;
@@ -290,7 +177,6 @@ TASK_IMPL_2(MTBDD, rename_states_op, MTBDD, dd, uint64_t, param) {
 
     return mtbdd_invalid;
 }
-
 
 TASK_IMPL_2(MTBDD, transform_macrostates_to_ints_op, MTBDD, dd, uint64_t, param) {
     if (dd == mtbdd_false) return mtbdd_false;
