@@ -64,7 +64,22 @@ struct NFA {
     unordered_map<State, sylvan::MTBDD> transitions;
 
     sylvan::BDDSET vars;
-    uint64_t var_count;
+    u64 var_count;
+
+    NFA(sylvan::BDDSET vars = sylvan::mtbdd_set_empty(),
+        u64 var_count = 0,
+        std::set<State>&& states={},
+        std::set<State>&& final_states={},
+        std::set<State>&& initial_states={}) : vars(vars), var_count(var_count), states(states), final_states(final_states), initial_states(initial_states), transitions({}) {
+        sylvan::mtbdd_ref(vars);
+    };
+    ~NFA() {
+        sylvan::mtbdd_deref(vars);
+    }
+    NFA(const NFA& other) : vars(other.vars), var_count(other.var_count), states(other.states), final_states(other.final_states), initial_states(other.initial_states), transitions(other.transitions)  {
+        sylvan::mtbdd_ref(vars);
+    }
+
 
     // @Cleanup: Factor out the sylvan global configuration into a context struct
     void perform_pad_closure();
@@ -81,6 +96,7 @@ struct NFA {
 
     void remove_states(std::set<State>& states_to_remove);
 };
+
 
 NFA compute_nfa_intersection(NFA& left, NFA& right);
 void remove_nonfinishing_states(NFA& nfa);

@@ -470,7 +470,7 @@ NFA compute_nfa_intersection(NFA& left, NFA& right) {
         intersection_vars = sylvan::mtbdd_set_add(intersection_vars, right_vars[i]);
     }
 
-    NFA intersection_nfa = {.vars = intersection_vars, .var_count = sylvan::mtbdd_set_count(intersection_vars)};
+    NFA intersection_nfa(intersection_vars, sylvan::mtbdd_set_count(intersection_vars));
 
     work_queue.reserve(left.initial_states.size() * right.initial_states.size());
 
@@ -678,16 +678,16 @@ struct Partition_Refinement {
     State previous_eq_class_id;
 
     bool operator==(const Partition_Refinement& other) const {
-        return eq_class_mtbdd == other.eq_class_mtbdd && previous_eq_class_id && other.previous_eq_class_id;
+        return (eq_class_mtbdd == other.eq_class_mtbdd) && (previous_eq_class_id == other.previous_eq_class_id);
     }
 };
 
 template <>
 struct std::hash<Partition_Refinement> {
     std::size_t operator() (const Partition_Refinement& part_refinement) const {
-        std::size_t mtbdd_hash = std::hash<State>{}(part_refinement.eq_class_mtbdd);
-        std::size_t previous_eq_class_hash = std::hash<State>{}(part_refinement.previous_eq_class_id);
-        std::size_t hash = previous_eq_class_hash + 0x9e3779b9 + (mtbdd_hash << 6) + (mtbdd_hash >> 2);
+        std::size_t mtbdd_hash = std::hash<u64>{}(part_refinement.eq_class_mtbdd);
+        std::size_t class_hash = std::hash<State>{}(part_refinement.previous_eq_class_id);
+        std::size_t hash = class_hash + 0x9e3779b9 + (mtbdd_hash << 6) + (mtbdd_hash >> 2);
         return hash;
     }
 };
@@ -697,13 +697,15 @@ NFA minimize_hopcroft(NFA& nfa) {
     LACE_ME;
 
     if (nfa.final_states.empty()) {
-        NFA result = {.states = {0}, .initial_states = {0}, .vars = nfa.vars, .var_count = nfa.var_count};
+        NFA result(nfa.vars, nfa.var_count);
         result.add_universal_transition(0, 0);
         return result;
     }
 
     if (nfa.final_states.size() == nfa.states.size()) {
-        NFA result = {.states = {0, 1}, .final_states = {1}, .initial_states = {0}, .vars = nfa.vars, .var_count = nfa.var_count};
+
+        NFA result(nfa.vars, nfa.var_count, {0, 1}, {1}, {0});
+
         result.add_universal_transition(0, 1);
         result.add_universal_transition(1, 1);
         return result;
@@ -801,7 +803,7 @@ NFA minimize_hopcroft(NFA& nfa) {
 #endif
 
     // Construct the NFA with states resulting from condensation according to computed eq. partitions
-    NFA result_nfa = {.vars = nfa.vars, .var_count = nfa.var_count};
+    NFA result_nfa(nfa.vars, nfa.var_count);
 
     // Setup result's initial state
     {

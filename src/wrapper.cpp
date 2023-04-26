@@ -37,14 +37,16 @@ extern Transform_Macrostates_To_Ints_State *TRANSFORM_MACROSTATES_TO_INTS_STATE;
 
 NFA deserialize_nfa(Serialized_NFA& serialized_nfa) {
     // Deserialize the DFA
-    NFA nfa = {
-        .states = {},
-        .final_states = {},
-        .initial_states = {},
-        .transitions = {},
-        .vars = sylvan::mtbdd_set_empty(),
-        .var_count = serialized_nfa.var_count
-    };
+
+    sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
+    sylvan::mtbdd_refs_push(vars);
+    for (u64 i = 0; i < serialized_nfa.var_count; i++) {
+        vars = sylvan::mtbdd_set_add(vars, serialized_nfa.vars[i]);
+        sylvan::mtbdd_refs_pop(1);
+        sylvan::mtbdd_refs_push(vars);
+    }
+    NFA nfa(vars, serialized_nfa.var_count);
+    sylvan::mtbdd_refs_pop(1);
 
     for (u64 i = 0; i < serialized_nfa.state_count; i++){
         nfa.states.insert(serialized_nfa.states[i]);
@@ -54,8 +56,6 @@ NFA deserialize_nfa(Serialized_NFA& serialized_nfa) {
     for (u64 i = 0; i < serialized_nfa.final_state_count; i++) nfa.final_states.insert(serialized_nfa.final_states[i]);
     for (u64 i = 0; i < serialized_nfa.initial_state_count; i++) nfa.initial_states.insert(serialized_nfa.initial_states[i]);
 
-    for (u64 i = 0; i < serialized_nfa.var_count; i++)
-        nfa.vars = sylvan::mtbdd_set_add(nfa.vars, serialized_nfa.vars[i]);
 
     return nfa;
 }
@@ -776,6 +776,7 @@ Serialized_NFA* amaya_compute_nfa_intersection(Serialized_NFA* left_serialized, 
 
     auto result = compute_nfa_intersection(left, right);
     auto serialized_result = serialize_nfa(result);
+
     return serialized_result;
 }
 

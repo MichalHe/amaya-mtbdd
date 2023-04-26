@@ -943,11 +943,7 @@ NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_St
         auto [container_pos, was_inserted] = constr_state.known_macrostates.emplace(init_macrostate, constr_state.known_macrostates.size());
     }
 
-    NFA nfa = {
-        .initial_states = {static_cast<State>(init_state_handle)},
-        .vars = bdd_vars,
-        .var_count = init_state.formula->var_count
-    };
+    NFA nfa(bdd_vars, init_state.formula->var_count, {}, {}, {static_cast<State>(init_state_handle)});
 
     Alphabet_Iterator alphabet_iter = Alphabet_Iterator(init_state.formula->var_count, init_state.formula->bound_vars);
     while (!work_queue.empty()) {

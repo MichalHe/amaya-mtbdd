@@ -98,13 +98,7 @@ TEST_CASE("lazy_construct `\\exists x (x + y <= 0)`")
 
     auto actual_nfa = build_nfa_with_formula_entailement(pool, init_state, vars);
 
-    NFA expected_nfa = {
-        .states = {0, 1, 2},
-        .final_states = {1, 2},
-        .initial_states = {0},
-        .vars = vars,
-        .var_count = 2,
-    };
+    NFA expected_nfa(vars, 2, {0, 1, 2}, {1, 2}, {0});
 
     vector<Transition> symbolic_transitions {
         {.from = 0, .to = 1, .symbol = {2, 0}},
@@ -133,8 +127,9 @@ TEST_CASE("lazy_construct simple atoms")
 
         auto actual_nfa = build_nfa_with_formula_entailement(pool, init_state, vars);
 
-        NFA expected_nfa = {
-            .states = {
+        NFA expected_nfa(
+            vars, 2,
+            {
                 0,  // {2}
                 1,  // {1, F}
                 2,  // {0, F}
@@ -143,11 +138,9 @@ TEST_CASE("lazy_construct simple atoms")
                 5,  // {-2, F}
                 6,  // {-2}
             },
-            .final_states = {1, 2, 3, 5},
-            .initial_states = {0},
-            .vars = vars,
-            .var_count = 2,
-        };
+            {1, 2, 3, 5},
+            {0}
+        );
 
         vector<Transition> symbolic_transitions {
             /* {2} */
@@ -201,19 +194,18 @@ TEST_CASE("lazy_construct simple atoms")
 
         auto actual_nfa = build_nfa_with_formula_entailement(pool, init_state, vars);
 
-        NFA expected_nfa = {
-            .states = {
+        NFA expected_nfa(
+            vars, 2,
+            {
                 0,  // {0}
                 1,  // {0, F}
                 2,  // {-1}
                 3,  // {-1, F}
                 4,  // Trap
             },
-            .final_states = {1, 3},
-            .initial_states = {0},
-            .vars = vars,
-            .var_count = 2,
-        };
+            {1, 3},
+            {0}
+        );
 
         vector<Transition> symbolic_transitions {
             /* {0} */
@@ -257,19 +249,18 @@ TEST_CASE("lazy_construct simple atoms")
 
         auto actual_nfa = build_nfa_with_formula_entailement(pool, init_state, vars);
 
-        NFA expected_nfa = {
-            .states = {
+        NFA expected_nfa(
+            vars, 2,
+            {
                 0,  // {1}
                 1,  // {2}
                 2,  // {2, F}
                 3,  // {0}
                 4,  // {0, F}
             },
-            .final_states = {2, 4},
-            .initial_states = {0},
-            .vars = vars,
-            .var_count = 2,
-        };
+            {2, 4},
+            {0}
+        );
 
         vector<Transition> symbolic_transitions {
             /* {1} */
@@ -320,18 +311,17 @@ TEST_CASE("lazy_construct `\\exists y,m (x - y <= -1 && y <= -1 && -m <= 0 && m 
 
     auto actual_nfa = build_nfa_with_formula_entailement(pool, init_state, vars);
 
-    NFA expected_nfa = {
-        .states = {
+    NFA expected_nfa(
+        vars, 3,
+        {
             0, // {(-1, -1, 0, 0, 0)}, formula: input
             1, // {(-2)}, formula: x <= ?
             2, // {(-1)}, formula: x <= ?
             3  // {(-1), F} formula: x <= ?
         },
-        .final_states = {3},
-        .initial_states = {0},
-        .vars = vars,
-        .var_count = 3,
-    };
+        {3},
+        {0}
+    );
 
     // Symbols are (m, x, y)
     vector<Transition> symbolic_transitions {
@@ -391,7 +381,8 @@ TEST_CASE("lazy_construct `\\exists y,m (x - y <= -1 && && m - z <= -1 && y <= -
 TEST_CASE("NFA::pad_closure (simple)") {
     sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
     vars = sylvan::mtbdd_set_add(vars, 1);
-    NFA nfa = {.states = {1, 2, 3}, .final_states = {3}, .initial_states = {1}, .vars = vars, .var_count = 1};
+
+    NFA nfa(vars, 1, {1, 2, 3}, {3}, {1});
 
     u8 symbol[] = {1};
     nfa.add_transition(1, 2, symbol);
@@ -400,7 +391,7 @@ TEST_CASE("NFA::pad_closure (simple)") {
     std::vector<Transition> expected_transitions = nfa_unpack_transitions(nfa);
     expected_transitions.push_back({.from=1, .to=4, .symbol={1}});
 
-    nfa.perform_pad_closure(mtbdd_leaf_type_set);
+    nfa.perform_pad_closure();
     auto transitions = nfa_unpack_transitions(nfa);
     CHECK(transitions.size() == 3);
     for (auto& expected_transition: expected_transitions) {
@@ -412,7 +403,7 @@ TEST_CASE("NFA::pad_closure (simple)") {
 TEST_CASE("NFA::determinize (simple)") {
     sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
     vars = sylvan::mtbdd_set_add(vars, 1);
-    NFA nfa = {.states = {1, 2, 3}, .final_states = {3}, .initial_states = {1}, .vars = vars, .var_count = 1};
+    NFA nfa(vars, 1, {1, 2, 3}, {3}, {1});
 
     nfa.add_transition(1, 1, vector<u8>{0});
     nfa.add_transition(1, 2, vector<u8>{0});
@@ -420,15 +411,17 @@ TEST_CASE("NFA::determinize (simple)") {
 
     auto actual_dfa = determinize_nfa(nfa);
 
-    NFA expected_dfa = {
-        .states = {
+    NFA expected_dfa(
+        vars, 1, 
+        {
             1, // {1}
             2, // {1, 2}
             3, // {1, 2, 3}
             4, // trap
         },
-        .final_states = {3}, .initial_states = {1}, .vars = vars, .var_count = 1
-    };
+        {3},
+        {1}
+    );
     expected_dfa.add_transition(1, 2, vector<u8>{0});
     expected_dfa.add_transition(1, 4, vector<u8>{1});
 
@@ -476,13 +469,7 @@ TEST_CASE("NFA::intersection (simple)") {
 
     auto result = compute_nfa_intersection(left_nfa, right_nfa);
 
-    NFA expected_nfa = {
-        .states = {1, 2, 3},
-        .final_states = {3},
-        .initial_states = {1},
-        .vars = vars,
-        .var_count = 2u
-    };
+    NFA expected_nfa(vars, 2u, {1, 2, 3}, {3}, {1});
 
     expected_nfa.add_transition(1, 2, {0, 0});
     expected_nfa.add_transition(2, 3, {0, 0});
@@ -493,13 +480,7 @@ TEST_CASE("remove_nonfinishing_states :: simple") {
     u32 var_arr[] = {1, 2};
     sylvan::BDDSET vars = sylvan::mtbdd_set_from_array(var_arr, 2);
 
-    NFA dfa = {
-        .states = {1, 2, 3, 4, 5, 6},
-        .final_states = {3},
-        .initial_states = {1},
-        .vars = vars,
-        .var_count = 2,
-    };
+    NFA dfa(vars, 2, {1, 2, 3, 4, 5, 6}, {3}, {1});
     dfa.add_transition(1, 2, {0, 0});
     dfa.add_transition(2, 3, {0, 0});
 
@@ -511,13 +492,8 @@ TEST_CASE("remove_nonfinishing_states :: simple") {
 
     remove_nonfinishing_states(dfa);
 
-    NFA expected_dfa = {
-        .states = {1, 2, 3},
-        .final_states = {3},
-        .initial_states = {1},
-        .vars = vars,
-        .var_count = 2,
-    };
+    NFA expected_dfa(vars, 2, {1, 2, 3}, {3}, {1});
+
     expected_dfa.add_transition(1, 2, {0, 0});
     expected_dfa.add_transition(2, 3, {0, 0});
 
@@ -527,7 +503,7 @@ TEST_CASE("remove_nonfinishing_states :: simple") {
 TEST_CASE("Minimization - already minimal DFA ") {
     u32 var_arr[] = {1};
     sylvan::BDDSET vars = sylvan::mtbdd_set_from_array(var_arr, 1);
-    NFA already_minimal_dfa = {.states = {1, 2, 3},  .final_states = {2}, .initial_states = {1}, .vars = vars, .var_count = 1};
+    NFA already_minimal_dfa(vars, 1, {1, 2, 3}, {2}, {1});
 
     already_minimal_dfa.add_transition(1, 1, (std::vector<u8>){0});
     already_minimal_dfa.add_transition(1, 2, (std::vector<u8>){1});
@@ -544,8 +520,9 @@ TEST_CASE("Minimization - Wiki automaton") {
     u32 var_arr[] = {1};
     sylvan::BDDSET vars = sylvan::mtbdd_set_from_array(var_arr, 1);
 
-    NFA input = {
-        .states = {
+    NFA input(
+        vars, 1,
+        {
             1, // a
             2, // b
             3, // c
@@ -553,11 +530,9 @@ TEST_CASE("Minimization - Wiki automaton") {
             5, // e
             6, // f
         },
-        .final_states = {3, 4, 5},
-        .initial_states = {1},
-        .vars = vars,
-        .var_count = 1
-    };
+        {3, 4, 5},
+        {1}
+    );
 
     input.add_transition(1, 2, (std::vector<u8>){0});
     input.add_transition(1, 3, (std::vector<u8>){1});
@@ -576,7 +551,8 @@ TEST_CASE("Minimization - Wiki automaton") {
 
     input.add_transition(6, 6, (std::vector<u8>){2});
 
-    NFA expected_result = {.states = {1, 2, 3},  .final_states = {2}, .initial_states = {1}, .vars = vars, .var_count = 1};
+    NFA expected_result(vars, 1, {1, 2, 3}, {2}, {1});
+
     expected_result.add_transition(1, 1, (std::vector<u8>){0});
     expected_result.add_transition(1, 2, (std::vector<u8>){1});
     expected_result.add_transition(2, 2, (std::vector<u8>){0});
