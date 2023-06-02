@@ -1,11 +1,12 @@
 #ifndef AMAYA_BASE_H
 #define AMAYA_BASE_H
 
-#define DEBUG 0
+#define DEBUG 1
 
-#define INTERSECTION_DETECT_STATES_WITH_NO_POST 1
+#define INTERSECTION_DETECT_STATES_WITH_NO_POST 0
 #define INTERSECTION_REMOVE_NONFINISHING_STATES 0
 
+#include <iostream>
 #include <vector>
 #include <set>
 #include <unordered_map>
@@ -110,7 +111,31 @@ std::string transition_to_str(const struct Transition& transition);
 bool transition_is_same_as(const struct Transition& transition_a, const struct Transition& transition_b);
 
 template<typename T>
-std::ostream& operator<<(std::ostream& output, const std::set<T>& set);
+std::ostream& operator<<(std::ostream& output, const std::set<T>& set) {
+    output << "{";
+    if (!set.empty()) {
+        auto set_it = set.begin();
+        output << *set_it;
+        ++set_it;
+        for (; set_it != set.end(); ++set_it) output << ", " << *set_it;
+    }
+    output << "}";
+    return output;
+}
+
+template<typename T>
+std::ostream& operator<<(std::ostream& output, const std::vector<T>& arr) {
+    output << "[";
+    if (!arr.empty()) {
+        auto arr_it = arr.begin();
+        output << *arr_it;
+        ++arr_it;
+        for (; arr_it != arr.end(); ++arr_it) output << ", " << *arr_it;
+    }
+    output << "]";
+    return output;
+}
+
 std::ostream& operator<<(std::ostream& output, const NFA& nfa);
 
 template <>

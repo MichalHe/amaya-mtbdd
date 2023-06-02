@@ -441,9 +441,8 @@ TEST_CASE("NFA::intersection (simple)") {
     u32 var_ids[] = {1, 2};
     sylvan::BDDSET vars = sylvan::mtbdd_set_from_array(var_ids, 2);
 
-    NFA left_nfa, right_nfa;
+    NFA left_nfa(vars), right_nfa(vars);
     {
-        left_nfa.vars = vars;
         left_nfa.var_count = 2;
         left_nfa.states = {1, 2, 3, 4, 5};
         left_nfa.initial_states = {1};
@@ -455,7 +454,6 @@ TEST_CASE("NFA::intersection (simple)") {
         left_nfa.add_transition(3, 5, {0, 0});
     }
     {
-        right_nfa.vars = vars;
         right_nfa.var_count = 2;
         right_nfa.states = {1, 2, 3, 4, 5};
         right_nfa.initial_states = {1};

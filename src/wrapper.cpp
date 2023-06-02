@@ -737,11 +737,6 @@ Serialized_NFA* amaya_construct_dfa_for_atom_conjunction(Serialized_Quantified_A
     std::vector<s64> initial_state_data (raw_formula->atom_cnt);
     for (u64 atom_idx = 0u; atom_idx < raw_formula->atom_cnt; atom_idx++) {
         initial_state_data[atom_idx] = raw_formula->initial_state[atom_idx];
-
-        // @Debug: This fragment is used to produced smaller automata (without handle)
-        //if (raw_formula->initial_state[atom_idx] = 299992) {
-            //initial_state_data[atom_idx] = 0;
-        //}
     }
 
     sylvan::BDDSET var_set = sylvan::mtbdd_set_empty();

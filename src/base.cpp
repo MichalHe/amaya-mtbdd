@@ -588,19 +588,6 @@ NFA determinize_nfa(NFA& nfa) {
     return result;
 }
 
-template<typename T>
-std::ostream& operator<<(std::ostream& output, const std::set<T>& set) {
-    output << "{";
-    if (!set.empty()) {
-        auto set_it = set.begin();
-        output << *set_it;
-        ++set_it;
-        for (; set_it != set.end(); ++set_it) output << ", " << *set_it;
-    }
-    output << "}";
-    return output;
-}
-
 std::ostream& operator<<(std::ostream& output, const NFA& nfa) {
     output << "NFA{" << std::endl;
     output << "  states: "  << nfa.states << std::endl;

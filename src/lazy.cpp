@@ -733,6 +733,21 @@ std::ostream& operator<<(std::ostream& output, const Structured_Macrostate& macr
     return output;
 }
 
+void make_macrostate_canoical(Structured_Macrostate& macrostate) {
+    auto comparator = [](const Conjuction_State& left, const Conjuction_State& right){
+        // Is left < right ?
+        for (u64 i = 0; i < left.constants.size(); i++) {
+            if (left.constants[i] > right.constants[i]) return false;
+            else if (left.constants[i] < right.constants[i]) return true;
+        }
+        return false;
+    };
+
+    for (auto& [formula, atoms]: macrostate.formulae) {
+        atoms.sort(comparator);
+    }
+}
+
 void explore_macrostate(NFA& constructed_nfa,
                         Structured_Macrostate& macrostate,
                         Alphabet_Iterator& alphabet_iter,
@@ -778,6 +793,10 @@ void explore_macrostate(NFA& constructed_nfa,
                 }
 
             }
+
+            make_macrostate_canoical(post);
+
+            // PRINT_DEBUG("Macrostate over symbol " << std::bitset<16>(symbol) << " " << post);
 
 #if DEBUG_RUNTIME
             auto end = std::chrono::system_clock::now();
@@ -902,18 +921,9 @@ std::string NFA::show_transitions() const {
     return str_builder.str();
 }
 
-
 NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_State& init_state, sylvan::BDDSET bdd_vars) {
     u64 max_symbol = (1u << init_state.formula->var_count);
     vector<Conjuction_State> produced_states;
-
-    // Prepare bit masks and constants to iterate over quantified symbols efficiently
-    u64 quantified_vars_mask = 0u;
-    for (auto quantified_var: init_state.formula->bound_vars) {
-        quantified_vars_mask |= (1u << quantified_var);
-    }
-    const u64 quantified_symbols_cnt = 1u << init_state.formula->bound_vars.size();
-    const u64 free_symbols_cnt = 1u << (init_state.formula->var_count - init_state.formula->bound_vars.size());
 
     // Use map instead of unordered_map so that we can serialize its contents in an canonical fashion
     Structured_Macrostate post;
@@ -946,9 +956,14 @@ NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_St
     NFA nfa(bdd_vars, init_state.formula->var_count, {}, {}, {static_cast<State>(init_state_handle)});
 
     Alphabet_Iterator alphabet_iter = Alphabet_Iterator(init_state.formula->var_count, init_state.formula->bound_vars);
+    PRINT_DEBUG("The following vars are quantified: " << init_state.formula->bound_vars);
+    PRINT_DEBUG("Using the following mask: " << std::bitset<8>(alphabet_iter.quantified_bits_mask));
+
+    u64 processed = 0;
     while (!work_queue.empty()) {
         auto macrostate = work_queue.back();
         work_queue.pop_back();
+        PRINT_DEBUG("Proccessing" << macrostate << " (Queue size " << work_queue.size() << ')');
 
         nfa.states.insert(macrostate.handle);
         if (macrostate.is_accepting) {
@@ -956,6 +971,7 @@ NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_St
         }
 
         explore_macrostate(nfa, macrostate, alphabet_iter, constr_state);
+        processed += 1;
     }
 
     if (constr_state.is_trap_state_needed) {
@@ -966,7 +982,7 @@ NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjuction_St
 
     nfa.perform_pad_closure();
 
-    return nfa;
+    return determinize_nfa(nfa);
 }
 
 

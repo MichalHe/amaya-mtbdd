@@ -5,6 +5,7 @@
 #include "custom_leaf.hpp"
 #include "operations.hpp"
 
+#include <bitset>
 #include <list>
 #include <cassert>
 #include <optional>
@@ -116,7 +117,7 @@ struct std::hash<Quantified_Atom_Conjunction> {
 };
 
 struct Conjuction_State {
-    const Quantified_Atom_Conjunction* formula;
+    const Quantified_Atom_Conjunction* formula; // @TODO: Do we need this pointer?
     vector<s64> constants;
 
     Conjuction_State(const Quantified_Atom_Conjunction* formula, vector<s64> value): formula(formula), constants(value) {}
@@ -127,6 +128,7 @@ struct Conjuction_State {
     optional<Conjuction_State> successor_along_symbol(u64 symbol);
     bool accepts_last_symbol(u64 symbol);
     bool operator==(const Conjuction_State& other) const;
+    bool operator<(const Conjuction_State& other) const;
 };
 
 template <>
@@ -240,8 +242,6 @@ struct Structured_Macrostate {
     bool operator==(const Structured_Macrostate& other) const;
 };
 
-
-
 template <>
 struct std::hash<Structured_Macrostate> {
     std::size_t operator() (const Structured_Macrostate& macrostate) const {
@@ -263,7 +263,8 @@ struct std::hash<Structured_Macrostate> {
                     state_hash += 0x9e3779b9 + (state_constant << 6) + (state_constant >> 2);
                 }
 
-                formula_hash += 0x9e3779b9 + (state_hash << 6) + (state_hash >> 2);
+                // @Note: hash combination must be order independent here, because we do not impose any ordering on the states
+                formula_hash ^= state_hash;
             }
 
             hash += 0x9e3779b9 + (formula_hash << 6) + (formula_hash >> 2);
