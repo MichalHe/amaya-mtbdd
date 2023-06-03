@@ -90,7 +90,7 @@ TEST_CASE("lazy_construct `\\exists x (x + y <= 0)`")
     Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 1})}, .bound_vars = {0}, .var_count = 2};
     Formula_Pool pool = Formula_Pool();
     auto formula_id = pool.store_formula(formula);
-    Conjuction_State init_state = Conjuction_State{.formula = formula_id, .constants = {0}};
+    Conjunction_State init_state = Conjuction_State{.formula = formula_id, .constants = {0}};
 
     sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
     vars = sylvan::mtbdd_set_add(vars, 1);
@@ -119,7 +119,7 @@ TEST_CASE("lazy_construct simple atoms")
         Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 1})}, .bound_vars = {}, .var_count = 2};
         Formula_Pool pool = Formula_Pool();
         auto formula_id = pool.store_formula(formula);
-        Conjuction_State init_state = Conjuction_State{.formula = formula_id, .constants = {2}};
+        Conjunction_State init_state = Conjuction_State{.formula = formula_id, .constants = {2}};
 
         sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
         vars = sylvan::mtbdd_set_add(vars, 1);
@@ -186,7 +186,7 @@ TEST_CASE("lazy_construct simple atoms")
         Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_EQ, {2, -1})}, .bound_vars = {}, .var_count = 2};
         Formula_Pool pool = Formula_Pool();
         auto formula_id = pool.store_formula(formula);
-        Conjuction_State init_state = Conjuction_State{.formula = formula_id, .constants = {0}};
+        Conjunction_State init_state = Conjuction_State{.formula = formula_id, .constants = {0}};
 
         sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
         vars = sylvan::mtbdd_set_add(vars, 1);
@@ -241,7 +241,7 @@ TEST_CASE("lazy_construct simple atoms")
         Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 3}, 3)}, .bound_vars = {}, .var_count = 2};
         Formula_Pool pool = Formula_Pool();
         auto formula_id = pool.store_formula(formula);
-        Conjuction_State init_state = Conjuction_State{.formula = formula_id, .constants = {1}};
+        Conjunction_State init_state = Conjuction_State{.formula = formula_id, .constants = {1}};
 
         sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
         vars = sylvan::mtbdd_set_add(vars, 1);
@@ -302,7 +302,7 @@ TEST_CASE("lazy_construct `\\exists y,m (x - y <= -1 && y <= -1 && -m <= 0 && m 
 
     Formula_Pool pool = Formula_Pool();
     auto formula_id = pool.store_formula(formula);
-    Conjuction_State init_state = Conjuction_State{.formula = formula_id, .constants = {-1, -1, 0, 1, 0}};
+    Conjunction_State init_state = Conjuction_State{.formula = formula_id, .constants = {-1, -1, 0, 1, 0}};
 
     sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
     vars = sylvan::mtbdd_set_add(vars, 1);
@@ -368,7 +368,7 @@ TEST_CASE("lazy_construct `\\exists y,m (x - y <= -1 && && m - z <= -1 && y <= -
         .var_count = 4
     };
 
-    Conjuction_State real_state = Conjuction_State{.formula = &real_formula, .constants = {-1, -1, -1, 0, 0, 303}};
+    Conjunction_State real_state = Conjuction_State{.formula = &real_formula, .constants = {-1, -1, -1, 0, 0, 303}};
 
     Formula_Pool pool = Formula_Pool();
     pool.store_formula(real_formula);
@@ -412,7 +412,7 @@ TEST_CASE("NFA::determinize (simple)") {
     auto actual_dfa = determinize_nfa(nfa);
 
     NFA expected_dfa(
-        vars, 1, 
+        vars, 1,
         {
             1, // {1}
             2, // {1, 2}
@@ -562,44 +562,142 @@ TEST_CASE("Minimization - Wiki automaton") {
     assert_dfas_are_isomorphic(expected_result, result);
 }
 
+TEST_CASE("Dep. analysis :: potential var identifiction") {
+    // m(3) > x(2) > y(1) > z(0)
+    Quantified_Atom_Conjunction real_formula = {
+        .atoms = {
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 1, -1, 0}),             // x <= y
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 0, -1, 0}, 10),   // m - y ~ 0
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, -1}),             // m <= y
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 0, 0, 0}),             // m >= 0
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, 0}),              // m >=1 0
+        },
+        .bound_vars = {0, 2},
+        .var_count = 4
+    };
+    auto graph = build_dep_graph(real_formula);
+    identify_potential_variables(graph);
+
+    vector<u64> expected_potent_vars = {0};
+    CHECK(graph.potential_vars == expected_potent_vars);
+}
+
+TEST_CASE("Dep. analysis :: simplify (const var)") {
+    // m(0) > x(1) > y(2) > z(3)
+    Quantified_Atom_Conjunction real_formula = {
+        .atoms = {
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 1, -1, 0}),             // x <= y
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 0, -1, 0}, 10),   // m - y ~ 0
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, -1}),             // m <= y
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 0, 0, 0}),             // m >= 0
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, 0}),              // m >= 0
+        },
+        .bound_vars = {0, 2},
+        .var_count = 4
+    };
+    auto graph = build_dep_graph(real_formula);
+    identify_potential_variables(graph);
+
+    Conjunction_State state(nullptr, {0, 0, 0, 1, 1});
+    auto new_state = simplify_graph(graph, state);
+
+    // The graph should be simplified to
+    // 0. x <= y, m ~ y, m <= z, m >= 1, m <= 1
+    // 1. x <= y, 1 ~ y, 1 <= z
+    // 2. 1 <= z
+    CHECK(graph.atom_nodes[0].is_satisfied);
+    CHECK(graph.atom_nodes[1].is_satisfied);
+    CHECK(!graph.atom_nodes[2].is_satisfied);
+    CHECK(graph.atom_nodes[3].is_satisfied);
+    CHECK(graph.atom_nodes[4].is_satisfied);
+
+    auto& actual_atom = graph.atom_nodes[2].atom;
+    Presburger_Atom expected_atom(PR_ATOM_INEQ, {0, 0, 0, -1}); // 0 <= z
+    CHECK(actual_atom == expected_atom);
+    CHECK(new_state.constants[2] == -1);
+}
+
+TEST_CASE("Dep. analysis :: simplify (unbound vars)") {
+    // x1(0) < x2 < x3 < x4
+    Quantified_Atom_Conjunction conj = {
+        .atoms = {
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 0, 0, 0}),   // 0  <= x1
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, -1, 0, 0}),   // 23 <= x2
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 5, 0, 0}),   // 5*x2 - x1 <= 0
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 0, -1, 1}),   // x4 <= x3
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 0, 0, -1}),   // x4 >= 0
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 0, 0,  1}),   // x4 <= 12
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 0, 0, -1}, 13),   // x1 ~ x4
+        },
+        .bound_vars = {0, 1, 3},
+        .var_count = 4
+    };
+    auto graph = build_dep_graph(conj);
+    identify_potential_variables(graph);
+
+    Conjunction_State state(nullptr, {0, -23, 0, 0, 0, 12, 0});
+
+    auto new_state = simplify_graph(graph, state);
+
+    // 0)  0 <= x1, 23 <= x2, 5x2 <= x1, x4 <= x3, x4 >= 0, x4 <= 12, x1 ~ x4
+    // 1)  23 <= x2, x4 <= x3, x4 >= 0, x4 <= 12
+    // 2)  x4 <= x3, x4 >= 0, x4 <= 12
+    // 3)  0 <= x3
+    CHECK(graph.atom_nodes[0].is_satisfied);
+    CHECK(graph.atom_nodes[1].is_satisfied);
+    CHECK(graph.atom_nodes[2].is_satisfied);
+    CHECK(!graph.atom_nodes[3].is_satisfied);
+    CHECK(graph.atom_nodes[4].is_satisfied);
+    CHECK(graph.atom_nodes[5].is_satisfied);
+    CHECK(graph.atom_nodes[6].is_satisfied);
+
+    CHECK(new_state.constants[3] == 0);
+}
+
+TEST_CASE("Dep. analysis :: simplify (presentation formula)") {
+    // m(0) < x < y < z
+    const u64 modulus = 299993;
+    Quantified_Atom_Conjunction conj = {
+        .atoms = {
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 1, -1, 0}),   // x - y <= -1
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, -1}),   // m - z <= -1
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 0, 1, 0}),    // y <= -1
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 0, 0, 0}),   // -m <= 0
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, 0}),   // m <= 12
+            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 0, -1, 0}, modulus),   // m - y ~ 303
+        },
+        .bound_vars = {0, 2},
+        .var_count = 4
+    };
+    auto graph = build_dep_graph(conj);
+    identify_potential_variables(graph);
+
+    Conjunction_State state(nullptr, {-1, -1, -1, 0, 0, 303});
+
+    auto new_state = simplify_graph(graph, state);
+    // 0)  x - y <= -1, m - z <= -1, y <= -1, -m <= 0, m <= M, m - y ~ 303
+    // 0)  x - y <= -1, -z <= -1, y <= -1, -y ~ 303   (instantiate y=-303)
+    // 0)  x <= -304, -z <= -1
+    CHECK(!graph.atom_nodes[0].is_satisfied);
+    CHECK(!graph.atom_nodes[1].is_satisfied);
+    CHECK(graph.atom_nodes[2].is_satisfied);
+    CHECK(graph.atom_nodes[3].is_satisfied);
+    CHECK(graph.atom_nodes[4].is_satisfied);
+    CHECK(graph.atom_nodes[5].is_satisfied);
+
+    std::cout << new_state.constants << std::endl;
+    CHECK(new_state.constants[0] == -304);
+    CHECK(new_state.constants[1] == -1);
+}
+
+TEST_CASE("Test extended Euclidean") {
+    CHECK(compute_multiplicative_inverse(900, 37) == 73);
+    CHECK(compute_multiplicative_inverse(13, 12) == 12);
+}
+
 
 int main(int argc, char* argv[]) {
     init_mtbdd_libs();
-
-    // const s64 modulo = 33;
-
-    // Quantified_Atom_Conjunction real_formula = {
-    //     .atoms = {
-    //         Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 0, 0, 0}),                // (<= (- m) 0)
-    //         Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, 0}),                 // (<= m 299_992)
-    //         Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 0, -1, 0}, modulo),  // (= (mod (+ m (- y)) 299_993) 303)
-    //         Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, -1, 0, 0}),                // (<= (- x) 23)
-    //         Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 0, 1, 0}),                // (<= (- y) 0)
-    //         Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 5, -1, 0}),                // (<= (+ (- y) (* 5 x) 10)
-    //         Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, -1}),                // (<= (+ m (- z))  7)
-    //     },
-    //     .bound_vars = {0, 2},
-    //     .var_count = 4
-    // };
-
-    // Formula_Pool pool = Formula_Pool();
-    // auto formula_id = pool.store_formula(real_formula);
-
-    // //Conjuction_State initial_state = Conjuction_State{.formula = formula_id, .constants = {0, 299992, 303, 23, 0, 10, 7}};
-    // Conjuction_State initial_state = Conjuction_State{.formula = formula_id, .constants = {0, modulo-1, 0, 0, 3, 4}};
-
-    //Formula_Pool pool = Formula_Pool();
-    //auto formula_id = pool.store_formula(formula);
-    //Conjuction_State init_state = Conjuction_State{.formula = formula_id, .constants = {0, 1}};
-
-    // sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
-    // vars = sylvan::mtbdd_set_add(vars, 1);
-    // vars = sylvan::mtbdd_set_add(vars, 2);
-    // vars = sylvan::mtbdd_set_add(vars, 3);
-    // vars = sylvan::mtbdd_set_add(vars, 4);
-
-    // auto actual_nfa = build_nfa_with_formula_entailement(pool, initial_state, vars);
-    // std::cout << "#states: " << actual_nfa.states.size() << std::endl;
 
     doctest::Context context(argc, argv);
 
