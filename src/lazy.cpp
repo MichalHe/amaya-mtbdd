@@ -762,9 +762,9 @@ bool get_value_close_to_bounds(Dep_Graph& graph, Conjunction_State& state, u64 v
 }
 
 
-Conjunction_State simplify_graph(Dep_Graph& graph, Conjunction_State& state) {
-    Conjunction_State result_state(state);
+bool simplify_graph(Dep_Graph& graph, Conjunction_State& state) {
     bool all_vars_probed = false;
+    bool was_graph_simplified = false;
     while (!all_vars_probed) {
         bool was_graph_invalidated = false;
         for (auto potential_var: graph.potential_vars) {
@@ -772,9 +772,10 @@ Conjunction_State simplify_graph(Dep_Graph& graph, Conjunction_State& state) {
             bool is_val_implied = get_constant_value_implied_by_bounds(graph, potential_var, state, &inst_val);
             if (is_val_implied) {
                 PRINT_DEBUG("Simplifying graph - bounds imply value " << inst_val << " for x" << potential_var);
-                result_state = simplify_graph_using_value(graph, result_state, potential_var, inst_val);
+                state = simplify_graph_using_value(graph, state, potential_var, inst_val);
                 vector_remove(graph.quantified_vars, potential_var);
                 was_graph_invalidated = true;
+                was_graph_simplified = true;
                 break;
             }
 
@@ -786,6 +787,7 @@ Conjunction_State simplify_graph(Dep_Graph& graph, Conjunction_State& state) {
                 PRINT_DEBUG("Simplifying graph on unbound var: x" << potential_var);
                 simplify_graph_with_unbound_var(graph, potential_var);
                 vector_remove(graph.quantified_vars, potential_var);
+                was_graph_simplified = true;
                 was_graph_invalidated = true;
                 break;
             }
@@ -795,8 +797,9 @@ Conjunction_State simplify_graph(Dep_Graph& graph, Conjunction_State& state) {
             bool can_be_instantiated = get_value_close_to_bounds(graph, state, potential_var, &inst_val);
             if (can_be_instantiated) {
                 PRINT_DEBUG("Simplifying graph - instantiating var: x" << potential_var << " with value " << inst_val);
-                result_state = simplify_graph_using_value(graph, result_state, potential_var, inst_val);
+                state = simplify_graph_using_value(graph, state, potential_var, inst_val);
                 vector_remove(graph.quantified_vars, potential_var);
+                was_graph_simplified = true;
                 was_graph_invalidated = true;
                 break;
             }
@@ -804,9 +807,37 @@ Conjunction_State simplify_graph(Dep_Graph& graph, Conjunction_State& state) {
         if (was_graph_invalidated) identify_potential_variables(graph);
         else all_vars_probed = true;
     }
-    return result_state;
+    return was_graph_simplified;
 }
 
+
+Stateful_Formula convert_graph_into_formula(Dep_Graph& graph, Conjunction_State& state) {
+    // @Note: In theory, we could return a conjunction of the same number of atoms with satisfied atoms replaced
+    //        by TRUE and reuse the graph troughout the entire execution, however, this would require successor
+    //        computation to be aware about this and ignore such atoms.
+    vector<Presburger_Atom> atoms;
+    vector<s64> formula_state;
+    for (u64 atom_i = 0; atom_i < graph.atom_nodes.size(); atom_i++) {
+        auto& atom_node = graph.atom_nodes[atom_i];
+        if (!atom_node.is_satisfied) {
+            formula_state.push_back(state.constants[atom_i]);
+            atoms.push_back(atom_node.atom);
+        }
+    }
+
+    Quantified_Atom_Conjunction conjunction = {
+        .atoms = atoms,
+        .bound_vars = graph.quantified_vars,
+        .var_count = graph.var_nodes.size()
+    };
+    Conjunction_State new_state(nullptr, formula_state);
+    return {.state = new_state, .formula = conjunction};
+}
+
+// Entailement
+// 1. Simplify graph.
+// 2. Create a new formula and a new state if graph was simplified.
+// 3. Create a new graph for the simplified formula.
 
 std::optional<std::pair<s64, u64>> compute_instantiating_value_for_var(const Quantified_Atom_Conjunction& formula,
                                                                        Conjunction_State& state,

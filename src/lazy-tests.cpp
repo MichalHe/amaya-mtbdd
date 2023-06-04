@@ -599,7 +599,9 @@ TEST_CASE("Dep. analysis :: simplify (const var)") {
     identify_potential_variables(graph);
 
     Conjunction_State state(nullptr, {0, 0, 0, 1, 1});
-    auto new_state = simplify_graph(graph, state);
+    auto was_simplfied = simplify_graph(graph, state);
+
+    CHECK(was_simplfied);
 
     // The graph should be simplified to
     // 0. x <= y, m ~ y, m <= z, m >= 1, m <= 1
@@ -614,7 +616,7 @@ TEST_CASE("Dep. analysis :: simplify (const var)") {
     auto& actual_atom = graph.atom_nodes[2].atom;
     Presburger_Atom expected_atom(PR_ATOM_INEQ, {0, 0, 0, -1}); // 0 <= z
     CHECK(actual_atom == expected_atom);
-    CHECK(new_state.constants[2] == -1);
+    CHECK(state.constants[2] == -1);
 }
 
 TEST_CASE("Dep. analysis :: simplify (unbound vars)") {
@@ -639,7 +641,8 @@ TEST_CASE("Dep. analysis :: simplify (unbound vars)") {
 
     Conjunction_State state(nullptr, {0, -23, 0, 0, 0, 12, 0});
 
-    auto new_state = simplify_graph(graph, state);
+    auto was_simplified = simplify_graph(graph, state);
+    CHECK(was_simplified);
 
     // 0)  0 <= x1, 23 <= x2, 5x2 <= x1, x4 <= x3, x4 >= 0, x4 <= 12, x1 ~ x4
     // 1)  23 <= x2, x4 <= x3, x4 >= 0, x4 <= 12
@@ -653,7 +656,7 @@ TEST_CASE("Dep. analysis :: simplify (unbound vars)") {
     CHECK(graph.atom_nodes[5].is_satisfied);
     CHECK(graph.atom_nodes[6].is_satisfied);
 
-    CHECK(new_state.constants[3] == 0);
+    CHECK(state.constants[3] == 0);
 }
 
 TEST_CASE("Dep. analysis :: simplify (presentation formula)") {
@@ -676,7 +679,8 @@ TEST_CASE("Dep. analysis :: simplify (presentation formula)") {
 
     Conjunction_State state(nullptr, {-1, -1, -1, 0, 0, 303});
 
-    auto new_state = simplify_graph(graph, state);
+    auto was_simplified = simplify_graph(graph, state);
+    CHECK(was_simplified);
     // 0)  x - y <= -1, m - z <= -1, y <= -1, -m <= 0, m <= M, m - y ~ 303
     // 0)  x - y <= -1, -z <= -1, y <= -1, -y ~ 303   (instantiate y=-303)
     // 0)  x <= -304, -z <= -1
@@ -687,7 +691,23 @@ TEST_CASE("Dep. analysis :: simplify (presentation formula)") {
     CHECK(graph.atom_nodes[4].is_satisfied);
     CHECK(graph.atom_nodes[5].is_satisfied);
 
-    std::cout << new_state.constants << std::endl;
+    std::cout << state.constants << std::endl;
+    CHECK(state.constants[0] == -304);
+    CHECK(state.constants[1] == -1);
+
+    auto stateful_formula = convert_graph_into_formula(graph, state);
+    auto& formula = stateful_formula.formula;
+
+    CHECK(formula.atoms.size() == 2);
+    CHECK(stateful_formula.state.constants.size() == 2);
+
+    Presburger_Atom expected_atom0(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 1, 0, 0});
+    Presburger_Atom expected_atom1(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 0, 0, -1});
+    CHECK(formula.atoms[0] == expected_atom0);
+    CHECK(formula.atoms[1] == expected_atom1);
+    CHECK(formula.bound_vars.empty());
+
+    auto& new_state = stateful_formula.state;
     CHECK(new_state.constants[0] == -304);
     CHECK(new_state.constants[1] == -1);
 }

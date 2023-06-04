@@ -328,6 +328,11 @@ struct Dep_Graph {
     vector<Atom_Node> atom_nodes;
 };
 
+struct Stateful_Formula {
+    Conjunction_State state;
+    Quantified_Atom_Conjunction formula;
+};
+
 enum class Bound_Type : unsigned {
     NONE  = 0x00,
     UPPER = 0x01,
@@ -339,7 +344,8 @@ void write_dep_graph_dot(std::ostream& output, Dep_Graph& graph);
 void identify_potential_variables(Dep_Graph& graph);
 Conjunction_State simplify_graph_using_value(Dep_Graph& graph, Conjunction_State& state, u64 var, s64 val);
 void simplify_graph_with_unbound_var(Dep_Graph& graph, u64 var);
-Conjunction_State simplify_graph(Dep_Graph& graph, Conjunction_State& state);
+bool simplify_graph(Dep_Graph& graph, Conjunction_State& state);
+Stateful_Formula convert_graph_into_formula(Dep_Graph& graph, Conjunction_State& state);
 
 template <typename T>
 void vector_remove(vector<T>& vec, T& elem) {

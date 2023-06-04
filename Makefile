@@ -18,7 +18,7 @@ build/lazy-tests.o: src/lazy-tests.cpp
 
 shared-lib: build build/amaya-mtbdd.so
 
-build/lazy.o: build src/lazy.cpp include/lazy.hpp include/base.hpp
+build/lazy.o: src/lazy.cpp include/lazy.hpp include/base.hpp
 	$(CXX) -c $(CXXFLAGS) src/lazy.cpp -o build/lazy.o
 
 build/amaya-mtbdd.so: build/wrapper.o build/operations.o build/custom_leaf.o build/base.o build/lazy.o build/sylvan-extra.o
