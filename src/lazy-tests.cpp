@@ -35,7 +35,7 @@ void assert_dfas_are_isomorphic(const NFA& expected, const NFA& actual) {
         auto expected_transitions = expected.get_symbolic_transitions_for_state(expected_state);
         auto actual_transitions   = actual.get_symbolic_transitions_for_state(actual_state);
 
-        assert(expected_transitions.size() == actual_transitions.size());
+        CHECK(expected_transitions.size() == actual_transitions.size());
 
         for (auto& expected_transition: expected_transitions) {
             // Find a transition matching origin and the transition symbol; make sure that there is exactly 1 as the automaton is a DFA
@@ -90,22 +90,18 @@ TEST_CASE("lazy_construct `\\exists x (x + y <= 0)`")
     Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 1})}, .bound_vars = {0}, .var_count = 2};
     Formula_Pool pool = Formula_Pool();
     auto formula_id = pool.store_formula(formula);
-    Conjunction_State init_state = {.formula = formula_id, .constants = {0}};
+    Conjunction_State init_state({0});
 
     sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
     vars = sylvan::mtbdd_set_add(vars, 1);
     vars = sylvan::mtbdd_set_add(vars, 2);
 
-    auto actual_nfa = build_nfa_with_formula_entailement(pool, init_state, vars);
+    auto actual_nfa = build_nfa_with_formula_entailement(formula_id, init_state, vars, pool);
 
-    NFA expected_nfa(vars, 2, {0, 1, 2}, {1, 2}, {0});
+    NFA expected_nfa(vars, 2, {0}, {0}, {0});
 
     vector<Transition> symbolic_transitions {
-        {.from = 0, .to = 1, .symbol = {2, 0}},
-        {.from = 0, .to = 2, .symbol = {2, 1}},
-        {.from = 1, .to = 1, .symbol = {2, 0}},
-        {.from = 1, .to = 2, .symbol = {2, 1}},
-        {.from = 2, .to = 2, .symbol = {2, 2}},
+        {.from = 0, .to = 0, .symbol = {2, 2}},
     };
 
     for (auto it: symbolic_transitions) expected_nfa.add_transition(it.from, it.to, it.symbol.data());
@@ -119,13 +115,13 @@ TEST_CASE("lazy_construct simple atoms")
         Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 1})}, .bound_vars = {}, .var_count = 2};
         Formula_Pool pool = Formula_Pool();
         auto formula_id = pool.store_formula(formula);
-        Conjunction_State init_state = {.formula = formula_id, .constants = {2}};
+        Conjunction_State init_state({2});
 
         sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
         vars = sylvan::mtbdd_set_add(vars, 1);
         vars = sylvan::mtbdd_set_add(vars, 2);
 
-        auto actual_nfa = build_nfa_with_formula_entailement(pool, init_state, vars);
+        auto actual_nfa = build_nfa_with_formula_entailement(formula_id, init_state, vars, pool);
 
         NFA expected_nfa(
             vars, 2,
@@ -186,13 +182,13 @@ TEST_CASE("lazy_construct simple atoms")
         Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_EQ, {2, -1})}, .bound_vars = {}, .var_count = 2};
         Formula_Pool pool = Formula_Pool();
         auto formula_id = pool.store_formula(formula);
-        Conjunction_State init_state = {.formula = formula_id, .constants = {0}};
+        Conjunction_State init_state({0});
 
         sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
         vars = sylvan::mtbdd_set_add(vars, 1);
         vars = sylvan::mtbdd_set_add(vars, 2);
 
-        auto actual_nfa = build_nfa_with_formula_entailement(pool, init_state, vars);
+        auto actual_nfa = build_nfa_with_formula_entailement(formula_id, init_state, vars, pool);
 
         NFA expected_nfa(
             vars, 2,
@@ -241,13 +237,13 @@ TEST_CASE("lazy_construct simple atoms")
         Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 3}, 3)}, .bound_vars = {}, .var_count = 2};
         Formula_Pool pool = Formula_Pool();
         auto formula_id = pool.store_formula(formula);
-        Conjunction_State init_state = {.formula = formula_id, .constants = {1}};
+        Conjunction_State init_state({1});
 
         sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
         vars = sylvan::mtbdd_set_add(vars, 1);
         vars = sylvan::mtbdd_set_add(vars, 2);
 
-        auto actual_nfa = build_nfa_with_formula_entailement(pool, init_state, vars);
+        auto actual_nfa = build_nfa_with_formula_entailement(formula_id, init_state, vars, pool);
 
         NFA expected_nfa(
             vars, 2,
@@ -286,7 +282,7 @@ TEST_CASE("lazy_construct simple atoms")
     }
 }
 
-TEST_CASE("lazy_construct `\\exists y,m (x - y <= -1 && y <= -1 && -m <= 0 && m <= 1 && m - y ~ 0 (mod 3))`")
+TEST_CASE("lazy_construct(1) `\\exists y,m (x - y <= -1 && y <= -1 && -m <= 0 && m <= 1 && m - y ~ 0 (mod 3))`")
 {
     Formula formula = {
         .atoms = {
@@ -302,14 +298,14 @@ TEST_CASE("lazy_construct `\\exists y,m (x - y <= -1 && y <= -1 && -m <= 0 && m 
 
     Formula_Pool pool = Formula_Pool();
     auto formula_id = pool.store_formula(formula);
-    Conjunction_State init_state = {.formula = formula_id, .constants = {-1, -1, 0, 1, 0}};
+    Conjunction_State init_state({-1, -1, 0, 1, 0});
 
     sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
     vars = sylvan::mtbdd_set_add(vars, 1);
     vars = sylvan::mtbdd_set_add(vars, 2);
     vars = sylvan::mtbdd_set_add(vars, 3);
 
-    auto actual_nfa = build_nfa_with_formula_entailement(pool, init_state, vars);
+    auto actual_nfa = build_nfa_with_formula_entailement(formula_id, init_state, vars, pool);
 
     NFA expected_nfa(
         vars, 3,
@@ -354,8 +350,8 @@ TEST_CASE("lazy_construct `\\exists y,m (x - y <= -1 && && m - z <= -1 && y <= -
      *
      * Variables are renamed as: m -> x0, x -> x1, y -> x2, z -> x3
      */
-    Quantified_Atom_Conjunction real_formula = {
-        .atoms = {
+    Quantified_Atom_Conjunction real_formula(
+        {
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 0, 0, 0}),                // (<= (- m) 0)
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, 0}),                 // (<= m 299_992)
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 0, -1, 0}, 299993),  // (= (mod (+ m (- y)) 299_993) 303)
@@ -364,16 +360,16 @@ TEST_CASE("lazy_construct `\\exists y,m (x - y <= -1 && && m - z <= -1 && y <= -
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 5, -1, 0}),                // (<= (+ (- y) (* 5 x) 10)
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, -1}),                // (<= (+ m (- z))  7)
         },
-        .bound_vars = {0, 2},
-        .var_count = 4
-    };
+        {0, 2},
+        4
+    );
 
-    Conjunction_State real_state = {.formula = &real_formula, .constants = {-1, -1, -1, 0, 0, 303}};
+    Conjunction_State real_state({-1, -1, -1, 0, 0, 303});
 
     Formula_Pool pool = Formula_Pool();
     pool.store_formula(real_formula);
 
-    //auto entailment_status = compute_entailed_formula(pool, real_state);
+    // auto entailment_status = simplify_stateful_formula(&real_formula, real_state, pool);
     //build_nfa_with_formula_entailement(pool, real_state);
 }
 
@@ -564,17 +560,17 @@ TEST_CASE("Minimization - Wiki automaton") {
 
 TEST_CASE("Dep. analysis :: potential var identifiction") {
     // m(3) > x(2) > y(1) > z(0)
-    Quantified_Atom_Conjunction real_formula = {
-        .atoms = {
+    Quantified_Atom_Conjunction real_formula(
+        {
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 1, -1, 0}),             // x <= y
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 0, -1, 0}, 10),   // m - y ~ 0
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, -1}),             // m <= y
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 0, 0, 0}),             // m >= 0
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, 0}),              // m >=1 0
         },
-        .bound_vars = {0, 2},
-        .var_count = 4
-    };
+        {0, 2},
+        4
+    );
     auto graph = build_dep_graph(real_formula);
     identify_potential_variables(graph);
 
@@ -584,21 +580,21 @@ TEST_CASE("Dep. analysis :: potential var identifiction") {
 
 TEST_CASE("Dep. analysis :: simplify (const var)") {
     // m(0) > x(1) > y(2) > z(3)
-    Quantified_Atom_Conjunction real_formula = {
-        .atoms = {
+    Quantified_Atom_Conjunction real_formula(
+        {
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 1, -1, 0}),             // x <= y
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 0, -1, 0}, 10),   // m - y ~ 0
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, -1}),             // m <= y
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 0, 0, 0}),             // m >= 0
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, 0}),              // m >= 0
         },
-        .bound_vars = {0, 2},
-        .var_count = 4
-    };
+        {0, 2},
+        4
+    );
     auto graph = build_dep_graph(real_formula);
     identify_potential_variables(graph);
 
-    Conjunction_State state(nullptr, {0, 0, 0, 1, 1});
+    Conjunction_State state({0, 0, 0, 1, 1});
     auto was_simplfied = simplify_graph(graph, state);
 
     CHECK(was_simplfied);
@@ -621,8 +617,8 @@ TEST_CASE("Dep. analysis :: simplify (const var)") {
 
 TEST_CASE("Dep. analysis :: simplify (unbound vars)") {
     // x1(0) < x2 < x3 < x4
-    Quantified_Atom_Conjunction conj = {
-        .atoms = {
+    Quantified_Atom_Conjunction conj(
+        {
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 0, 0, 0}),   // 0  <= x1
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, -1, 0, 0}),   // 23 <= x2
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 5, 0, 0}),   // 5*x2 - x1 <= 0
@@ -631,15 +627,13 @@ TEST_CASE("Dep. analysis :: simplify (unbound vars)") {
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 0, 0,  1}),   // x4 <= 12
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 0, 0, -1}, 13),   // x1 ~ x4
         },
-        .bound_vars = {0, 1, 3},
-        .var_count = 4
-    };
+        {0, 1, 3},
+        4
+    );
     auto graph = build_dep_graph(conj);
     identify_potential_variables(graph);
 
-    write_dep_graph_dot(std::cout, graph);
-
-    Conjunction_State state(nullptr, {0, -23, 0, 0, 0, 12, 0});
+    Conjunction_State state({0, -23, 0, 0, 0, 12, 0});
 
     auto was_simplified = simplify_graph(graph, state);
     CHECK(was_simplified);
@@ -662,8 +656,8 @@ TEST_CASE("Dep. analysis :: simplify (unbound vars)") {
 TEST_CASE("Dep. analysis :: simplify (presentation formula)") {
     // m(0) < x < y < z
     const u64 modulus = 299993;
-    Quantified_Atom_Conjunction conj = {
-        .atoms = {
+    Quantified_Atom_Conjunction conj(
+        {
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 1, -1, 0}),   // x - y <= -1
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, -1}),   // m - z <= -1
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 0, 1, 0}),    // y <= -1
@@ -671,13 +665,13 @@ TEST_CASE("Dep. analysis :: simplify (presentation formula)") {
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, 0}),   // m <= 12
             Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 0, -1, 0}, modulus),   // m - y ~ 303
         },
-        .bound_vars = {0, 2},
-        .var_count = 4
-    };
+        {0, 2},
+        4
+    );
     auto graph = build_dep_graph(conj);
     identify_potential_variables(graph);
 
-    Conjunction_State state(nullptr, {-1, -1, -1, 0, 0, 303});
+    Conjunction_State state({-1, -1, -1, 0, 0, 303});
 
     auto was_simplified = simplify_graph(graph, state);
     CHECK(was_simplified);

@@ -79,7 +79,7 @@ bool Presburger_Atom::accepts_last_symbol(s64 state, u64 symbol) const {
 
 
 bool Conjunction_State::operator==(const Conjunction_State& other) const {
-    return formula == other.formula && constants == other.constants;
+    return constants == other.constants;
 }
 
 bool Presburger_Atom::operator==(const Presburger_Atom& other) const {
@@ -87,60 +87,31 @@ bool Presburger_Atom::operator==(const Presburger_Atom& other) const {
 }
 
 bool Quantified_Atom_Conjunction::operator==(const Quantified_Atom_Conjunction& other) const {
-    return other.is_bottom == is_bottom && other.var_count == var_count && other.atoms == atoms && other.bound_vars == other.bound_vars;
+    return other.bottom == bottom && other.var_count == var_count && other.atoms == atoms && other.bound_vars == other.bound_vars;
 }
 
-optional<Conjunction_State> Conjunction_State::successor_along_symbol(u64 symbol) {
-    vector<s64> successor_values(constants.size());
+optional<Conjunction_State> compute_successor(const Formula* formula, Conjunction_State& state, u64 symbol) {
+    vector<s64> successor_values(state.constants.size());
     for (u64 atom_i = 0; atom_i < formula->atoms.size(); atom_i++) {
-        s64 current_state = constants[atom_i];
+        s64 current_state = state.constants[atom_i];
         auto successor_value = formula->atoms[atom_i].compute_post_along_sym(current_state, symbol);
         if (!successor_value.has_value())
             return std::nullopt;
         successor_values[atom_i] = successor_value.value();
     }
 
-    return Conjunction_State {.formula = formula, .constants = successor_values};
+    return Conjunction_State {.constants = successor_values};
 }
 
-bool Conjunction_State::accepts_last_symbol(u64 symbol) {
+bool accepts_last_symbol(const Formula* formula, Conjunction_State& state, u64 symbol) {
     bool accepts = true;
     for (u64 atom_i = 0; atom_i < formula->atoms.size(); atom_i++) {
-        s64 current_state = constants[atom_i];
+        s64 current_state = state.constants[atom_i];
         accepts &= formula->atoms[atom_i].accepts_last_symbol(current_state, symbol);
     }
     return accepts;
 }
 
-void Conjunction_State::post(unordered_set<Conjunction_State>& known_states, vector<Conjunction_State>& new_states) {
-    const s64 max_symbol_val = (1 << formula->var_count);
-
-    vector<s64> post(constants.size());
-
-    for (s64 symbol_bits = 0; symbol_bits < max_symbol_val; symbol_bits++) {
-        bool has_no_post = false;
-        for (u64 atom_i = 0; atom_i < formula->atoms.size(); atom_i++) {
-            s64 current_state = constants[atom_i];
-            auto maybe_successor = formula->atoms[atom_i].compute_post_along_sym(current_state, symbol_bits);
-
-            if (!maybe_successor.has_value()) {
-                has_no_post = true;
-                break;
-            }
-            post[atom_i] = maybe_successor.value();
-        }
-
-        if (has_no_post) continue;
-
-        Conjunction_State dest = {.formula = formula, .constants = post};
-
-        auto insertion_result = known_states.emplace(dest);
-        auto did_insertion_happen = insertion_result.second;
-        if (did_insertion_happen) {
-            new_states.push_back(dest);
-        }
-    }
-}
 
 vector<Presburger_Atom> broadcast_atoms_to_same_dimension(const vector<Sparse_Presburger_Atom>& atoms) {
     unordered_set<u64> referenced_vars;
@@ -249,90 +220,39 @@ std::ostream& operator<<(std::ostream& output, const Conjunction_State& atom) {
         }
     }
 
-    output << ") [" << atom.formula << "]";
+    output << ")"; // "[" << atom.formula << "]";
     return output;
 }
 
+std::ostream& operator<<(std::ostream& output, const Structured_Macrostate& macrostate) {
+    output << "{";
+    u64 written_formulae = 0;
+    for (auto& [formula, states]: macrostate.formulae) {
+        if (written_formulae > 0) output << ", ";
+        output << "`" << *formula << "`: [";
+        auto state_it = states.begin();
+        output << *state_it;
+        ++state_it;
+
+        for (; state_it != states.end(); ++state_it) {
+            output << ", " << *state_it;
+        }
+        output << "]";
+        written_formulae += 1;
+    }
+    if (macrostate.is_accepting) {
+        output << " (+ ACCEPTING)";
+    }
+    output << "}";
+    return output;
+}
+
+
 bool Structured_Macrostate::operator==(const Structured_Macrostate& other) const {
     if (is_accepting != other.is_accepting) return false;
-    return formulae == other.formulae;
+    bool is_equal = formulae == other.formulae;
+    return is_equal;
 };
-
-
-Variable_Bound_Analysis_Result* compute_bounds_analysis(Quantified_Atom_Conjunction& conj) {
-    vector<Variable_Bounds> var_bounds {conj.var_count};
-    bool var_with_both_bounds_exists = false;
-
-    vector<vector<u64>> congruences_per_var (conj.var_count);
-
-    for (u64 atom_i = 0u; atom_i < conj.atoms.size(); atom_i++) {
-        auto& atom = conj.atoms[atom_i];
-
-        u64 bounded_var_count = 0u;
-        u64 bounded_var_i;
-        for (u64 var_i = 0u; var_i < conj.var_count; var_i++) {
-            if (atom.coefs[var_i]) {
-                if (bounded_var_count && atom.type == PR_ATOM_INEQ) {
-                    // Make sure we compute preferred values only for atoms with more than one variable
-                    auto preferred_value = atom.coefs[var_i] > 0 ? Preferred_Var_Value_Type::LOW : Preferred_Var_Value_Type::HIGH;
-                    var_bounds[var_i].preferred_value = var_bounds[var_i].preferred_value | preferred_value;
-
-                    if (bounded_var_count == 1) { // Update also the info for the first encountered variable
-                        auto preferred_value = atom.coefs[bounded_var_i] > 0 ? Preferred_Var_Value_Type::LOW : Preferred_Var_Value_Type::HIGH;
-                        var_bounds[bounded_var_i].preferred_value = var_bounds[bounded_var_i].preferred_value | preferred_value;
-                    }
-                }
-                if (atom.type == PR_ATOM_CONGRUENCE) {
-                    congruences_per_var[var_i].push_back(atom_i);
-                }
-
-                bounded_var_count++;
-                bounded_var_i = var_i;
-            }
-        }
-
-        if (bounded_var_count == 1) {
-            if (atom.type == Presburger_Atom_Type::PR_ATOM_EQ) {
-                auto var_coef = atom.coefs[bounded_var_i];
-
-                var_with_both_bounds_exists = true;
-                /* vars_with_both_bounds.insert(bounded_var_i); */
-
-                var_bounds[bounded_var_i].lower.is_present = true;
-                var_bounds[bounded_var_i].lower.atom_idx = atom_i;
-                var_bounds[bounded_var_i].upper.is_present = true;
-                var_bounds[bounded_var_i].upper.atom_idx = atom_i;
-
-            } else if (atom.type == Presburger_Atom_Type::PR_ATOM_INEQ) {
-                auto var_coef = atom.coefs[bounded_var_i];
-
-                Variable_Bound *bound_to_set, *other_bound;
-                if (var_coef > 0) {
-                    bound_to_set = &var_bounds[bounded_var_i].upper;
-                    other_bound  = &var_bounds[bounded_var_i].lower;
-                } else { // -x <= 10  ===  x >= -10
-                    bound_to_set = &var_bounds[bounded_var_i].lower;
-                    other_bound  = &var_bounds[bounded_var_i].upper;
-                }
-
-                // @Robustness: Deal with multiple bounds of the same type (lower/upper) on the same value
-                bound_to_set->is_present = true;
-                bound_to_set->atom_idx = atom_i;
-
-                if (other_bound->is_present) {
-                    var_with_both_bounds_exists = true;
-                    /* vars_with_both_bounds.insert(bounded_var_i); */
-                }
-            }
-        }
-    }
-
-    return new Variable_Bound_Analysis_Result{
-        .has_var_with_both_bounds = var_with_both_bounds_exists,
-        .bounds = var_bounds,
-        .congruences_per_var = congruences_per_var
-    };
-}
 
 s64 div_bound_by_coef(s64 bound, s64 coef) {
     s64 d = bound / coef;
@@ -344,13 +264,11 @@ s64 div_bound_by_coef(s64 bound, s64 coef) {
     return d;
 }
 
-
 s64 normalize_reminder(s64 reminder, s64 modulus) {
     reminder %= modulus;
     reminder += (reminder < 0) * modulus;
     return reminder;
 }
-
 
 Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj) {
     Dep_Graph graph;
@@ -725,7 +643,13 @@ bool get_value_close_to_bounds(Dep_Graph& graph, Conjunction_State& state, u64 v
 
     auto congruence_i = var_node.congruences[0];
     auto& congruence_node = graph.atom_nodes[congruence_i];
-    if (congruence_node.vars.size() > 1) return false;   // We don't know how to infer value when there are multiple vars in congruence
+
+    if (congruence_node.vars.size() > 1) {
+        // @Research: In case there are multiple variables in a congruence, but we affect only free vars,
+        // we can  maybe still instantiate the value if the congruence variables are not restristed too much.
+        return false;   // We don't know how to infer value when there are multiple vars in congruence
+    }
+
     auto& congruence = graph.atom_nodes[congruence_i].atom;
 
     u64 nonzero_coefs = 0;
@@ -810,7 +734,6 @@ bool simplify_graph(Dep_Graph& graph, Conjunction_State& state) {
     return was_graph_simplified;
 }
 
-
 Stateful_Formula convert_graph_into_formula(Dep_Graph& graph, Conjunction_State& state) {
     // @Note: In theory, we could return a conjunction of the same number of atoms with satisfied atoms replaced
     //        by TRUE and reuse the graph troughout the entire execution, however, this would require successor
@@ -825,218 +748,23 @@ Stateful_Formula convert_graph_into_formula(Dep_Graph& graph, Conjunction_State&
         }
     }
 
-    Quantified_Atom_Conjunction conjunction = {
-        .atoms = atoms,
-        .bound_vars = graph.quantified_vars,
-        .var_count = graph.var_nodes.size()
-    };
-    Conjunction_State new_state(nullptr, formula_state);
+    Quantified_Atom_Conjunction conjunction(atoms, graph.quantified_vars, graph.var_nodes.size()); // new dep graph is automatically created
+    Conjunction_State new_state(formula_state);
     return {.state = new_state, .formula = conjunction};
 }
 
-// Entailement
-// 1. Simplify graph.
-// 2. Create a new formula and a new state if graph was simplified.
-// 3. Create a new graph for the simplified formula.
+std::pair<const Formula*, Conjunction_State> simplify_stateful_formula(const Formula* formula, Conjunction_State& state, Formula_Pool& pool) {
+    Dep_Graph graph_copy(formula->dep_graph);
+    bool was_graph_simplified = simplify_graph(graph_copy, state);  // If the graph is simplified, then state will be modified
 
-std::optional<std::pair<s64, u64>> compute_instantiating_value_for_var(const Quantified_Atom_Conjunction& formula,
-                                                                       Conjunction_State& state,
-                                                                       u64 var_to_instantiate,
-                                                                       Variable_Bounds& bounds,
-                                                                       vector<u64>& congruences_referencing_var)
-{
-    bool do_bounds_allow_instantiation = false;
-    u64 used_atom_i = 0;
-
-    // @Todo: If we encounter a variable with some clear value preference (e.g. LOW), but missing a bound that would
-    // be used to construct the instantiation value (no low bounds), this means that the value can be any. This
-    // function neeeds to be extended to tell the caller that she can drop all atoms with the instantiated variable
-    // as it poses no restrictions onto other variables.
-    if (bounds.preferred_value == Preferred_Var_Value_Type::LOW && bounds.lower.is_present) {
-        do_bounds_allow_instantiation = true;
-        used_atom_i = bounds.lower.atom_idx;
+    if (was_graph_simplified) {
+        auto new_stateful_formula = convert_graph_into_formula(graph_copy, state);
+        auto formula_ptr = pool.store_formula(new_stateful_formula.formula);
+        return {formula_ptr, new_stateful_formula.state};
     }
-    else if (bounds.preferred_value == Preferred_Var_Value_Type::HIGH && bounds.upper.is_present) {
-        do_bounds_allow_instantiation = true;
-        used_atom_i = bounds.upper.atom_idx;
-    }
-
-    if (!do_bounds_allow_instantiation || congruences_referencing_var.size() > 1)
-        return std::nullopt;
-
-    if (congruences_referencing_var.empty())
-        return std::make_pair(state.constants[used_atom_i], used_atom_i);
-
-    auto& congruence = formula.atoms[congruences_referencing_var[0]];
-    s64 bound_point = state.constants[used_atom_i];
-
-    bool found_congruence_var = false;
-    u64 var_in_congruence;
-    for (u64 var_i = 0u; var_i < congruence.coefs.size(); ++var_i) {
-        if (congruence.coefs[var_i]) {
-            if (found_congruence_var) {
-                // @Research: If there are multiple variables in the congruence no idea what value shuold the var have.
-                return std::nullopt;
-            }
-            found_congruence_var = true;
-            var_in_congruence = var_i;
-        }
-    }
-
-    assert(var_in_congruence == var_to_instantiate);
-
-    // Find a solution in the unshifted congruence range, e.g., -y == 303 (mod 299_993)
-    s64 unshifted_solution = state.constants[congruences_referencing_var[0]] / congruence.coefs[var_in_congruence];
-    assert (unshifted_solution * congruence.coefs[var_in_congruence] == state.constants[congruences_referencing_var[0]]);
-    unshifted_solution += (unshifted_solution < 0)*congruence.modulus;
-
-    s64 shift_coef = bound_point / congruence.modulus;
-    shift_coef -= (bound_point < 0); // Essentailly a signed floor division
-    s64 congruence_shift = congruence.modulus * shift_coef;
-
-    s64 instantiated_value = unshifted_solution + congruence_shift;
-    return std::make_pair(instantiated_value, used_atom_i);
+    return {formula, state};
 }
 
-
-Entaiment_Status compute_entailed_formula(Formula_Pool& formula_pool, Conjunction_State& state) {
-    auto formula = state.formula;
-
-    if (!formula->bounds_analysis_result->has_var_with_both_bounds)
-        return { .has_no_integer_solution = false, .removed_atom_count = 0, .state = std::nullopt };
-
-    u64 atoms_implying_constant_var = 0;
-    vector<bool> does_atom_imply_constant_var (formula->atoms.size());
-    vector<pair<bool, s64>> constant_vars (formula->var_count);
-
-    bool has_no_integer_solution = false;
-
-    // Check whether any of the atoms in variable bounds imply a constant value
-    auto& var_bounds = formula->bounds_analysis_result->bounds;
-    for (u64 var_i = 0u; var_i < formula->var_count; var_i++) {
-        auto& lower_bound = var_bounds[var_i].lower, upper_bound = var_bounds[var_i].upper;
-        auto& lower_bound_atom = formula->atoms[lower_bound.atom_idx];
-        auto& upper_bound_atom = formula->atoms[upper_bound.atom_idx];
-
-        if (lower_bound.is_present && upper_bound.is_present) {
-            s64 lower_bound_val = state.constants[lower_bound.atom_idx] / lower_bound_atom.coefs[var_i];
-            s64 upper_bound_val = state.constants[upper_bound.atom_idx] / upper_bound_atom.coefs[var_i];
-
-            if (lower_bound_val > upper_bound_val)
-                return { .has_no_integer_solution = true, .removed_atom_count = 0, .state = Conjunction_State(&formula_pool.bottom, {}) };
-
-            if (lower_bound_val == upper_bound_val) {
-                constant_vars[var_i] = {true, lower_bound_val};
-
-                if (!does_atom_imply_constant_var[lower_bound.atom_idx]) {
-                    does_atom_imply_constant_var[lower_bound.atom_idx] = true;
-                    atoms_implying_constant_var++;
-                };
-                if (!does_atom_imply_constant_var[upper_bound.atom_idx]) {
-                    does_atom_imply_constant_var[upper_bound.atom_idx] = true;
-                    atoms_implying_constant_var++;
-                };
-            }
-        }
-    }
-
-    // @Robustness: We should also handle formulae without any hard bounds on them, e.g., (exists ((x Int) (y Int))
-    //              (<= (+ x y) 0)). Handling it should be probably done when we shift from simple analysis to inter-
-    //              atom influence analysis.
-
-    if (!atoms_implying_constant_var)  // The current formula does not imply a constant variable value
-        return { .has_no_integer_solution = false, .removed_atom_count = 0, .state = state};
-
-    // We will remove at least a single atom implying a constant - a new formula will be produced
-    Quantified_Atom_Conjunction entailed_formula = Quantified_Atom_Conjunction(*formula);
-    entailed_formula.bounds_analysis_result = nullptr;
-    Conjunction_State entailed_state(state);
-
-    for (u64 atom_i = 0u; atom_i < formula->atoms.size(); atom_i++) {
-        if (does_atom_imply_constant_var[atom_i]) continue;
-
-        // Check whether the atom references any constant vars; if yes, substitute them into the atom
-        auto& atom = entailed_formula.atoms[atom_i];
-        for (u64 var_i = 0u; var_i < formula->var_count; var_i++) {
-            if (constant_vars[var_i].first && atom.coefs[var_i]) {
-                entailed_state.constants[var_i] -= constant_vars[var_i].second;
-                atom.coefs[var_i] = 0;
-            }
-        }
-    }
-
-    // Try instantiating the quantifier if there is a clear value for the quantified variables to pick. E.g, in
-    // \exists x (x <= 1 \land x + y >= 10) x should be 1 because x = 0 implies the sol(y) = {10, 11, 12}, whereas
-    // x = 1 implies sol(y) = {9, 10, 11, 12} and we want to have the free variables unrestricted as much as possible
-    {
-        vector<u64> quantified_vars_not_instantiated;
-        for (auto bound_var: formula->bound_vars) {
-            auto& bounds = var_bounds[bound_var];
-
-            if (constant_vars[bound_var].first) {
-                // The variable already has been instantiated, continuing will not add to the
-                // uninstantiated variables in the entailed formula
-                continue;
-            }
-
-            auto& congruences_for_var = formula->bounds_analysis_result->congruences_per_var[bound_var];
-            auto maybe_instantiation_result = compute_instantiating_value_for_var(entailed_formula, state, bound_var, bounds, congruences_for_var);
-
-            if (maybe_instantiation_result.has_value()) {
-                auto [instantiation_value, used_atom_i] = maybe_instantiation_result.value();
-                for (u64 atom_i = 0u; atom_i < entailed_formula.atoms.size(); atom_i++) {
-                    auto& atom = entailed_formula.atoms[atom_i];
-                    entailed_state.constants[atom_i] -= atom.coefs[bound_var] * instantiation_value;
-                    atom.coefs[bound_var] = 0;
-                }
-
-                does_atom_imply_constant_var[used_atom_i] = true;
-
-            } else {
-                quantified_vars_not_instantiated.push_back(bound_var);
-            }
-        }
-        entailed_formula.bound_vars = quantified_vars_not_instantiated;
-    }
-
-    for (u64 atom_i = 0u ; atom_i < entailed_formula.atoms.size(); atom_i++) {
-        auto& atom = entailed_formula.atoms[atom_i];
-        bool all_coefs_are_zero = true;
-        for (auto& coef: atom.coefs) {
-            if (coef) all_coefs_are_zero = false;
-        }
-        if (all_coefs_are_zero) {
-            does_atom_imply_constant_var[atom_i] = true;
-            atoms_implying_constant_var++;
-        }
-    }
-
-    // Remove atoms that have implied a constant variable value
-    {
-        u64 entailed_conj_size = entailed_formula.atoms.size() - atoms_implying_constant_var;
-        vector<Presburger_Atom> new_atoms(entailed_conj_size);
-        vector<s64> relevant_atom_constants(entailed_conj_size);
-        u64 new_atom_insertion_cursor = 0;
-        for (u64 atom_i = 0u; atom_i < entailed_formula.atoms.size(); atom_i++) {
-            if (does_atom_imply_constant_var[atom_i]) continue;
-
-            new_atoms[new_atom_insertion_cursor] = entailed_formula.atoms[atom_i];
-            relevant_atom_constants[new_atom_insertion_cursor] = entailed_state.constants[atom_i];
-            new_atom_insertion_cursor++;
-        }
-
-        entailed_formula.atoms = new_atoms;
-        entailed_state.constants = relevant_atom_constants;
-    }
-
-    entailed_state.formula = formula_pool.store_formula(entailed_formula);
-
-    return Entaiment_Status {
-        .has_no_integer_solution = false,
-        .removed_atom_count = atoms_implying_constant_var,
-        .state = entailed_state,
-    };
-}
 
 void add_var_coef_term(std::stringstream& dest, u64 var, s64 coef) {
     switch (coef) {
@@ -1103,9 +831,10 @@ std::string Presburger_Atom::fmt_with_rhs(s64 rhs) const {
 }
 
 std::string Quantified_Atom_Conjunction::fmt_with_state(Conjunction_State& state) const {
-    if (atoms.empty()) {
-        if (is_bottom) return "false";
-        else return "true";
+    if (this->is_bottom())
+        return "false";
+    else if (this->is_top()) {
+        return "true";
     }
 
     std::stringstream str_builder;
@@ -1137,9 +866,8 @@ std::string Quantified_Atom_Conjunction::fmt_with_state(Conjunction_State& state
 }
 
 
-void insert_successor_into_post_if_valuable(Structured_Macrostate& post, Conjunction_State& successor) {
-    auto formula = successor.formula;
-    auto& bucket = post.formulae[successor.formula];
+void insert_successor_into_post_if_valuable(Structured_Macrostate& post, const Formula* formula, Conjunction_State& successor) {
+    auto& bucket = post.formulae[formula];
 
     bool should_be_inserted = true;
     bool insert_position_found = false;
@@ -1220,25 +948,6 @@ void insert_successor_into_post_if_valuable(Structured_Macrostate& post, Conjunc
     }
 }
 
-std::ostream& operator<<(std::ostream& output, const Structured_Macrostate& macrostate) {
-    output << "{";
-    for (auto& [formula, states]: macrostate.formulae) {
-        auto state_it = states.begin();
-        output << *state_it;
-        ++state_it;
-
-        for (; state_it != states.end(); ++state_it) {
-            output << ", " << *state_it;
-        }
-
-    }
-    if (macrostate.is_accepting) {
-        output << " (+ ACCEPTING)";
-    }
-    output << "}";
-    return output;
-}
-
 void make_macrostate_canoical(Structured_Macrostate& macrostate) {
     auto comparator = [](const Conjunction_State& left, const Conjunction_State& right){
         // Is left < right ?
@@ -1254,6 +963,18 @@ void make_macrostate_canoical(Structured_Macrostate& macrostate) {
     }
 }
 
+Structured_Macrostate make_trivial_macrostate(Formula_Pool& pool, bool polarity) {
+    Formula formula(polarity);
+    auto formula_ptr = pool.store_formula(formula);
+    Conjunction_State state ({});
+    list<Conjunction_State> state_list = {state};
+    map<const Formula*, list<Conjunction_State>> contents = {{formula_ptr, state_list}};
+
+    Structured_Macrostate macrostate = {.is_accepting = polarity, .formulae = contents};
+    return macrostate;
+}
+
+
 void explore_macrostate(NFA& constructed_nfa,
                         Structured_Macrostate& macrostate,
                         Alphabet_Iterator& alphabet_iter,
@@ -1261,62 +982,51 @@ void explore_macrostate(NFA& constructed_nfa,
 {
     alphabet_iter.reset();
 
+    PRINT_DEBUG("Exploring " << macrostate);
+
     while (!alphabet_iter.finished) {
         Structured_Macrostate post;
         bool is_accepting = false;
 
         u64 transition_symbol = alphabet_iter.init_quantif();  // The quantified bits will be masked away, so it is sufficient to take the first one
 
+        bool is_post_top = false;
         for (u64 symbol = transition_symbol; alphabet_iter.has_more_quantif_symbols; symbol = alphabet_iter.next_symbol()) {
 #if DEBUG_RUNTIME
             auto start = std::chrono::system_clock::now();
 #endif
-
             for (auto& [formula, states]: macrostate.formulae) {
                 for (auto& state: states) {
-                    auto maybe_successor = state.successor_along_symbol(symbol);
+                    auto maybe_successor = compute_successor(formula, state, symbol);
 
-                    if (!maybe_successor.has_value()) {
-                        continue;
-                    };
+                    if (!maybe_successor.has_value()) continue;
 
                     auto successor = maybe_successor.value();
 
-                    auto entailment_result = compute_entailed_formula(constr_state.formula_pool, successor);
+                    auto new_formula_state_pair = simplify_stateful_formula(formula, successor, constr_state.formula_pool);
+                    successor = new_formula_state_pair.second;
+                    auto simplified_formula = new_formula_state_pair.first;
 
-                    if (entailment_result.state.has_value()) {
-                        successor = entailment_result.state.value();
-                    }
-
-                    if (successor.formula == &constr_state.formula_pool.top) {
-                        assert(false); // @Todo: Make the entire post lead to \\top here
+                    if (simplified_formula->is_top()) {
+                        is_post_top = true;
                         break;
-                    } else if (successor.formula != &constr_state.formula_pool.bottom) {
-                        insert_successor_into_post_if_valuable(post, successor);
+                    } else if (!simplified_formula->is_bottom()) {
+                        insert_successor_into_post_if_valuable(post, simplified_formula, successor);
                     }
 
-                    post.is_accepting |= state.accepts_last_symbol(symbol);
+                    post.is_accepting |= accepts_last_symbol(simplified_formula, successor, symbol);
                 }
 
+                if (is_post_top) break;
             }
 
             make_macrostate_canoical(post);
-
-            // PRINT_DEBUG("Macrostate over symbol " << std::bitset<16>(symbol) << " " << post);
 
 #if DEBUG_RUNTIME
             auto end = std::chrono::system_clock::now();
             std::chrono::duration<double> elapsed_seconds = end - start;
             std::cout << "Number of formulae: " << macrostate.formulae.size()
                       << "; insertion took: " << elapsed_seconds.count() << " seconds." << std::endl;
-            /*
-            if (elapsed_seconds.count() > 0.2d) {
-                for (auto& [formula, states]: macrostate.formulae) {
-                    std::cout << macrostate << std::endl;
-                    std::cout << *formula << std::endl;
-                }
-            }
-            */
 #endif
         }
 
@@ -1325,6 +1035,12 @@ void explore_macrostate(NFA& constructed_nfa,
             constructed_nfa.add_transition(macrostate.handle, constr_state.trap_state_handle, transition_symbol, alphabet_iter.quantified_bits_mask);
             continue;
         };
+
+        if (is_post_top) {
+            constr_state.is_trap_state_needed = true;
+            constructed_nfa.add_transition(macrostate.handle, constr_state.trap_state_handle, transition_symbol, alphabet_iter.quantified_bits_mask);
+            continue;
+        }
 
         // Assign a unique integer to every state
         post.handle = constr_state.known_macrostates.size();
@@ -1427,49 +1143,59 @@ std::string NFA::show_transitions() const {
     return str_builder.str();
 }
 
-NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjunction_State& init_state, sylvan::BDDSET bdd_vars) {
-    u64 max_symbol = (1u << init_state.formula->var_count);
-    vector<Conjunction_State> produced_states;
-
-    // Use map instead of unordered_map so that we can serialize its contents in an canonical fashion
-    Structured_Macrostate post;
-
+NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State& init_state, sylvan::BDDSET bdd_vars, Formula_Pool& formula_pool) {
     vector<Structured_Macrostate> work_queue;
     Lazy_Construction_State constr_state = {.formula_pool = formula_pool, .output_queue = work_queue};
 
     // Prepare a trapstate in case it is needed
     {
-        Conjunction_State trap_state {.formula = &formula_pool.bottom, .constants = {}};
-        list<Conjunction_State> bottom_states {trap_state};
-        map<const Formula*, list<Conjunction_State>> trap_macrostate_formulae = { {trap_state.formula, bottom_states} };
-        Structured_Macrostate trap_macrostate = { .is_accepting = false, .formulae = trap_macrostate_formulae };
-
-        auto [container_pos, was_insterted] = constr_state.known_macrostates.emplace(trap_macrostate, constr_state.known_macrostates.size());
+        auto trapstate = make_trivial_macrostate(formula_pool, false);
+        auto [container_pos, was_insterted] = constr_state.known_macrostates.emplace(trapstate, constr_state.known_macrostates.size());
         constr_state.trap_state_handle = container_pos->second;
+    }
+
+    // Prepare TRUE state
+    {
+        auto topstate = make_trivial_macrostate(formula_pool, true);
+        auto [container_pos, was_insterted] = constr_state.known_macrostates.emplace(topstate, constr_state.known_macrostates.size());
+        constr_state.topstate_handle = container_pos->second;
+    }
+
+    PRINT_DEBUG("Performing initial simplification of formula");
+    auto initial_simplification = simplify_stateful_formula(formula, init_state, formula_pool);
+    init_state = initial_simplification.second;
+    formula = initial_simplification.first;
+
+    if (formula->is_top()) {
+        State state = 0;
+        NFA nfa(bdd_vars, formula->var_count, {state}, {state}, {state});
+        nfa.add_transition(state, state, 0u, static_cast<u64>(-1));
+        return nfa;
     }
 
     // Populate the queue with the initial states
     const u64 init_state_handle = constr_state.known_macrostates.size();
     {
         list<Conjunction_State> init_list = {init_state};
-        map<const Formula*, list<Conjunction_State>> init_macrostate_formulae = { {init_state.formula, init_list} };
+        map<const Formula*, list<Conjunction_State>> init_macrostate_formulae = { {formula, init_list} };
         Structured_Macrostate init_macrostate = { .is_accepting = false, .handle = init_state_handle, .formulae = init_macrostate_formulae};
         work_queue.push_back(init_macrostate);
 
         auto [container_pos, was_inserted] = constr_state.known_macrostates.emplace(init_macrostate, constr_state.known_macrostates.size());
     }
 
-    NFA nfa(bdd_vars, init_state.formula->var_count, {}, {}, {static_cast<State>(init_state_handle)});
 
-    Alphabet_Iterator alphabet_iter = Alphabet_Iterator(init_state.formula->var_count, init_state.formula->bound_vars);
-    PRINT_DEBUG("The following vars are quantified: " << init_state.formula->bound_vars);
+    NFA nfa(bdd_vars, formula->var_count, {}, {}, {static_cast<State>(init_state_handle)});
+
+    Alphabet_Iterator alphabet_iter = Alphabet_Iterator(formula->var_count, formula->bound_vars);
+    PRINT_DEBUG("The following vars are quantified: " << formula->bound_vars);
     PRINT_DEBUG("Using the following mask: " << std::bitset<8>(alphabet_iter.quantified_bits_mask));
 
     u64 processed = 0;
     while (!work_queue.empty()) {
         auto macrostate = work_queue.back();
         work_queue.pop_back();
-        PRINT_DEBUG("Proccessing" << macrostate << " (Queue size " << work_queue.size() << ')');
+        // PRINT_DEBUG("Proccessing" << macrostate << " (Queue size " << work_queue.size() << ')');
 
         nfa.states.insert(macrostate.handle);
         if (macrostate.is_accepting) {
@@ -1480,27 +1206,39 @@ NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjunction_S
         processed += 1;
     }
 
+    const u64 all_bits_dont_care_mask = static_cast<u64>(-1);
     if (constr_state.is_trap_state_needed) {
         nfa.states.insert(constr_state.trap_state_handle);
-        u64 all_bits_dont_care_mask = static_cast<u64>(-1);
         nfa.add_transition(constr_state.trap_state_handle, constr_state.trap_state_handle, 0u, all_bits_dont_care_mask);
     }
 
-    nfa.perform_pad_closure();
+    if (constr_state.is_top_state_needed) {
+        nfa.states.insert(constr_state.topstate_handle);
+        nfa.add_transition(constr_state.topstate_handle, constr_state.topstate_handle, 0u, all_bits_dont_care_mask);
+    }
 
+
+    PRINTF_DEBUG("The constructed NFA has %lu states", nfa.states.size());
+
+    for (auto& [macrostate, handle]: constr_state.known_macrostates) {
+        std::cout << handle << " :: " << macrostate << std::endl;
+    }
+
+    nfa.perform_pad_closure();
     return determinize_nfa(nfa);
 }
 
 
 const Quantified_Atom_Conjunction* Formula_Pool::store_formula(Quantified_Atom_Conjunction& formula) {
     auto [it, did_insertion_happen] = formulae.emplace(formula);
-
     const Quantified_Atom_Conjunction* stored_formula_ptr = &(*it);
-    if (did_insertion_happen && it->bounds_analysis_result == nullptr) {
-        // It is OK to mutate this field as the bounds_analysis_result field is not hashed
-        auto mut_formula = const_cast<Quantified_Atom_Conjunction*>(stored_formula_ptr);
-        mut_formula->bounds_analysis_result = compute_bounds_analysis(formula);
-    }
-
     return &(*it);
+}
+
+Quantified_Atom_Conjunction::Quantified_Atom_Conjunction(const vector<Presburger_Atom>& atoms, const vector<u64>& bound_vars, u64 var_count) {
+    this->atoms = atoms;
+    this->bound_vars = bound_vars;
+    this->var_count = var_count;
+    this->dep_graph = build_dep_graph(*this);
+    identify_potential_variables(this->dep_graph);
 }

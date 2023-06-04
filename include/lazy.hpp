@@ -92,14 +92,63 @@ struct Variable_Bound_Analysis_Result {
 
 struct Conjunction_State;
 
+struct Atom_Node {
+    Presburger_Atom atom;
+    u64 atom_i;  // @Todo: Since we are no longer using pointers, maybe this can be removed?
+    vector<u64> vars;
+    bool is_satisfied;
+};
+
+struct Hard_Bound {
+    bool is_present;
+    u64 atom_i;
+};
+
+struct Var_Node {
+    vector<u64> affected_free_vars; // Free vars affected via congruence
+    Hard_Bound hard_upper_bound;
+    Hard_Bound hard_lower_bound;
+    vector<u64> upper_bounds;
+    vector<u64> lower_bounds;
+    vector<u64> congruences;
+
+    bool is_hard_lower_bound(u64 atom_i) {
+        return (hard_lower_bound.is_present && hard_lower_bound.atom_i == atom_i);
+    }
+
+    bool is_hard_upper_bound(u64 atom_i) {
+        return (hard_upper_bound.is_present && hard_upper_bound.atom_i == atom_i);
+    }
+
+};
+
+struct Dep_Graph {
+    vector<u64> potential_vars;
+    vector<u64> quantified_vars;
+    vector<Var_Node> var_nodes;
+    vector<Atom_Node> atom_nodes;
+};
+
 struct Quantified_Atom_Conjunction {
     vector<Presburger_Atom> atoms;
     vector<u64>             bound_vars;
     u64 var_count;
-    Variable_Bound_Analysis_Result* bounds_analysis_result;
-    bool is_bottom = false;
+    Dep_Graph dep_graph;
+    bool bottom = false;
+
+    Quantified_Atom_Conjunction() {}
+    Quantified_Atom_Conjunction(bool top) : bottom(!top) {}
+    Quantified_Atom_Conjunction(const vector<Presburger_Atom>& atoms, const vector<u64>& bound_vars, u64 var_count);
 
     bool operator==(const Quantified_Atom_Conjunction& other) const;
+
+    bool is_top() const {
+        return atoms.empty() && !bottom;
+    }
+
+    bool is_bottom() const {
+        return atoms.empty() && bottom;
+    }
 
     std::string fmt_with_state(Conjunction_State& state) const;
 };
@@ -107,7 +156,7 @@ struct Quantified_Atom_Conjunction {
 template <>
 struct std::hash<Quantified_Atom_Conjunction> {
     std::size_t operator() (const Quantified_Atom_Conjunction& formula) const {
-        std::size_t hash = formula.is_bottom ? 0 : 33;
+        std::size_t hash = formula.bottom ? 0 : 33;
         for (auto& atom: formula.atoms) {
             std::size_t atom_hash = std::hash<Presburger_Atom>{}(atom);
             hash = hash + 0x9e3779b9 + (atom_hash << 6) + (atom_hash >> 2);
@@ -117,16 +166,13 @@ struct std::hash<Quantified_Atom_Conjunction> {
 };
 
 struct Conjunction_State {
-    const Quantified_Atom_Conjunction* formula; // @TODO: Do we need this pointer?
     vector<s64> constants;
 
-    Conjunction_State(const Quantified_Atom_Conjunction* formula, vector<s64> value): formula(formula), constants(value) {}
+    Conjunction_State(vector<s64> value): constants(value) {}
 
-    Conjunction_State(const Conjunction_State& other): formula(other.formula), constants(other.constants) {}
+    Conjunction_State(const Conjunction_State& other): constants(other.constants) {}
 
     void post(unordered_set<Conjunction_State>& known_states, vector<Conjunction_State>& dest);
-    optional<Conjunction_State> successor_along_symbol(u64 symbol);
-    bool accepts_last_symbol(u64 symbol);
     bool operator==(const Conjunction_State& other) const;
     bool operator<(const Conjunction_State& other) const;
 };
@@ -134,9 +180,9 @@ struct Conjunction_State {
 template <>
 struct std::hash<Conjunction_State> {
     std::size_t operator() (const Conjunction_State& state) const {
-        std::size_t hash = std::hash<const Quantified_Atom_Conjunction*>{}(state.formula);
+        std::size_t hash = 0;
 
-        for (u64 i = 0u; i < state.formula->atoms.size(); i++) {
+        for (u64 i = 0u; i < state.constants.size(); i++) {
             std::size_t atom_val_hash = std::hash<s64>{}(state.constants[i]);
             hash = hash + 0x9e3779b9 + (atom_val_hash << 6) + (atom_val_hash >> 2);
         }
@@ -221,14 +267,13 @@ struct Alphabet_Iterator {
 
 
 struct Formula_Pool { // Formula memory management
-    Quantified_Atom_Conjunction top;    // Formula with solution space spanning entire space
-    Quantified_Atom_Conjunction bottom; // Formula with no solution space
-
     unordered_set<Quantified_Atom_Conjunction> formulae;
 
     Formula_Pool() {
-        top    = Quantified_Atom_Conjunction{.is_bottom = false};
-        bottom = Quantified_Atom_Conjunction{.is_bottom = true};
+        auto top = Quantified_Atom_Conjunction(true);
+        auto bottom = Quantified_Atom_Conjunction(false);
+        formulae.insert(top);
+        formulae.insert(bottom);
     }
 
     const Quantified_Atom_Conjunction* store_formula(Quantified_Atom_Conjunction& formula);
@@ -278,7 +323,7 @@ struct std::hash<Structured_Macrostate> {
 
 char convert_cube_bit_to_char(u8 cube_bit);
 void show_transitions_from_state(std::stringstream& output, const NFA& nfa, State origin, sylvan::MTBDD mtbdd);
-NFA build_nfa_with_formula_entailement(Formula_Pool& formula_pool, Conjunction_State& init_state, sylvan::BDDSET bdd_vars);
+NFA build_nfa_with_formula_entailement(const Quantified_Atom_Conjunction* formula, Conjunction_State& init_state, sylvan::BDDSET bdd_vars, Formula_Pool& formula_pool);
 void init_mtbdd_libs();
 
 struct Lazy_Construction_State {
@@ -289,44 +334,10 @@ struct Lazy_Construction_State {
 
     bool is_trap_state_needed;
     State trap_state_handle;
+    bool is_top_state_needed;
+    State topstate_handle;
 };
 
-struct Atom_Node {
-    Presburger_Atom atom;
-    u64 atom_i;  // @Todo: Since we are no longer using pointers, maybe this can be removed?
-    vector<u64> vars;
-    bool is_satisfied;
-};
-
-struct Hard_Bound {
-    bool is_present;
-    u64 atom_i;
-};
-
-struct Var_Node {
-    vector<u64> affected_free_vars; // Free vars affected via congruence
-    Hard_Bound hard_upper_bound;
-    Hard_Bound hard_lower_bound;
-    vector<u64> upper_bounds;
-    vector<u64> lower_bounds;
-    vector<u64> congruences;
-
-    bool is_hard_lower_bound(u64 atom_i) {
-        return (hard_lower_bound.is_present && hard_lower_bound.atom_i == atom_i);
-    }
-
-    bool is_hard_upper_bound(u64 atom_i) {
-        return (hard_upper_bound.is_present && hard_upper_bound.atom_i == atom_i);
-    }
-
-};
-
-struct Dep_Graph {
-    vector<u64> potential_vars;
-    vector<u64> quantified_vars;
-    vector<Var_Node> var_nodes;
-    vector<Atom_Node> atom_nodes;
-};
 
 struct Stateful_Formula {
     Conjunction_State state;
@@ -346,6 +357,7 @@ Conjunction_State simplify_graph_using_value(Dep_Graph& graph, Conjunction_State
 void simplify_graph_with_unbound_var(Dep_Graph& graph, u64 var);
 bool simplify_graph(Dep_Graph& graph, Conjunction_State& state);
 Stateful_Formula convert_graph_into_formula(Dep_Graph& graph, Conjunction_State& state);
+std::pair<const Quantified_Atom_Conjunction*, Conjunction_State> simplify_stateful_formula(const Quantified_Atom_Conjunction* formula, Conjunction_State& state, Formula_Pool& pool);
 
 template <typename T>
 void vector_remove(vector<T>& vec, T& elem) {
