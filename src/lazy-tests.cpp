@@ -90,7 +90,7 @@ TEST_CASE("lazy_construct `\\exists x (x + y <= 0)`")
     Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 1})}, .bound_vars = {0}, .var_count = 2};
     Formula_Pool pool = Formula_Pool();
     auto formula_id = pool.store_formula(formula);
-    Conjunction_State init_state = Conjuction_State{.formula = formula_id, .constants = {0}};
+    Conjunction_State init_state = {.formula = formula_id, .constants = {0}};
 
     sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
     vars = sylvan::mtbdd_set_add(vars, 1);
@@ -119,7 +119,7 @@ TEST_CASE("lazy_construct simple atoms")
         Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 1})}, .bound_vars = {}, .var_count = 2};
         Formula_Pool pool = Formula_Pool();
         auto formula_id = pool.store_formula(formula);
-        Conjunction_State init_state = Conjuction_State{.formula = formula_id, .constants = {2}};
+        Conjunction_State init_state = {.formula = formula_id, .constants = {2}};
 
         sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
         vars = sylvan::mtbdd_set_add(vars, 1);
@@ -186,7 +186,7 @@ TEST_CASE("lazy_construct simple atoms")
         Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_EQ, {2, -1})}, .bound_vars = {}, .var_count = 2};
         Formula_Pool pool = Formula_Pool();
         auto formula_id = pool.store_formula(formula);
-        Conjunction_State init_state = Conjuction_State{.formula = formula_id, .constants = {0}};
+        Conjunction_State init_state = {.formula = formula_id, .constants = {0}};
 
         sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
         vars = sylvan::mtbdd_set_add(vars, 1);
@@ -241,7 +241,7 @@ TEST_CASE("lazy_construct simple atoms")
         Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 3}, 3)}, .bound_vars = {}, .var_count = 2};
         Formula_Pool pool = Formula_Pool();
         auto formula_id = pool.store_formula(formula);
-        Conjunction_State init_state = Conjuction_State{.formula = formula_id, .constants = {1}};
+        Conjunction_State init_state = {.formula = formula_id, .constants = {1}};
 
         sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
         vars = sylvan::mtbdd_set_add(vars, 1);
@@ -302,7 +302,7 @@ TEST_CASE("lazy_construct `\\exists y,m (x - y <= -1 && y <= -1 && -m <= 0 && m 
 
     Formula_Pool pool = Formula_Pool();
     auto formula_id = pool.store_formula(formula);
-    Conjunction_State init_state = Conjuction_State{.formula = formula_id, .constants = {-1, -1, 0, 1, 0}};
+    Conjunction_State init_state = {.formula = formula_id, .constants = {-1, -1, 0, 1, 0}};
 
     sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
     vars = sylvan::mtbdd_set_add(vars, 1);
@@ -368,7 +368,7 @@ TEST_CASE("lazy_construct `\\exists y,m (x - y <= -1 && && m - z <= -1 && y <= -
         .var_count = 4
     };
 
-    Conjunction_State real_state = Conjuction_State{.formula = &real_formula, .constants = {-1, -1, -1, 0, 0, 303}};
+    Conjunction_State real_state = {.formula = &real_formula, .constants = {-1, -1, -1, 0, 0, 303}};
 
     Formula_Pool pool = Formula_Pool();
     pool.store_formula(real_formula);
@@ -634,6 +634,8 @@ TEST_CASE("Dep. analysis :: simplify (unbound vars)") {
     };
     auto graph = build_dep_graph(conj);
     identify_potential_variables(graph);
+
+    write_dep_graph_dot(std::cout, graph);
 
     Conjunction_State state(nullptr, {0, -23, 0, 0, 0, 12, 0});
 

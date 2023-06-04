@@ -100,7 +100,7 @@ optional<Conjunction_State> Conjunction_State::successor_along_symbol(u64 symbol
         successor_values[atom_i] = successor_value.value();
     }
 
-    return Conjuction_State {.formula = formula, .constants = successor_values};
+    return Conjunction_State {.formula = formula, .constants = successor_values};
 }
 
 bool Conjunction_State::accepts_last_symbol(u64 symbol) {
@@ -360,23 +360,23 @@ Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj) {
     for (u64 atom_i = 0; atom_i < conj.atoms.size(); atom_i++) {
         auto& atom = conj.atoms[atom_i];
         graph.atom_nodes.push_back({.atom = atom, .atom_i = atom_i, .vars = {}});
-        Atom_Node* atom_node = &graph.atom_nodes[graph.atom_nodes.size() - 1];  // Get a reference to the inserted node
+        Atom_Node& atom_node = graph.atom_nodes[graph.atom_nodes.size() - 1];  // Get a reference to the inserted node
 
         for (u64 var = 0; var < conj.var_count; var++) {
             if (atom.coefs[var] != 0) {
                 auto& var_node = graph.var_nodes[var];
                 if (atom.type == PR_ATOM_INEQ) {
-                    if (atom.coefs[var] < 0) var_node.lower_bounds.push_back(atom_node);
-                    else var_node.upper_bounds.push_back(atom_node);
+                    if (atom.coefs[var] < 0) var_node.lower_bounds.push_back(atom_i);
+                    else var_node.upper_bounds.push_back(atom_i);
                 } else if (atom.type == PR_ATOM_EQ) {
-                    var_node.upper_bounds.push_back(atom_node);
-                    var_node.lower_bounds.push_back(atom_node);
-                    var_node.hard_lower_bound = atom_node;
-                    var_node.hard_upper_bound = atom_node;
+                    var_node.upper_bounds.push_back(atom_i);
+                    var_node.lower_bounds.push_back(atom_i);
+                    var_node.hard_lower_bound = {.is_present = true, .atom_i = atom_i};
+                    var_node.hard_upper_bound = {.is_present = true, .atom_i = atom_i};
                 } else {
-                    var_node.congruences.push_back(atom_node);
+                    var_node.congruences.push_back(atom_i);
                 }
-                atom_node->vars.push_back(var);
+                atom_node.vars.push_back(var);
             }
         }
     }
@@ -387,8 +387,9 @@ Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj) {
             auto var = atom_node.vars[0];
             auto coef = atom_node.atom.coefs[var];
             if (atom_node.atom.type == PR_ATOM_INEQ) {
-                if (coef > 0) graph.var_nodes[var].hard_upper_bound = &atom_node;
-                else graph.var_nodes[var].hard_lower_bound = &atom_node;
+                Hard_Bound bound_info = {.is_present = true, .atom_i = atom_node.atom_i};
+                if (coef > 0) graph.var_nodes[var].hard_upper_bound = bound_info;
+                else graph.var_nodes[var].hard_lower_bound = bound_info;
             }
         }
     }
@@ -401,14 +402,15 @@ Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj) {
 unordered_set<u64> compute_free_vars_affected_via_congruences(Dep_Graph& graph, u64 var) {
     auto& var_node = graph.var_nodes[var];
     unordered_set<u64> affected_vars;
-    unordered_set<Atom_Node*> known_nodes (var_node.congruences.begin(), var_node.congruences.end());
-    vector<Atom_Node*> work_list(var_node.congruences);
+    unordered_set<u64> known_nodes (var_node.congruences.begin(), var_node.congruences.end());
+    vector<u64> work_list(var_node.congruences);
 
     while (!work_list.empty()) {
-        auto current_atom = work_list.back();
+        auto current_atom_i = work_list.back();
+        auto& current_atom = graph.atom_nodes[current_atom_i];
         work_list.pop_back();
 
-        for (auto atom_var: current_atom->vars) {
+        for (auto atom_var: current_atom.vars) {
             if  (atom_var == var) continue;
 
             if (std::find(graph.quantified_vars.begin(), graph.quantified_vars.end(), atom_var) == graph.quantified_vars.end()) {
@@ -443,16 +445,18 @@ unordered_set<u64> compute_free_vars_affected_via_congruences(Dep_Graph& graph, 
 unordered_set<u64> compute_free_vars_affected_directly(Dep_Graph& graph, u64 var) {
     unordered_set<u64> affected_vars;
     auto& var_node = graph.var_nodes[var];
-    for (auto atom: var_node.lower_bounds) {
-        for (auto var: atom->vars) {
-            if (std::find(graph.quantified_vars.begin(), graph.quantified_vars.end(), var) == graph.quantified_vars.end()) {
+    for (auto atom_i: var_node.lower_bounds) {
+        auto& atom = graph.atom_nodes[atom_i];
+        for (auto var: atom.vars) {
+            if (!vector_contains(graph.quantified_vars, var)) {
                 affected_vars.insert(var);
             }
         }
     }
-    for (auto atom: var_node.upper_bounds) {
-        for (auto var: atom->vars) {
-            if (std::find(graph.quantified_vars.begin(), graph.quantified_vars.end(), var) == graph.quantified_vars.end()) {
+    for (auto atom_i: var_node.upper_bounds) {
+        auto& atom = graph.atom_nodes[atom_i];
+        for (auto var: atom.vars) {
+            if (!vector_contains(graph.quantified_vars, var)) {
                 affected_vars.insert(var);
             }
         }
@@ -471,25 +475,27 @@ bool is_safe_to_instantiate_var_wrt_deps(Dep_Graph& graph, u64 var) {
 bool is_safe_to_instantiate(Dep_Graph& graph, u64 var) {
     auto& node = graph.var_nodes[var];
 
-    bool has_both_hard_bounds = node.hard_lower_bound != nullptr && node.hard_upper_bound != nullptr;
+    bool has_both_hard_bounds = node.hard_lower_bound.is_present && node.hard_upper_bound.is_present;
     if (has_both_hard_bounds) return true; // Can be simplified in the future when the bounds imply a constant value
 
     // The variable is missing at least one hard bound, check if its ussages all desire the same kind of value
-    bool has_soft_upper_bounds = node.upper_bounds.size() > (node.hard_upper_bound != nullptr);
-    bool has_soft_lower_bounds = node.lower_bounds.size() > (node.hard_lower_bound != nullptr);
+    bool has_soft_upper_bounds = node.upper_bounds.size() > (node.hard_upper_bound.is_present);
+    bool has_soft_lower_bounds = node.lower_bounds.size() > (node.hard_lower_bound.is_present);
 
     if (has_soft_lower_bounds && has_soft_upper_bounds) return false; // Both low and high values are desired
 
     // Var is unbound from at least one direction, all contexts agree on the same value kind
-    bool var_can_be_neg_inf = node.lower_bounds.empty() && node.hard_lower_bound == nullptr;
-    bool var_can_be_pos_inf = node.upper_bounds.empty() && node.hard_upper_bound == nullptr;
+    bool var_can_be_neg_inf = node.lower_bounds.empty() && !node.hard_lower_bound.is_present;
+    bool var_can_be_pos_inf = node.upper_bounds.empty() && !node.hard_upper_bound.is_present;
     if (var_can_be_neg_inf || var_can_be_pos_inf) {
         // Problem is when both are non-empty simulatneously
         return is_safe_to_instantiate_var_wrt_deps(graph, var);
     }
 
-    if (node.hard_lower_bound != nullptr && !has_soft_lower_bounds) return true;
-    if (node.hard_upper_bound != nullptr && !has_soft_upper_bounds) return true;
+    // Variable has only a hard bound - its context requires opposite value, and thus, we can instantiate it
+    // - pick value near bound
+    if (node.hard_lower_bound.is_present && !has_soft_lower_bounds) return true;
+    if (node.hard_upper_bound.is_present && !has_soft_upper_bounds) return true;
 
     return false;
 }
@@ -511,23 +517,22 @@ void write_dep_graph_dot(std::ostream& output, Dep_Graph& graph) {
         output << "  v" << var << " [label=\"x" << var << "\",shape=box" <<  quantif_attrs << "]\n";
     }
 
-    unordered_map<Atom_Node*, u64> atom_handles;
     for (u64 atom_i = 0; atom_i < graph.atom_nodes.size(); atom_i++) {
-        Atom_Node* node = &graph.atom_nodes[atom_i];
-        atom_handles[node] = atom_i;
+        auto& node = graph.atom_nodes[atom_i];
 
         u64 is_hard_bound = 0;
-        for (auto var: node->vars) {
-            if (graph.var_nodes[var].hard_lower_bound == node) is_hard_bound = 1;
-            if (graph.var_nodes[var].hard_upper_bound == node) is_hard_bound = 2;
+        for (auto var: node.vars) {
+            auto& var_node = graph.var_nodes[var];
+            if (var_node.is_hard_lower_bound(atom_i)) is_hard_bound = 1;
+            if (var_node.is_hard_upper_bound(atom_i)) is_hard_bound = 2;
         }
 
         std::string hard_bound_attrs;
         switch (is_hard_bound) {
-            case 1:
+            case 1: // Lower
                 hard_bound_attrs = ", style=filled, fillcolor=\"#6bb7ea\"";
                 break;
-            case 2:
+            case 2: // Upper
                 hard_bound_attrs = ", style=filled, fillcolor=\"#ea6b78\"";
                 break;
             default:
@@ -535,20 +540,20 @@ void write_dep_graph_dot(std::ostream& output, Dep_Graph& graph) {
                 break;
         }
 
-        output << "  a" << atom_i << " [label=\"" << node->atom << "\"" << hard_bound_attrs << "]\n";
+        output << "  a" << atom_i << " [label=\"" << node.atom << "\"" << hard_bound_attrs << "]\n";
     }
 
     for (u64 var = 0; var < graph.var_nodes.size(); var++) {
         auto& var_node = graph.var_nodes[var];
-        for (auto& atom_node: var_node.congruences) {
-            output << "  v" << var << " -- " << "a" << atom_handles[atom_node] << "\n";
+        for (auto& atom_i: var_node.congruences) {
+            output << "  v" << var << " -- " << "a" << atom_i << "\n";
         }
-        for (auto atom_node: var_node.lower_bounds) {
-            auto attrs = (atom_node == var_node.hard_lower_bound) ? "color=\"green\"" : "";
-            output << "  v" << var << " -- " << "a" << atom_handles[atom_node] << " [color=\"blue\"]" << "\n";
+
+        for (auto atom_i: var_node.lower_bounds) {
+            output << "  v" << var << " -- " << "a" << atom_i << " [color=\"blue\"]" << "\n";
         }
-        for (auto atom_node: var_node.upper_bounds) {
-            output << "  v" << var << " -- " << "a" << atom_handles[atom_node] << " [color=\"red\"]" << "\n";
+        for (auto atom_i: var_node.upper_bounds) {
+            output << "  v" << var << " -- " << "a" << atom_i << " [color=\"red\"]" << "\n";
         }
     }
 
@@ -564,17 +569,19 @@ void write_dep_graph_dot(std::ostream& output, Dep_Graph& graph) {
 
 bool get_constant_value_implied_by_bounds(Dep_Graph& graph, u64 var, Conjunction_State& state, s64* val) {
     auto& var_node = graph.var_nodes[var];
-    if (var_node.hard_lower_bound == nullptr || var_node.hard_upper_bound == nullptr) {
+    if (!var_node.hard_lower_bound.is_present || !var_node.hard_upper_bound.is_present) {
         return false;
     }
 
-    auto& upper_bound_node = var_node.hard_upper_bound;
-    s64 upper_bound_val = div_bound_by_coef(state.constants[upper_bound_node->atom_i],
-                                            upper_bound_node->atom.coefs[var]);
+    auto& upper_bound_i = var_node.hard_upper_bound.atom_i;
+    auto& upper_bound_node = graph.atom_nodes[upper_bound_i];
+    s64 upper_bound_val = div_bound_by_coef(state.constants[upper_bound_i],
+                                            upper_bound_node.atom.coefs[var]);
 
-    auto& lower_bound_node = var_node.hard_lower_bound;
-    s64 lower_bound_val = div_bound_by_coef(state.constants[lower_bound_node->atom_i],
-                                            upper_bound_node->atom.coefs[var]);
+    auto& lower_bound_i = var_node.hard_lower_bound.atom_i;
+    auto& lower_bound_node = graph.atom_nodes[lower_bound_i];
+    s64 lower_bound_val = div_bound_by_coef(state.constants[lower_bound_i],
+                                            upper_bound_node.atom.coefs[var]);
 
     if (upper_bound_val == lower_bound_val) {
         *val = upper_bound_val;
@@ -586,66 +593,64 @@ bool get_constant_value_implied_by_bounds(Dep_Graph& graph, u64 var, Conjunction
 Conjunction_State simplify_graph_using_value(Dep_Graph& graph, Conjunction_State& state, u64 var, s64 val) {
     auto& var_node = graph.var_nodes[var];
 
-    for (auto atom_node: var_node.lower_bounds) {
-        state.constants[atom_node->atom_i] -= atom_node->atom.coefs[var] * val;
-        atom_node->atom.coefs[var] = 0;
-        vector_remove(atom_node->vars, var);
-        if (atom_node->vars.empty()) atom_node->is_satisfied = true;
+    for (auto atom_i: var_node.lower_bounds) {
+        auto& atom_node = graph.atom_nodes[atom_i];
+        state.constants[atom_i] -= atom_node.atom.coefs[var] * val;
+        atom_node.atom.coefs[var] = 0;
+        vector_remove(atom_node.vars, var);
+        if (atom_node.vars.empty()) atom_node.is_satisfied = true;
     }
-    for (auto atom_node: var_node.upper_bounds) {
-        state.constants[atom_node->atom_i] -= atom_node->atom.coefs[var] * val;
-        atom_node->atom.coefs[var] = 0;
-        vector_remove(atom_node->vars, var);
-        if (atom_node->vars.empty()) atom_node->is_satisfied = true;
+    for (auto atom_i: var_node.upper_bounds) {
+        auto& atom_node = graph.atom_nodes[atom_i];
+        state.constants[atom_i] -= atom_node.atom.coefs[var] * val;
+        atom_node.atom.coefs[var] = 0;
+        vector_remove(atom_node.vars, var);
+        if (atom_node.vars.empty()) atom_node.is_satisfied = true;
     }
-    for (auto atom_node: var_node.congruences) {
-        state.constants[atom_node->atom_i] -= atom_node->atom.coefs[var] * val;
-        state.constants[atom_node->atom_i] = normalize_reminder(state.constants[atom_node->atom_i],
-                                                                atom_node->atom.modulus);
-        atom_node->atom.coefs[var] = 0;
-        vector_remove(atom_node->vars, var);
-        if (atom_node->vars.empty()) atom_node->is_satisfied = true;
+    for (auto atom_i: var_node.congruences) {
+        auto& atom_node = graph.atom_nodes[atom_i];
+        state.constants[atom_i] -= atom_node.atom.coefs[var] * val;
+        state.constants[atom_i] = normalize_reminder(state.constants[atom_i], atom_node.atom.modulus);
+        atom_node.atom.coefs[var] = 0;
+        vector_remove(atom_node.vars, var);
+        if (atom_node.vars.empty()) atom_node.is_satisfied = true;
     }
-
-    if (var_node.hard_lower_bound) var_node.hard_lower_bound->is_satisfied = true;
-    if (var_node.hard_upper_bound) var_node.hard_upper_bound->is_satisfied = true;
 
     return state;
+}
+
+void mark_lin_atom_as_satisfied(Dep_Graph& graph, u64 atom_i, u64 unbound_var) {
+    auto& atom_node = graph.atom_nodes[atom_i];
+    atom_node.is_satisfied = true;
+    for (auto atom_var: atom_node.vars) {
+        if (atom_var == unbound_var) continue;  // The node for var causing atom to be satisfied will be "removed", do not modify it
+        auto& dep_var_node = graph.var_nodes[atom_var];
+        vector_remove(dep_var_node.lower_bounds, atom_i);
+        vector_remove(dep_var_node.upper_bounds, atom_i);
+    }
+    atom_node.vars.clear();
 }
 
 void simplify_graph_with_unbound_var(Dep_Graph& graph, u64 var) {
     auto& var_node = graph.var_nodes[var];
 
-    for (auto atom_node: var_node.lower_bounds) {
-        atom_node->is_satisfied = true;
-        for (auto atom_var: atom_node->vars) {
-            if (atom_var == var) continue;
-            auto& dep_var_node = graph.var_nodes[atom_var];
-            vector_remove(dep_var_node.lower_bounds, atom_node);
-            vector_remove(dep_var_node.upper_bounds, atom_node);
-        }
-        atom_node->vars.clear();
+    for (auto atom_i: var_node.lower_bounds) {
+        mark_lin_atom_as_satisfied(graph, atom_i, var);
     }
 
-    for (auto atom_node: var_node.upper_bounds) {
-        atom_node->is_satisfied = true;
-        for (auto atom_var: atom_node->vars) {
-            if (atom_var == var) continue;
-            auto& dep_var_node = graph.var_nodes[atom_var];
-            vector_remove(dep_var_node.lower_bounds, atom_node);
-            vector_remove(dep_var_node.upper_bounds, atom_node);
-        }
-        atom_node->vars.clear();
+    for (auto atom_i: var_node.upper_bounds) {
+        mark_lin_atom_as_satisfied(graph, atom_i, var);
     }
 
-    for (auto atom_node: var_node.congruences) {
-        atom_node->is_satisfied = true;
-        for (auto atom_var: atom_node->vars) {
+    for (auto atom_i: var_node.congruences) {
+        auto& atom_node = graph.atom_nodes[atom_i];
+        atom_node.is_satisfied = true;
+        for (auto atom_var: atom_node.vars) {
             if (atom_var == var) continue;
             auto& dep_var_node = graph.var_nodes[atom_var];
-            vector_remove(dep_var_node.congruences, atom_node);
+            vector_remove(dep_var_node.congruences, atom_i);
         }
-        atom_node->vars.clear();
+        atom_node.vars.clear();
     }
 
     var_node.congruences.clear();
@@ -690,24 +695,27 @@ bool get_value_close_to_bounds(Dep_Graph& graph, Conjunction_State& state, u64 v
     }
 
     auto& var_node = graph.var_nodes[var];
-    Atom_Node* bound_node = nullptr;
-    bool is_lower_bound = false;
-    bool has_only_hard_upper_bound = var_node.upper_bounds.size() <= (var_node.hard_upper_bound != nullptr);
-    bool has_only_hard_lower_bound = var_node.lower_bounds.size() <= (var_node.hard_lower_bound != nullptr);
+    u64 bound_node_i = 0;
+    Bound_Type bound_type = Bound_Type::NONE;
+    bool has_only_hard_upper_bound = var_node.upper_bounds.size() <= (var_node.hard_upper_bound.is_present);
+    bool has_only_hard_lower_bound = var_node.lower_bounds.size() <= (var_node.hard_lower_bound.is_present);
 
-    if (var_node.hard_lower_bound != nullptr && has_only_hard_lower_bound) {
+    if (var_node.hard_lower_bound.is_present && has_only_hard_lower_bound) {
         // All reminding bounds are upper, preferring the smallest value possible
-        bound_node = var_node.hard_lower_bound;
-        is_lower_bound = true;
-    } else if (var_node.hard_upper_bound != nullptr && has_only_hard_upper_bound) {
+        bound_node_i = var_node.hard_lower_bound.atom_i;
+        bound_type = Bound_Type::LOWER;
+    } else if (var_node.hard_upper_bound.is_present && has_only_hard_upper_bound) {
         // All reminding bounds are lower, preferring the largest value possible
-        bound_node = var_node.hard_upper_bound;
+        bound_node_i = var_node.hard_upper_bound.atom_i;
+        bound_type = Bound_Type::UPPER;
     }
 
-    if (bound_node == nullptr) return false;
+    if (bound_type == Bound_Type::NONE) return false;
+
+    auto& bound_node = graph.atom_nodes[bound_node_i];
 
     // Var has a clear lower bound and its all of its ussages would like it to be some low value
-    s64 bound_value = div_bound_by_coef(state.constants[bound_node->atom_i], bound_node->atom.coefs[var]);
+    s64 bound_value = div_bound_by_coef(state.constants[bound_node_i], bound_node.atom.coefs[var]);
     if (var_node.congruences.empty()) {
         *value = bound_value;
         return true;
@@ -715,7 +723,10 @@ bool get_value_close_to_bounds(Dep_Graph& graph, Conjunction_State& state, u64 v
 
     if (var_node.congruences.size() > 1) return false;
 
-    auto& congruence = var_node.congruences[0]->atom;
+    auto congruence_i = var_node.congruences[0];
+    auto& congruence_node = graph.atom_nodes[congruence_i];
+    if (congruence_node.vars.size() > 1) return false;   // We don't know how to infer value when there are multiple vars in congruence
+    auto& congruence = graph.atom_nodes[congruence_i].atom;
 
     u64 nonzero_coefs = 0;
     for (auto coef: congruence.coefs) nonzero_coefs += (coef != 0);
@@ -724,7 +735,7 @@ bool get_value_close_to_bounds(Dep_Graph& graph, Conjunction_State& state, u64 v
     // Find a solution in the unshifted congruence range, e.g., -y ~ 100 (mod 303)
     s64 modulus = congruence.modulus;
 
-    s64 rhs = normalize_reminder(state.constants[var_node.congruences[0]->atom_i], modulus);
+    s64 rhs = normalize_reminder(state.constants[congruence_i], modulus);
     s64 coef = normalize_reminder(congruence.coefs[var], modulus);
 
     s64 mult_inv = compute_multiplicative_inverse(modulus, coef);
@@ -738,7 +749,7 @@ bool get_value_close_to_bounds(Dep_Graph& graph, Conjunction_State& state, u64 v
 
     // Both bound and the proposed solution lie in the same block of reminders [kM ... (k+1)M]
     // but the proposed solution might be slightly above/bellow the bound, correct it.
-    if (is_lower_bound) {
+    if (bound_type == Bound_Type::LOWER) {
         // (x >= 5) and the suggested solution is x = 3
         instantiated_value += (instantiated_value < bound_value) * modulus;
     } else {
@@ -760,6 +771,7 @@ Conjunction_State simplify_graph(Dep_Graph& graph, Conjunction_State& state) {
             s64 inst_val = 0;
             bool is_val_implied = get_constant_value_implied_by_bounds(graph, potential_var, state, &inst_val);
             if (is_val_implied) {
+                PRINT_DEBUG("Simplifying graph - bounds imply value " << inst_val << " for x" << potential_var);
                 result_state = simplify_graph_using_value(graph, result_state, potential_var, inst_val);
                 vector_remove(graph.quantified_vars, potential_var);
                 was_graph_invalidated = true;
@@ -768,9 +780,10 @@ Conjunction_State simplify_graph(Dep_Graph& graph, Conjunction_State& state) {
 
             // Try simplifying unbound vars
             auto& var_node = graph.var_nodes[potential_var];
-            bool can_be_neg_inf = (var_node.hard_lower_bound == nullptr) && var_node.lower_bounds.empty();
-            bool can_be_pos_inf = (var_node.hard_upper_bound == nullptr) && var_node.upper_bounds.empty();
+            bool can_be_neg_inf = var_node.lower_bounds.empty();
+            bool can_be_pos_inf = var_node.upper_bounds.empty();
             if (can_be_neg_inf || can_be_pos_inf) {
+                PRINT_DEBUG("Simplifying graph on unbound var: x" << potential_var);
                 simplify_graph_with_unbound_var(graph, potential_var);
                 vector_remove(graph.quantified_vars, potential_var);
                 was_graph_invalidated = true;
@@ -781,6 +794,7 @@ Conjunction_State simplify_graph(Dep_Graph& graph, Conjunction_State& state) {
             // tells what such a value should be
             bool can_be_instantiated = get_value_close_to_bounds(graph, state, potential_var, &inst_val);
             if (can_be_instantiated) {
+                PRINT_DEBUG("Simplifying graph - instantiating var: x" << potential_var << " with value " << inst_val);
                 result_state = simplify_graph_using_value(graph, result_state, potential_var, inst_val);
                 vector_remove(graph.quantified_vars, potential_var);
                 was_graph_invalidated = true;

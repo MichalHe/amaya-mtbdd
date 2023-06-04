@@ -293,18 +293,32 @@ struct Lazy_Construction_State {
 
 struct Atom_Node {
     Presburger_Atom atom;
-    u64 atom_i;
+    u64 atom_i;  // @Todo: Since we are no longer using pointers, maybe this can be removed?
     vector<u64> vars;
     bool is_satisfied;
 };
 
+struct Hard_Bound {
+    bool is_present;
+    u64 atom_i;
+};
+
 struct Var_Node {
     vector<u64> affected_free_vars; // Free vars affected via congruence
-    Atom_Node* hard_upper_bound;
-    Atom_Node* hard_lower_bound;
-    vector<Atom_Node*> upper_bounds;
-    vector<Atom_Node*> lower_bounds;
-    vector<Atom_Node*> congruences;
+    Hard_Bound hard_upper_bound;
+    Hard_Bound hard_lower_bound;
+    vector<u64> upper_bounds;
+    vector<u64> lower_bounds;
+    vector<u64> congruences;
+
+    bool is_hard_lower_bound(u64 atom_i) {
+        return (hard_lower_bound.is_present && hard_lower_bound.atom_i == atom_i);
+    }
+
+    bool is_hard_upper_bound(u64 atom_i) {
+        return (hard_upper_bound.is_present && hard_upper_bound.atom_i == atom_i);
+    }
+
 };
 
 struct Dep_Graph {
@@ -312,6 +326,12 @@ struct Dep_Graph {
     vector<u64> quantified_vars;
     vector<Var_Node> var_nodes;
     vector<Atom_Node> atom_nodes;
+};
+
+enum class Bound_Type : unsigned {
+    NONE  = 0x00,
+    UPPER = 0x01,
+    LOWER = 0x02,
 };
 
 Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj);
