@@ -264,6 +264,7 @@ void NFA::perform_pad_closure() {
     if (was_any_transition_added) {
         states.insert(new_final_state);
         final_states.insert(new_final_state);
+        PRINT_DEBUG("Added a new final state " << new_final_state << " during pad closue.");
     }
 
     sylvan::mtbdd_refs_pop(1); // -frontier
@@ -584,6 +585,12 @@ NFA determinize_nfa(NFA& nfa) {
         u64 all_bits_dont_care_mask = static_cast<u64>(-1);
         result.add_transition(ctx.trapstate_handle, ctx.trapstate_handle, 0, all_bits_dont_care_mask);
     }
+
+    PRINT_DEBUG(" ------ <Determinization> ------ ");
+    for (auto& [macrostate, handle]: ctx.known_macrostates) {
+        PRINT_DEBUG(handle << " :: " << macrostate);
+    }
+    PRINT_DEBUG(" ------ </Determinization> ------ ");
 
     return result;
 }

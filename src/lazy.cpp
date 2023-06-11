@@ -180,7 +180,7 @@ std::ostream& operator<<(std::ostream& output, const Presburger_Atom& atom) {
             output << " = ?";
             break;
         case PR_ATOM_CONGRUENCE:
-            output << " ~ ?";
+            output << " ~ ? (mod " << atom.modulus << ")";
             break;
         default:
             output << "  ???? invalid atom";
@@ -681,6 +681,12 @@ bool get_value_close_to_bounds(Dep_Graph& graph, Conjunction_State& state, u64 v
         instantiated_value -= (bound_value < instantiated_value) * modulus;
     }
 
+    // std::cout << "Instantiating x" << var << " with value " << instantiated_value << std::endl;
+    // std::cout << congruence << std::endl;
+    // std::cout << state.constants[congruence_i] << std::endl;
+    // std::cout << state << std::endl;
+    // std::cout << "Modulus " << modulus << std::endl;
+
     *value = instantiated_value;
     return true;
 }
@@ -1020,7 +1026,6 @@ void explore_macrostate(NFA& constructed_nfa,
                 if (is_post_top) break;
             }
 
-            make_macrostate_canoical(post);
 
 #if DEBUG_RUNTIME
             auto end = std::chrono::system_clock::now();
@@ -1029,6 +1034,7 @@ void explore_macrostate(NFA& constructed_nfa,
                       << "; insertion took: " << elapsed_seconds.count() << " seconds." << std::endl;
 #endif
         }
+        make_macrostate_canoical(post);
 
         if (post.formulae.empty()) {
             constr_state.is_trap_state_needed = true;
@@ -1167,9 +1173,11 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
     formula = initial_simplification.first;
 
     if (formula->is_top()) {
-        State state = 0;
-        NFA nfa(bdd_vars, formula->var_count, {state}, {state}, {state});
-        nfa.add_transition(state, state, 0u, static_cast<u64>(-1));
+        State init_state = 0;
+        State acc_state = 1;
+        NFA nfa(bdd_vars, formula->var_count, {init_state, acc_state}, {acc_state}, {init_state});
+        nfa.add_transition(init_state, acc_state, 0u, static_cast<u64>(-1));
+        nfa.add_transition(acc_state, acc_state, 0u, static_cast<u64>(-1));
         return nfa;
     }
 
@@ -1217,11 +1225,9 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
         nfa.add_transition(constr_state.topstate_handle, constr_state.topstate_handle, 0u, all_bits_dont_care_mask);
     }
 
-
     PRINTF_DEBUG("The constructed NFA has %lu states", nfa.states.size());
-
     for (auto& [macrostate, handle]: constr_state.known_macrostates) {
-        std::cout << handle << " :: " << macrostate << std::endl;
+        PRINT_DEBUG(handle << " :: " << macrostate);
     }
 
     nfa.perform_pad_closure();

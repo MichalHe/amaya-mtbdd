@@ -705,12 +705,12 @@ void amaya_sylvan_clear_cache() {
 }
 
 Serialized_NFA* amaya_construct_dfa_for_atom_conjunction(Serialized_Quantified_Atom_Conjunction* raw_formula) {
-    Quantified_Atom_Conjunction conjuction = {
+    Quantified_Atom_Conjunction conjunction = {
         .atoms = {},
         .bound_vars = {},
         .var_count = raw_formula->atom_cnt,
     };
-    conjuction.atoms.resize(raw_formula->atom_cnt);
+    conjunction.atoms.resize(raw_formula->atom_cnt);
 
     for (u64 atom_idx = 0u; atom_idx < raw_formula->atom_cnt; atom_idx++) {
         auto raw_atom = raw_formula->atoms[atom_idx];
@@ -724,14 +724,14 @@ Serialized_NFA* amaya_construct_dfa_for_atom_conjunction(Serialized_Quantified_A
         if (atom.type == PR_ATOM_CONGRUENCE) {
             atom.modulus = raw_atom.modulus;
         }
-        conjuction.atoms[atom_idx] = atom;
+        conjunction.atoms[atom_idx] = atom;
     }
 
-    conjuction.var_count = raw_formula->var_cnt;
+    conjunction.var_count = raw_formula->var_cnt;
 
-    conjuction.bound_vars.resize(raw_formula->quantified_var_cnt);
+    conjunction.bound_vars.resize(raw_formula->quantified_var_cnt);
     for (u64 quantified_var_idx = 0u; quantified_var_idx < raw_formula->quantified_var_cnt; quantified_var_idx++) {
-        conjuction.bound_vars[quantified_var_idx] = raw_formula->quantified_vars[quantified_var_idx];
+        conjunction.bound_vars[quantified_var_idx] = raw_formula->quantified_vars[quantified_var_idx];
     }
 
     std::vector<s64> initial_state_data (raw_formula->atom_cnt);
@@ -744,12 +744,15 @@ Serialized_NFA* amaya_construct_dfa_for_atom_conjunction(Serialized_Quantified_A
         var_set = sylvan::mtbdd_set_add(var_set, raw_formula->vars[var_idx]);
     }
 
+    conjunction.dep_graph = build_dep_graph(conjunction);
+    identify_potential_variables(conjunction.dep_graph);
+
     Formula_Pool formula_pool;
-    auto stored_formula_ptr = formula_pool.store_formula(conjuction);
+    auto stored_formula_ptr = formula_pool.store_formula(conjunction);
 
-    Conjuction_State initial_state(stored_formula_ptr, initial_state_data);
-
-    auto created_nfa = build_nfa_with_formula_entailement(formula_pool, initial_state, var_set);
+    Conjunction_State initial_state(initial_state_data);
+    auto graph = build_dep_graph(*stored_formula_ptr);
+    auto created_nfa = build_nfa_with_formula_entailement(stored_formula_ptr, initial_state, var_set, formula_pool);
 
     auto result = serialize_nfa(created_nfa);
     return result;

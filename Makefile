@@ -13,8 +13,8 @@ CFLAGS=$(COMMON_FLAGS) $(SHARED_LIB_FLAGS)
 lazy-tests: build/lazy-tests.o build/lazy.o build/base.o build/custom_leaf.o build/operations.o build/sylvan-extra.o
 	$(CXX) -o $@ $^ $(CXXLIBS)
 
-build/lazy-tests.o: src/lazy-tests.cpp
-	$(CXX) -c $(CXXFLAGS) -I ./external -o $@ $^
+build/lazy-tests.o: src/lazy-tests.cpp include/lazy.hpp
+	$(CXX) -c $(CXXFLAGS) -I ./external -o $@ src/lazy-tests.cpp
 
 shared-lib: build build/amaya-mtbdd.so
 
@@ -43,7 +43,7 @@ build:
 	-mkdir build
 
 clean:
-	rm build/* || true
+	rm -r build/* || true
 
 build/test.o: src/test.cpp
 	$(CXX) -c $(CXXFLAGS) src/test.cpp -o build/test.o
