@@ -21,6 +21,134 @@ using std::unordered_set;
 using std::map;
 using std::list;
 
+template <typename T>
+struct Sized_Array {
+    T* items;
+    u64 size;
+
+    struct Iterator {
+        const Sized_Array<T>* arr;
+        u64                   idx;
+
+        using value_type = T;
+        using pointer    = T*;
+        using reference  = T&;
+        using difference_type = std::ptrdiff_t;
+        using iterator_category = std::random_access_iterator_tag;
+
+        Iterator():                    arr(nullptr), idx(0) {}   
+        Iterator(const Sized_Array<T>* arr, u64 start_idx): arr(arr), idx(start_idx) {}
+
+        reference  operator*() {
+            return (arr->items)[idx];
+        }
+        pointer operator->() {
+            return &(arr->items[idx]);
+        }
+        const pointer operator->() const {
+            return &(arr->items[idx]);
+        }
+        reference  operator[](int offset) {
+            return arr->items[idx + offset];
+        }
+        // const reference operator*() const {
+        //     return arr->items[idx];
+        // }
+        // const reference operator[](int offset) const {
+        //     return arr->items[idx + offset];
+        // }
+
+        Iterator& operator++() {
+            ++idx;
+            return *this;
+        }
+        Iterator operator++(int) {
+            Iterator r(*this);
+            ++idx;
+            return r;
+        }
+
+        Iterator& operator--() {
+            --idx;
+            return *this;
+        }
+        Iterator operator--(int) {
+            Iterator r(*this);
+            --idx;
+            return r;
+        }
+
+        Iterator& operator+=(int offset) {
+            idx += offset;
+            return *this;
+        }
+        Iterator& operator-=(int offset) {
+            idx -= offset;
+            return *this;
+        }
+
+        Iterator operator+(int offset) const {
+            Iterator r(*this);
+            return r += offset;
+        }
+        Iterator operator-(int offset) const {
+            Iterator r(*this);
+            return r -= offset;
+        }
+
+        difference_type operator-(Iterator const& r) const {
+            return idx - r.idx;
+        }
+
+        bool operator<(Iterator const& r)  const {
+            return idx <  r.idx;
+        }
+        bool operator<=(Iterator const& r) const {
+            return idx <= r.idx;
+        }
+        bool operator>(Iterator const& r)  const {
+            return idx >  r.idx;
+        }
+        bool operator>=(Iterator const& r) const {
+            return idx >= r.idx;
+        }
+        bool operator!=(const Iterator &r) const {
+            return idx != r.idx;
+        }
+        bool operator==(const Iterator &r) const {
+            return idx == r.idx;
+        }
+    };
+
+    Iterator begin() const {
+        return Iterator(this, 0);
+    };
+
+    Iterator end() const {
+        return Iterator(this, this->size);
+    };
+};
+
+std::size_t hash_array(Sized_Array<s64>& arr);
+
+inline std::size_t hash_combine(std::size_t hash1, std::size_t hash2) {
+    return hash1 + 0x9e3779b9 + (hash2 << 6) + (hash2 >> 2);
+}
+
+struct Congruence {
+    Sized_Array<s64>* coefs;
+    s64 modulus_odd;
+    s64 modulus_2pow;
+};
+
+struct Inequation {
+    Sized_Array<s64>* coefs;
+};
+
+struct Equation {
+    Sized_Array<s64>* coefs;
+};
+
 enum Presburger_Atom_Type {
     PR_ATOM_INVALID = 0,
     PR_ATOM_INEQ = 1,
@@ -72,42 +200,37 @@ enum class Preferred_Var_Value_Type : unsigned {
 constexpr Preferred_Var_Value_Type operator&(Preferred_Var_Value_Type left, Preferred_Var_Value_Type right);
 constexpr Preferred_Var_Value_Type operator|(Preferred_Var_Value_Type left, Preferred_Var_Value_Type right);
 
-struct Variable_Bound {
-    bool is_present;
-    u64 atom_idx;
-};
-
-struct Variable_Bounds {
-    Variable_Bound lower;
-    Variable_Bound upper;
-    Preferred_Var_Value_Type preferred_value;
-};
-
-struct Variable_Bound_Analysis_Result {
-    /* unordered_set<u64> vars_with_both_bounds; */
-    bool has_var_with_both_bounds;
-    vector<Variable_Bounds> bounds;
-    vector<vector<u64>> congruences_per_var;
-};
-
 struct Conjunction_State;
 
-struct Atom_Node {
-    Presburger_Atom atom;
-    u64 atom_i;  // @Todo: Since we are no longer using pointers, maybe this can be removed?
+enum class Linear_Node_Type : u8 {
+    EQ   = 0x01,
+    INEQ = 0x02,
+};
+
+struct Linear_Node {
+    Linear_Node_Type type;
+    vector<s64>      coefs; // Cannot share coefs with original atom as it might be modified in-place during simplification
+    vector<u64>      vars;
+    bool             is_satisfied;
+};
+
+struct Congruence_Node {
+    vector<s64> coefs;
     vector<u64> vars;
-    bool is_satisfied;
+    s64         modulus_2pow;
+    s64         modulus_odd;
+    bool        is_satisfied;
 };
 
 struct Hard_Bound {
     bool is_present;
-    u64 atom_i;
+    u64  atom_i;
 };
 
 struct Var_Node {
     vector<u64> affected_free_vars; // Free vars affected via congruence
-    Hard_Bound hard_upper_bound;
-    Hard_Bound hard_lower_bound;
+    Hard_Bound  hard_upper_bound;
+    Hard_Bound  hard_lower_bound;
     vector<u64> upper_bounds;
     vector<u64> lower_bounds;
     vector<u64> congruences;
@@ -123,31 +246,42 @@ struct Var_Node {
 };
 
 struct Dep_Graph {
-    vector<u64> potential_vars;
-    vector<u64> quantified_vars;
-    vector<Var_Node> var_nodes;
-    vector<Atom_Node> atom_nodes;
+    vector<u64>             potential_vars;
+    vector<u64>             quantified_vars;
+    vector<Var_Node>        var_nodes;
+    vector<Linear_Node>     linear_nodes;
+    vector<Congruence_Node> congruence_nodes;
 };
 
 struct Quantified_Atom_Conjunction {
-    vector<Presburger_Atom> atoms;
-    vector<u64>             bound_vars;
-    u64 var_count;
-    Dep_Graph dep_graph;
-    bool bottom = false;
+    Sized_Array<Equation>*   equations;
+    Sized_Array<Congruence>* congruences;
+    Sized_Array<Inequation>* inequations;
+    vector<u64> bound_vars;
+    u64         var_count;
+    Dep_Graph   dep_graph;
+    bool        bottom = false;
 
     Quantified_Atom_Conjunction() {}
     Quantified_Atom_Conjunction(bool top) : bottom(!top) {}
-    Quantified_Atom_Conjunction(const vector<Presburger_Atom>& atoms, const vector<u64>& bound_vars, u64 var_count);
+    Quantified_Atom_Conjunction(const vector<Equation>& eqs, const vector<Congruence>& congruences, const vector<Inequation> ineqs, const vector<u64>& bound_vars, u64 var_count);
 
     bool operator==(const Quantified_Atom_Conjunction& other) const;
 
+    u64 atom_count() const {
+        return congruences->size + equations->size + inequations->size;
+    }
+    
+    bool has_atoms() const {
+        return this->atom_count() > 0;
+    }
+
     bool is_top() const {
-        return atoms.empty() && !bottom;
+        return !this->has_atoms() && !bottom;
     }
 
     bool is_bottom() const {
-        return atoms.empty() && bottom;
+        return !this->has_atoms() && bottom;
     }
 
     std::string fmt_with_state(Conjunction_State& state) const;
@@ -157,9 +291,18 @@ template <>
 struct std::hash<Quantified_Atom_Conjunction> {
     std::size_t operator() (const Quantified_Atom_Conjunction& formula) const {
         std::size_t hash = formula.bottom ? 0 : 33;
-        for (auto& atom: formula.atoms) {
-            std::size_t atom_hash = std::hash<Presburger_Atom>{}(atom);
-            hash = hash + 0x9e3779b9 + (atom_hash << 6) + (atom_hash >> 2);
+        // @Optimize: The equations and inequations do not mutate during execution so we can just hash a pointer there. Only congruences need real hashing.
+        for (auto& eq: *formula.equations) {
+            hash = hash_combine(hash, hash_array(*eq.coefs));
+        }
+
+        for (auto& cg: *formula.congruences) {
+            hash = hash_combine(hash, hash_array(*cg.coefs));
+            hash = hash_combine(hash, cg.modulus_odd);
+            hash = hash_combine(hash, cg.modulus_2pow);
+        }
+        for (auto& ineq: *formula.inequations) {
+            hash = hash_combine(hash, hash_array(*ineq.coefs));
         }
         return hash;
     }
@@ -168,7 +311,7 @@ struct std::hash<Quantified_Atom_Conjunction> {
 struct Conjunction_State {
     vector<s64> constants;
 
-    Conjunction_State(vector<s64> value): constants(value) {}
+    Conjunction_State(const vector<s64>& value): constants(value) {}
 
     Conjunction_State(const Conjunction_State& other): constants(other.constants) {}
 
@@ -194,12 +337,6 @@ struct std::hash<Conjunction_State> {
 std::ostream& operator<<(std::ostream& output, const Presburger_Atom& atom);
 std::ostream& operator<<(std::ostream& output, const Quantified_Atom_Conjunction& formula);
 std::ostream& operator<<(std::ostream& output, const Conjunction_State& atom);
-
-struct Entaiment_Status {
-    bool has_no_integer_solution;
-    u64 removed_atom_count;
-    optional<Conjunction_State> state;
-};
 
 
 struct Alphabet_Iterator {

@@ -13,6 +13,7 @@
 #include <map>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 using std::list;
 using std::map;
@@ -27,88 +28,162 @@ using std::optional;
 
 typedef Quantified_Atom_Conjunction Formula;
 
-optional<s64> Presburger_Atom::compute_post_along_sym(s64 state, u64 symbol_bits) const {
+std::size_t hash_array(Sized_Array<s64>& arr) {
+    std::size_t hash = 0;
+    for (u64 i = 0; i < arr.size; i++) {
+        std::size_t coef_hash = std::hash<s64>{}(arr.items[i]);
+        hash = hash + 0x9e3779b9 + (coef_hash << 6) + (coef_hash >> 2);
+    }
+    return hash;
+}
+
+s64 vector_dot(const Sized_Array<s64>& coefs, const u64 symbol) {
     s64 dot = 0;
-    for (u64 var_i = 0; var_i < coefs.size(); var_i++) {
-        s64 is_bit_set = (symbol_bits & (1u << var_i)) > 0;
-        dot += is_bit_set * coefs[var_i];
+    for (u64 var_i = 0; var_i < coefs.size; var_i++) {
+        s64 is_bit_set = (symbol & (1u << var_i)) > 0;
+        dot += is_bit_set * coefs.items[var_i];
     }
+    return dot;
+};
 
-    if (this->type == PR_ATOM_CONGRUENCE) {
-        s64 post = state - dot;
-        post += modulus * ((post % 2) != 0);
-        post /= 2;
-        post = post % modulus;
-        post += modulus * (post < 0);
-        return post;
+optional<pair<Congruence, s64>> congruence_compute_post(Congruence& congruence, s64 state, u64 symbol) {
+    s64 dot = vector_dot(*congruence.coefs, symbol);
+    s64 post = state - dot;
+
+    if (congruence.modulus_2pow) {
+        if (post % 2 == 0) {
+            Congruence result = {.coefs = congruence.coefs, .modulus_odd = congruence.modulus_odd, .modulus_2pow = congruence.modulus_2pow / 2};
+            return std::make_pair(result, post/2);
+        }
+        return std::nullopt;
     }
+    
+    post += congruence.modulus_odd * ((post % 2) != 0);
+    post /= 2;
+    post = post % congruence.modulus_odd;
+    post += congruence.modulus_odd * (post < 0);
+    Congruence result = {.coefs = congruence.coefs, .modulus_odd = congruence.modulus_odd, .modulus_2pow = congruence.modulus_2pow};
+    return std::make_pair(result, post);
+};
 
-    s64 post = (state - dot);
+bool congruence_accepts_symbol(Congruence& congruence, s64 state, u64 symbol) {
+    s64 dot = vector_dot(*congruence.coefs, symbol);
+    s64 modulus = congruence.modulus_odd << congruence.modulus_2pow;
+    return ((state + dot) % modulus) == 0;
+}
 
+std::optional<s64> equation_compute_post(Equation& eq, s64 state, u64 symbol) {
+    s64 dot = vector_dot(*eq.coefs, symbol);
+    s64 post = state - dot;
     s64 post_div_2 = post / 2;
     s64 post_mod_2 = post % 2;
 
-    if (this->type == PR_ATOM_EQ && post_mod_2) {
-        return std::nullopt;
-    }
-
-    // Floor the division
-    post_div_2 -= (post_mod_2 != 0) * (post < 0);
+    if (post_mod_2) return std::nullopt;
+    
+    post_div_2 -= (post_mod_2 != 0) * (post < 0); // Floor the division
     return post_div_2;
 }
 
-bool Presburger_Atom::accepts_last_symbol(s64 state, u64 symbol) const {
-    s64 dot = 0;
-    for (u64 var_i = 0; var_i < coefs.size(); var_i++) {
-        s64 is_bit_set = (symbol & (1u << var_i)) > 0;
-        dot += is_bit_set * coefs[var_i];
-    }
-
-    // @Optimize: This can be converted to branchless code by having a local copy of modulus and setting it to 1 if
-    //            the one in atom is 0 (thus the atom is congruence). Then the result is an or between the remaining
-    //            branches
-
-    if (type == PR_ATOM_CONGRUENCE) {
-        return ((state + dot) % modulus) == 0;
-    } else if (type == PR_ATOM_EQ) {
-        return (state + dot) == 0;
-    } else {
-        return (state + dot) >= 0;
-    }
+bool equation_accepts_symbol(Equation& eq, s64 state, u64 symbol) {
+    s64 dot = vector_dot(*eq.coefs, symbol);
+    return (state + dot) == 0;
 }
 
+s64 inequation_compute_post(Inequation& ineq, s64 state, u64 symbol) {
+    s64 dot = vector_dot(*ineq.coefs, symbol);
+    s64 post = state - dot;
+    s64 post_div_2 = post / 2;
+    s64 post_mod_2 = post % 2;
+    post_div_2 -= (post_mod_2 != 0) * (post < 0); // Floor the division
+    return post_div_2;
+}
+
+bool inequation_accepts_symbol(Inequation& ineq, s64 state, u64 symbol) {
+    s64 dot = vector_dot(*ineq.coefs, symbol);
+    return (state + dot) >= 0;
+}
 
 bool Conjunction_State::operator==(const Conjunction_State& other) const {
     return constants == other.constants;
 }
 
-bool Presburger_Atom::operator==(const Presburger_Atom& other) const {
-    return coefs == other.coefs;
-}
-
 bool Quantified_Atom_Conjunction::operator==(const Quantified_Atom_Conjunction& other) const {
-    return other.bottom == bottom && other.var_count == var_count && other.atoms == atoms && other.bound_vars == other.bound_vars;
+    return other.bottom == bottom &&
+           other.var_count == var_count &&
+           other.congruences == congruences &&
+           other.inequations == inequations &&
+           other.equations == equations &&
+           other.bound_vars == other.bound_vars;
 }
 
 optional<Conjunction_State> compute_successor(const Formula* formula, Conjunction_State& state, u64 symbol) {
     vector<s64> successor_values(state.constants.size());
-    for (u64 atom_i = 0; atom_i < formula->atoms.size(); atom_i++) {
-        s64 current_state = state.constants[atom_i];
-        auto successor_value = formula->atoms[atom_i].compute_post_along_sym(current_state, symbol);
-        if (!successor_value.has_value())
-            return std::nullopt;
-        successor_values[atom_i] = successor_value.value();
+
+    u64 atom_idx = 0;
+    for (auto& eq: *formula->equations) {
+        auto successor_value = equation_compute_post(eq, state.constants[atom_idx], symbol);
+
+        if (!successor_value.has_value()) return std::nullopt;
+
+        successor_values[atom_idx] = successor_value.value();
+        atom_idx += 1;
     }
 
-    return Conjunction_State {.constants = successor_values};
+    vector<Congruence>* new_congruences = nullptr;
+
+    // Determine if we actually will need to allocate memory
+    for (auto& cong: *formula->congruences) {
+        if (cong.modulus_2pow > 1) {
+            new_congruences = new vector<Congruence>(); // @Optimize: This should be replaced by a call to a temporary allocator
+            new_congruences->reserve(formula->congruences->size);
+        }
+    }
+
+    for (auto& cong: *formula->congruences) {
+        auto maybe_successor = congruence_compute_post(cong, state.constants[atom_idx], symbol);
+
+        if (!maybe_successor.has_value()) {
+            if (new_congruences != nullptr) delete new_congruences;
+            return std::nullopt;
+        }
+
+        Congruence new_cong  = maybe_successor.value().first;
+        s64        new_state = maybe_successor.value().second;
+
+        new_congruences->push_back(new_cong);
+        successor_values[atom_idx] = new_state;
+        atom_idx += 1;
+    }
+
+    for (auto& ineq: *formula->inequations) {
+        s64 post = inequation_compute_post(ineq, state.constants[atom_idx], symbol);
+        successor_values[atom_idx] = post;
+        atom_idx += 1;
+    };
+
+    Conjunction_State post(successor_values); 
+    return post;
 }
 
 bool accepts_last_symbol(const Formula* formula, Conjunction_State& state, u64 symbol) {
     bool accepts = true;
-    for (u64 atom_i = 0; atom_i < formula->atoms.size(); atom_i++) {
-        s64 current_state = state.constants[atom_i];
-        accepts &= formula->atoms[atom_i].accepts_last_symbol(current_state, symbol);
+
+    u64 atom_i = 0;
+    for (auto& eq: *formula->equations) {
+        accepts &= equation_accepts_symbol(eq, state.constants[atom_i], symbol);
+        atom_i += 1;
     }
+    
+    for (auto& congr: *formula->congruences) {
+        accepts &= congruence_accepts_symbol(congr, state.constants[atom_i], symbol);
+        atom_i += 1;
+    }
+
+    for (auto& ineq: *formula->inequations) {
+        accepts &= inequation_accepts_symbol(ineq, state.constants[atom_i], symbol);
+        atom_i += 1;
+    }
+    
     return accepts;
 }
 
@@ -200,9 +275,10 @@ std::ostream& operator<<(std::ostream& output, const Quantified_Atom_Conjunction
         output << ")";
     }
 
-    for (auto& atom: formula.atoms) {
-        output << "("<< atom <<") ";
-    }
+    // @FixMe(cosmetics)
+    // for (auto& atom: formula.atoms) {
+    //     output << "(" << atom << ") ";
+    // }
 
     output << ")";
     return output;
@@ -270,44 +346,91 @@ s64 normalize_reminder(s64 reminder, s64 modulus) {
     return reminder;
 }
 
+
 Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj) {
     Dep_Graph graph;
     graph.var_nodes = vector<Var_Node>(conj.var_count);
-    graph.atom_nodes.reserve(conj.atoms.size());
+    graph.linear_nodes.reserve(conj.equations->size + conj.inequations->size);
+    graph.congruence_nodes.reserve(conj.congruences->size);
 
-    for (u64 atom_i = 0; atom_i < conj.atoms.size(); atom_i++) {
-        auto& atom = conj.atoms[atom_i];
-        graph.atom_nodes.push_back({.atom = atom, .atom_i = atom_i, .vars = {}});
-        Atom_Node& atom_node = graph.atom_nodes[graph.atom_nodes.size() - 1];  // Get a reference to the inserted node
+    u64 lin_atom_i = 0;
+    for (auto& eq: *conj.equations) {
+        vector<s64> coefs(eq.coefs->begin(), eq.coefs->end());
+        Linear_Node atom_node = {.type = Linear_Node_Type::EQ, .coefs = coefs, .vars = {}, .is_satisfied = false};
 
-        for (u64 var = 0; var < conj.var_count; var++) {
-            if (atom.coefs[var] != 0) {
-                auto& var_node = graph.var_nodes[var];
-                if (atom.type == PR_ATOM_INEQ) {
-                    if (atom.coefs[var] < 0) var_node.lower_bounds.push_back(atom_i);
-                    else var_node.upper_bounds.push_back(atom_i);
-                } else if (atom.type == PR_ATOM_EQ) {
-                    var_node.upper_bounds.push_back(atom_i);
-                    var_node.lower_bounds.push_back(atom_i);
-                    var_node.hard_lower_bound = {.is_present = true, .atom_i = atom_i};
-                    var_node.hard_upper_bound = {.is_present = true, .atom_i = atom_i};
-                } else {
-                    var_node.congruences.push_back(atom_i);
-                }
+        for (auto var = 0; var < conj.var_count; var++) {
+            Var_Node var_node = graph.var_nodes[var]; 
+            s64 coef          = eq.coefs->items[var];
+            if (coef) {
+                var_node.upper_bounds.push_back(lin_atom_i);
+                var_node.lower_bounds.push_back(lin_atom_i);
                 atom_node.vars.push_back(var);
             }
         }
+        
+        graph.linear_nodes.push_back(atom_node);
+        lin_atom_i += 1;
     }
 
+    for (auto& ineq: *conj.inequations) {
+        vector<s64> coefs(ineq.coefs->begin(), ineq.coefs->end());
+        Linear_Node atom_node = {.type = Linear_Node_Type::INEQ, .coefs = coefs, .vars = {}, .is_satisfied = false};
+
+        for (auto var = 0; var < conj.var_count; var++) {
+            Var_Node var_node = graph.var_nodes[var]; 
+            s64 coef          = ineq.coefs->items[var];
+            if (coef) {
+                if (coef < 0) var_node.lower_bounds.push_back(lin_atom_i);
+                else          var_node.upper_bounds.push_back(lin_atom_i);
+                atom_node.vars.push_back(var);
+            }
+        }
+        
+        graph.linear_nodes.push_back(atom_node);
+        lin_atom_i += 1;
+    }
+
+    u64 congruence_i = 0;
+    for (auto& congr: *conj.congruences) {
+        vector<s64> coefs(congr.coefs->begin(), congr.coefs->end());
+        Congruence_Node congruence_node = {
+                .coefs = coefs,
+                .vars = {},
+                .modulus_2pow = congr.modulus_2pow,
+                .modulus_odd = congr.modulus_odd,
+                .is_satisfied = false,
+        };
+
+        for (auto var = 0; var < conj.var_count; var++) {
+            Var_Node var_node = graph.var_nodes[var]; 
+            s64 coef          = congr.coefs->items[var];
+            if (coef) {
+                congruence_node.vars.push_back(var);
+            }
+        }
+
+        graph.congruence_nodes.push_back(congruence_node);
+        congruence_i += 1;
+    }
+   
     // Detect hard bounds
-    for (auto& atom_node: graph.atom_nodes) {
-        if (atom_node.vars.size() == 1) {
-            auto var = atom_node.vars[0];
-            auto coef = atom_node.atom.coefs[var];
-            if (atom_node.atom.type == PR_ATOM_INEQ) {
-                Hard_Bound bound_info = {.is_present = true, .atom_i = atom_node.atom_i};
-                if (coef > 0) graph.var_nodes[var].hard_upper_bound = bound_info;
-                else graph.var_nodes[var].hard_lower_bound = bound_info;
+    for (u64 lin_atom_i = 0; lin_atom_i < graph.linear_nodes.size(); lin_atom_i++) {
+        Linear_Node node = graph.linear_nodes[lin_atom_i];
+        if (node.vars.size() == 1) {
+            u64 var           = node.vars[0];
+            s64 coef          = node.coefs[var];
+            Var_Node var_node = graph.var_nodes[var];
+
+            if (node.type == Linear_Node_Type::INEQ) {
+                Hard_Bound bound_info = {.is_present = true, .atom_i = lin_atom_i};
+                if (coef > 0) var_node.hard_upper_bound = bound_info;
+                else          var_node.hard_lower_bound = bound_info;
+            } else { // Single variable equation
+                var_node.hard_upper_bound.is_present = true;
+                var_node.hard_upper_bound.atom_i = lin_atom_i;
+
+                var_node.hard_lower_bound.is_present = true;
+                var_node.hard_lower_bound.atom_i = lin_atom_i;
             }
         }
     }
@@ -316,55 +439,56 @@ Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj) {
     return graph;
 }
 
+void add_new_affected_vars_to_worklist(vector<u64>& potential_vars, vector<u64>& worklist, unordered_set<u64> known_affected_vars) {
+    for (u64 var: potential_vars) {
+        if (!known_affected_vars.contains(var)) {
+            known_affected_vars.insert(var);
+            worklist.push_back(var);
+        }
+    }
+}
 
-unordered_set<u64> compute_free_vars_affected_via_congruences(Dep_Graph& graph, u64 var) {
-    auto& var_node = graph.var_nodes[var];
-    unordered_set<u64> affected_vars;
-    unordered_set<u64> known_nodes (var_node.congruences.begin(), var_node.congruences.end());
-    vector<u64> work_list(var_node.congruences);
+unordered_set<u64> compute_overall_affected_vars(Dep_Graph& graph, u64 var) {
+    typedef vector<u64> Atom_Vars;
+
+    Var_Node& var_node = graph.var_nodes[var];
+    unordered_set<u64> affected_free_vars;
+    unordered_set<u64> known_affected_vars;
+
+    // We care only about affected vars and therefore there is no need to distinguish between
+    // different atom node types and we can work with atom vars directly
+    vector<u64> work_list;
 
     while (!work_list.empty()) {
-        auto current_atom_i = work_list.back();
-        auto& current_atom = graph.atom_nodes[current_atom_i];
+        u64 affected_var = work_list.back();
+        auto& var_node   = graph.var_nodes[affected_var];
         work_list.pop_back();
 
-        for (auto atom_var: current_atom.vars) {
-            if  (atom_var == var) continue;
+        if (!vector_contains(graph.quantified_vars, affected_var)) {
+            affected_free_vars.insert(affected_var);
+        }
 
-            if (std::find(graph.quantified_vars.begin(), graph.quantified_vars.end(), atom_var) == graph.quantified_vars.end()) {
-                affected_vars.insert(atom_var);
-            }
+        for (u64 lin_node_i: var_node.lower_bounds) {
+            add_new_affected_vars_to_worklist(graph.linear_nodes[lin_node_i].vars, work_list, known_affected_vars);
+        }
 
-            auto& node = graph.var_nodes[atom_var];
-            for (auto atom: node.congruences) {
-                if (!known_nodes.contains(atom)) {
-                    known_nodes.insert(atom);
-                    work_list.push_back(atom);
-                }
-            }
-            for (auto atom: node.lower_bounds) {
-                if (!known_nodes.contains(atom)) {
-                    known_nodes.insert(atom);
-                    work_list.push_back(atom);
-                }
-            }
-            for (auto atom: node.upper_bounds) {
-                if (!known_nodes.contains(atom)) {
-                    known_nodes.insert(atom);
-                    work_list.push_back(atom);
-                }
-            }
+        for (u64 lin_node_i: var_node.upper_bounds) {
+            add_new_affected_vars_to_worklist(graph.linear_nodes[lin_node_i].vars, work_list, known_affected_vars);
+        }
+
+        for (u64 congruence_i: var_node.congruences) {
+            add_new_affected_vars_to_worklist(graph.congruence_nodes[congruence_i].vars, work_list, known_affected_vars);
         }
     }
 
-    return affected_vars;
+    return affected_free_vars;
 }
 
-unordered_set<u64> compute_free_vars_affected_directly(Dep_Graph& graph, u64 var) {
+unordered_set<u64> compute_free_vars_affected_linearly(Dep_Graph& graph, u64 var) {
     unordered_set<u64> affected_vars;
     auto& var_node = graph.var_nodes[var];
     for (auto atom_i: var_node.lower_bounds) {
-        auto& atom = graph.atom_nodes[atom_i];
+        Linear_Node& atom = graph.linear_nodes[atom_i];
         for (auto var: atom.vars) {
             if (!vector_contains(graph.quantified_vars, var)) {
                 affected_vars.insert(var);
@@ -372,7 +496,7 @@ unordered_set<u64> compute_free_vars_affected_directly(Dep_Graph& graph, u64 var
         }
     }
     for (auto atom_i: var_node.upper_bounds) {
-        auto& atom = graph.atom_nodes[atom_i];
+        Linear_Node& atom = graph.linear_nodes[atom_i];
         for (auto var: atom.vars) {
             if (!vector_contains(graph.quantified_vars, var)) {
                 affected_vars.insert(var);
@@ -384,9 +508,11 @@ unordered_set<u64> compute_free_vars_affected_directly(Dep_Graph& graph, u64 var
 
 bool is_safe_to_instantiate_var_wrt_deps(Dep_Graph& graph, u64 var) {
     // Check if picking a value and instantiating will influence multiple free vars as that can cause problems
-    unordered_set<u64> affected_via_congruences = compute_free_vars_affected_via_congruences(graph, var);
-    unordered_set<u64> affected_directly = compute_free_vars_affected_directly(graph, var);
-    return (affected_directly.empty() || affected_via_congruences.empty());
+    unordered_set<u64> all_affected_vars = compute_overall_affected_vars(graph, var);
+    unordered_set<u64> vars_affected_linearly = compute_free_vars_affected_linearly(graph, var);
+    // At maximum one variable can be affected indirecly via congruence in order to safely
+    // determine instantiation value
+    return (all_affected_vars.size() <= (vars_affected_linearly.size() + 1)); 
 }
 
 
@@ -476,9 +602,12 @@ void write_dep_graph_dot(std::ostream& output, Dep_Graph& graph) {
     }
 
     for (auto quantif_var: graph.quantified_vars) {
-        auto affected_vars = compute_free_vars_affected_via_congruences(graph, quantif_var);
+        unordered_set<u64> affected_vars = compute_overall_affected_vars(graph, quantif_var);
+        unordered_set<u64> linearly_affected_vars = compute_free_vars_affected_linearly(graph, quantif_var);
         for (auto affected_var: affected_vars) {
-            output << "  v" << quantif_var << " -- v" << affected_var << " [style=dotted]\n";
+            if (!linearly_affected_vars.contains(affected_var)) {
+                output << "  v" << quantif_var << " -- v" << affected_var << " [style=dotted]\n";
+            }
         }
     }
 
@@ -491,15 +620,15 @@ bool get_constant_value_implied_by_bounds(Dep_Graph& graph, u64 var, Conjunction
         return false;
     }
 
-    auto& upper_bound_i = var_node.hard_upper_bound.atom_i;
+    auto& upper_bound_i    = var_node.hard_upper_bound.atom_i;
     auto& upper_bound_node = graph.atom_nodes[upper_bound_i];
-    s64 upper_bound_val = div_bound_by_coef(state.constants[upper_bound_i],
-                                            upper_bound_node.atom.coefs[var]);
+    s64 upper_bound_val    = div_bound_by_coef(state.constants[upper_bound_i],
+                                               upper_bound_node.atom.coefs[var]);
 
-    auto& lower_bound_i = var_node.hard_lower_bound.atom_i;
+    auto& lower_bound_i    = var_node.hard_lower_bound.atom_i;
     auto& lower_bound_node = graph.atom_nodes[lower_bound_i];
-    s64 lower_bound_val = div_bound_by_coef(state.constants[lower_bound_i],
-                                            upper_bound_node.atom.coefs[var]);
+    s64 lower_bound_val    = div_bound_by_coef(state.constants[lower_bound_i],
+                                               upper_bound_node.atom.coefs[var]);
 
     if (upper_bound_val == lower_bound_val) {
         *val = upper_bound_val;
