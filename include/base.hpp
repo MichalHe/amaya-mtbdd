@@ -45,6 +45,7 @@ struct Transition {
 
     bool operator==(const Transition& other) const;
 };
+std::ostream& operator<<(std::ostream& output, const Transition& transition);
 
 // @Todo: Make this an ordinary struct
 class Transition_Destination_Set {

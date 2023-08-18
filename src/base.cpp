@@ -836,3 +836,10 @@ NFA perform_pad_closure(NFA& nfa) {
     nfa_copy.perform_pad_closure();
     return nfa_copy;
 }
+
+std::ostream& operator<<(std::ostream& output, const Transition& transition) {
+    output << "( " << transition.from << " --(";
+    for (u8 symbol: transition.symbol) output << (char) ('0' + symbol) << ",";
+    output << ")--> " << transition.to << ")";
+    return output;
+}

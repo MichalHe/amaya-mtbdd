@@ -1,5 +1,6 @@
 #include "../include/lazy.hpp"
 
+#include <cmath>
 #include <stdlib.h>
 
 #include <bitset>
@@ -19,7 +20,6 @@ using std::list;
 using std::map;
 using std::vector;
 using std::unordered_set;
-using std::unordered_map;
 
 using std::pair;
 using std::optional;
@@ -46,51 +46,60 @@ s64 vector_dot(const Sized_Array<s64>& coefs, const u64 symbol) {
     return dot;
 };
 
-optional<pair<Congruence, s64>> congruence_compute_post(Congruence& congruence, s64 state, u64 symbol) {
-    s64 dot = vector_dot(*congruence.coefs, symbol);
+s64 combine_moduli(s64 mod_2pow, s64 mod_odd) {
+    s64 modulus = (1 << mod_2pow) * mod_odd;
+    return modulus;
+}
+
+typedef s64 Modulus;
+
+optional<s64> congruence_compute_post(Congruence& congruence, s64 state, u64 symbol) {
+    s64 dot  = vector_dot(congruence.coefs, symbol);
     s64 post = state - dot;
 
-    if (congruence.modulus_2pow) {
+    if (congruence.modulus_2pow > 0) {
         if (post % 2 == 0) {
-            Congruence result = {.coefs = congruence.coefs, .modulus_odd = congruence.modulus_odd, .modulus_2pow = congruence.modulus_2pow / 2};
-            return std::make_pair(result, post/2);
+            post /= 2;
+            s64 new_modulus = combine_moduli(congruence.modulus_2pow - 1, congruence.modulus_odd);
+            post %= new_modulus;
+            post += (post < 0) * new_modulus;
+            return post;
         }
         return std::nullopt;
     }
-    
+
     post += congruence.modulus_odd * ((post % 2) != 0);
     post /= 2;
     post = post % congruence.modulus_odd;
     post += congruence.modulus_odd * (post < 0);
-    Congruence result = {.coefs = congruence.coefs, .modulus_odd = congruence.modulus_odd, .modulus_2pow = congruence.modulus_2pow};
-    return std::make_pair(result, post);
+    return post;
 };
 
 bool congruence_accepts_symbol(Congruence& congruence, s64 state, u64 symbol) {
-    s64 dot = vector_dot(*congruence.coefs, symbol);
-    s64 modulus = congruence.modulus_odd << congruence.modulus_2pow;
+    s64 dot = vector_dot(congruence.coefs, symbol);
+    s64 modulus = combine_moduli(congruence.modulus_2pow, congruence.modulus_odd);
     return ((state + dot) % modulus) == 0;
 }
 
 std::optional<s64> equation_compute_post(Equation& eq, s64 state, u64 symbol) {
-    s64 dot = vector_dot(*eq.coefs, symbol);
+    s64 dot = vector_dot(eq.coefs, symbol);
     s64 post = state - dot;
     s64 post_div_2 = post / 2;
     s64 post_mod_2 = post % 2;
 
     if (post_mod_2) return std::nullopt;
-    
+
     post_div_2 -= (post_mod_2 != 0) * (post < 0); // Floor the division
     return post_div_2;
 }
 
 bool equation_accepts_symbol(Equation& eq, s64 state, u64 symbol) {
-    s64 dot = vector_dot(*eq.coefs, symbol);
+    s64 dot = vector_dot(eq.coefs, symbol);
     return (state + dot) == 0;
 }
 
 s64 inequation_compute_post(Inequation& ineq, s64 state, u64 symbol) {
-    s64 dot = vector_dot(*ineq.coefs, symbol);
+    s64 dot = vector_dot(ineq.coefs, symbol);
     s64 post = state - dot;
     s64 post_div_2 = post / 2;
     s64 post_mod_2 = post % 2;
@@ -99,7 +108,7 @@ s64 inequation_compute_post(Inequation& ineq, s64 state, u64 symbol) {
 }
 
 bool inequation_accepts_symbol(Inequation& ineq, s64 state, u64 symbol) {
-    s64 dot = vector_dot(*ineq.coefs, symbol);
+    s64 dot = vector_dot(ineq.coefs, symbol);
     return (state + dot) >= 0;
 }
 
@@ -116,11 +125,29 @@ bool Quantified_Atom_Conjunction::operator==(const Quantified_Atom_Conjunction& 
            other.bound_vars == other.bound_vars;
 }
 
-optional<Conjunction_State> compute_successor(const Formula* formula, Conjunction_State& state, u64 symbol) {
+struct Successor {
+    const Formula* formula = nullptr;
+    Conjunction_State state;
+};
+
+optional<Successor> compute_successor(Formula_Pool& formula_pool, const Formula* formula, Conjunction_State& state, u64 symbol) {
     vector<s64> successor_values(state.constants.size());
 
     u64 atom_idx = 0;
-    for (auto& eq: *formula->equations) {
+    for (auto& cong: formula->congruences) {
+        auto maybe_successor = congruence_compute_post(cong, state.constants[atom_idx], symbol);
+
+        if (!maybe_successor.has_value()) {
+            return std::nullopt;
+        }
+
+        s64 new_state = maybe_successor.value();
+
+        successor_values[atom_idx] = new_state;
+        atom_idx += 1;
+    }
+
+    for (auto& eq: formula->equations) {
         auto successor_value = equation_compute_post(eq, state.constants[atom_idx], symbol);
 
         if (!successor_value.has_value()) return std::nullopt;
@@ -129,61 +156,82 @@ optional<Conjunction_State> compute_successor(const Formula* formula, Conjunctio
         atom_idx += 1;
     }
 
-    vector<Congruence>* new_congruences = nullptr;
-
-    // Determine if we actually will need to allocate memory
-    for (auto& cong: *formula->congruences) {
-        if (cong.modulus_2pow > 1) {
-            new_congruences = new vector<Congruence>(); // @Optimize: This should be replaced by a call to a temporary allocator
-            new_congruences->reserve(formula->congruences->size);
-        }
-    }
-
-    for (auto& cong: *formula->congruences) {
-        auto maybe_successor = congruence_compute_post(cong, state.constants[atom_idx], symbol);
-
-        if (!maybe_successor.has_value()) {
-            if (new_congruences != nullptr) delete new_congruences;
-            return std::nullopt;
-        }
-
-        Congruence new_cong  = maybe_successor.value().first;
-        s64        new_state = maybe_successor.value().second;
-
-        new_congruences->push_back(new_cong);
-        successor_values[atom_idx] = new_state;
-        atom_idx += 1;
-    }
-
-    for (auto& ineq: *formula->inequations) {
+    for (auto& ineq: formula->inequations) {
         s64 post = inequation_compute_post(ineq, state.constants[atom_idx], symbol);
         successor_values[atom_idx] = post;
         atom_idx += 1;
     };
 
-    Conjunction_State post(successor_values); 
-    return post;
+    Conjunction_State post(successor_values);
+
+    // Determine if we actually will need to allocate memory
+    if (!formula->post_formula) {
+        // All components, including all congruences had post (none returned empty optional). As
+        // FA are synchronous, it does not matter what symbol did we compute post with since with
+        // every other symbol with successful post computation we will modify the congruence moduli
+        // in the same way although the target state might be different. The was_post_computed
+        // field is not hashed, so it is OK to drop const and set it.
+        bool should_allocate = false;
+        for (auto& cong: formula->congruences) {
+            if (cong.modulus_2pow > 0) {
+                should_allocate = true;
+                break;
+            }
+        }
+
+        if (should_allocate) {
+            Sized_Array<Congruence> new_congruences = formula_pool.allocator.alloc_congruences(formula->congruences.size);
+
+            for (u64 congruence_i = 0; congruence_i < formula->congruences.size; congruence_i++) {
+                Congruence& old_congruence = formula->congruences.items[congruence_i];
+                Congruence new_congruence = {
+                    .coefs = old_congruence.coefs,
+                    .modulus_odd = old_congruence.modulus_odd,
+                    .modulus_2pow = old_congruence.modulus_2pow - 1
+                };
+                new_congruences.items[congruence_i] = new_congruence;
+            }
+
+            Formula new_formula = Formula(new_congruences, formula->equations, formula->inequations,
+                                          formula->bound_vars, formula->var_count);
+            const Formula* new_formula_canon_ptr = formula_pool.store_formula(new_formula);
+
+            { // Make sure we do not need to recompute the thing
+                const_cast<Formula*>(formula)->post_formula = new_formula_canon_ptr;
+            }
+
+            Successor successor = {.formula = new_formula_canon_ptr, .state = post};
+            return successor;
+        } else {
+            // All congruences have odd moduli, make sure we don't try allocating a new formula due
+            // to modulus change ever again (self loop in dependency graph)
+            const_cast<Formula*>(formula)->post_formula = formula;
+        }
+    }
+
+    Successor successor = {.formula = formula->post_formula, .state = post};
+    return successor;
 }
 
 bool accepts_last_symbol(const Formula* formula, Conjunction_State& state, u64 symbol) {
     bool accepts = true;
 
     u64 atom_i = 0;
-    for (auto& eq: *formula->equations) {
+    for (auto& eq: formula->equations) {
         accepts &= equation_accepts_symbol(eq, state.constants[atom_i], symbol);
         atom_i += 1;
     }
-    
-    for (auto& congr: *formula->congruences) {
+
+    for (auto& congr: formula->congruences) {
         accepts &= congruence_accepts_symbol(congr, state.constants[atom_i], symbol);
         atom_i += 1;
     }
 
-    for (auto& ineq: *formula->inequations) {
+    for (auto& ineq: formula->inequations) {
         accepts &= inequation_accepts_symbol(ineq, state.constants[atom_i], symbol);
         atom_i += 1;
     }
-    
+
     return accepts;
 }
 
@@ -263,27 +311,6 @@ std::ostream& operator<<(std::ostream& output, const Presburger_Atom& atom) {
     return output;
 }
 
-std::ostream& operator<<(std::ostream& output, const Quantified_Atom_Conjunction& formula) {
-    output << "(";
-    if (!formula.bound_vars.empty()) {
-        output << "exists (";
-        auto quantified_vars_iter = formula.bound_vars.begin();
-        output << "x" << *quantified_vars_iter;
-        ++quantified_vars_iter;
-        for (; quantified_vars_iter != formula.bound_vars.end(); ++quantified_vars_iter)
-            output << ", " << "x" << *quantified_vars_iter;
-        output << ")";
-    }
-
-    // @FixMe(cosmetics)
-    // for (auto& atom: formula.atoms) {
-    //     output << "(" << atom << ") ";
-    // }
-
-    output << ")";
-    return output;
-}
-
 std::ostream& operator<<(std::ostream& output, const Conjunction_State& atom) {
     output << "(";
     if (!atom.constants.empty()) {
@@ -300,17 +327,23 @@ std::ostream& operator<<(std::ostream& output, const Conjunction_State& atom) {
     return output;
 }
 
-std::ostream& operator<<(std::ostream& output, const Structured_Macrostate& macrostate) {
+std::ostream& operator<<(std::ostream& output, const Finalized_Macrostate& macrostate) {
     output << "{";
     u64 written_formulae = 0;
-    for (auto& [formula, states]: macrostate.formulae) {
+    for (auto& macrostate_entry: macrostate.entries) {
         if (written_formulae > 0) output << ", ";
-        output << "`" << *formula << "`: [";
-        auto state_it = states.begin();
+        output << "`" << *macrostate_entry.formula << "`: [";
+
+        if (macrostate_entry.states.empty()) {
+            output << "]";
+            continue;
+        }
+
+        auto state_it = macrostate_entry.states.begin();
         output << *state_it;
         ++state_it;
 
-        for (; state_it != states.end(); ++state_it) {
+        for (; state_it != macrostate_entry.states.end(); ++state_it) {
             output << ", " << *state_it;
         }
         output << "]";
@@ -323,10 +356,15 @@ std::ostream& operator<<(std::ostream& output, const Structured_Macrostate& macr
     return output;
 }
 
+bool Macrostate_Entry_Family::operator==(const Macrostate_Entry_Family& other) const {
+    if (formula != other.formula) return false;
+    bool is_equal = states == other.states;
+    return is_equal;
+};
 
-bool Structured_Macrostate::operator==(const Structured_Macrostate& other) const {
+bool Finalized_Macrostate::operator==(const Finalized_Macrostate& other) const {
     if (is_accepting != other.is_accepting) return false;
-    bool is_equal = formulae == other.formulae;
+    bool is_equal = entries == other.entries;
     return is_equal;
 };
 
@@ -350,49 +388,49 @@ s64 normalize_reminder(s64 reminder, s64 modulus) {
 Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj) {
     Dep_Graph graph;
     graph.var_nodes = vector<Var_Node>(conj.var_count);
-    graph.linear_nodes.reserve(conj.equations->size + conj.inequations->size);
-    graph.congruence_nodes.reserve(conj.congruences->size);
+    graph.linear_nodes.reserve(conj.equations.size + conj.inequations.size);
+    graph.congruence_nodes.reserve(conj.congruences.size);
 
     u64 lin_atom_i = 0;
-    for (auto& eq: *conj.equations) {
-        vector<s64> coefs(eq.coefs->begin(), eq.coefs->end());
+    for (auto& eq: conj.equations) {
+        vector<s64> coefs(eq.coefs.begin(), eq.coefs.end());
         Linear_Node atom_node = {.type = Linear_Node_Type::EQ, .coefs = coefs, .vars = {}, .is_satisfied = false};
 
         for (auto var = 0; var < conj.var_count; var++) {
-            Var_Node var_node = graph.var_nodes[var]; 
-            s64 coef          = eq.coefs->items[var];
+            Var_Node& var_node = graph.var_nodes[var];
+            s64 coef           = eq.coefs.items[var];
             if (coef) {
                 var_node.upper_bounds.push_back(lin_atom_i);
                 var_node.lower_bounds.push_back(lin_atom_i);
                 atom_node.vars.push_back(var);
             }
         }
-        
+
         graph.linear_nodes.push_back(atom_node);
         lin_atom_i += 1;
     }
 
-    for (auto& ineq: *conj.inequations) {
-        vector<s64> coefs(ineq.coefs->begin(), ineq.coefs->end());
+    for (auto& ineq: conj.inequations) {
+        vector<s64> coefs(ineq.coefs.begin(), ineq.coefs.end());
         Linear_Node atom_node = {.type = Linear_Node_Type::INEQ, .coefs = coefs, .vars = {}, .is_satisfied = false};
 
         for (auto var = 0; var < conj.var_count; var++) {
-            Var_Node var_node = graph.var_nodes[var]; 
-            s64 coef          = ineq.coefs->items[var];
+            Var_Node& var_node = graph.var_nodes[var];
+            s64 coef           = ineq.coefs.items[var];
             if (coef) {
                 if (coef < 0) var_node.lower_bounds.push_back(lin_atom_i);
                 else          var_node.upper_bounds.push_back(lin_atom_i);
                 atom_node.vars.push_back(var);
             }
         }
-        
+
         graph.linear_nodes.push_back(atom_node);
         lin_atom_i += 1;
     }
 
     u64 congruence_i = 0;
-    for (auto& congr: *conj.congruences) {
-        vector<s64> coefs(congr.coefs->begin(), congr.coefs->end());
+    for (auto& congr: conj.congruences) {
+        vector<s64> coefs(congr.coefs.begin(), congr.coefs.end());
         Congruence_Node congruence_node = {
                 .coefs = coefs,
                 .vars = {},
@@ -402,9 +440,10 @@ Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj) {
         };
 
         for (auto var = 0; var < conj.var_count; var++) {
-            Var_Node var_node = graph.var_nodes[var]; 
-            s64 coef          = congr.coefs->items[var];
+            Var_Node& var_node = graph.var_nodes[var];
+            s64 coef           = congr.coefs.items[var];
             if (coef) {
+                var_node.congruences.push_back(congruence_i);
                 congruence_node.vars.push_back(var);
             }
         }
@@ -412,14 +451,14 @@ Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj) {
         graph.congruence_nodes.push_back(congruence_node);
         congruence_i += 1;
     }
-   
+
     // Detect hard bounds
     for (u64 lin_atom_i = 0; lin_atom_i < graph.linear_nodes.size(); lin_atom_i++) {
         Linear_Node node = graph.linear_nodes[lin_atom_i];
         if (node.vars.size() == 1) {
-            u64 var           = node.vars[0];
-            s64 coef          = node.coefs[var];
-            Var_Node var_node = graph.var_nodes[var];
+            u64 var            = node.vars[0];
+            s64 coef           = node.coefs[var];
+            Var_Node& var_node = graph.var_nodes[var];
 
             if (node.type == Linear_Node_Type::INEQ) {
                 Hard_Bound bound_info = {.is_present = true, .atom_i = lin_atom_i};
@@ -439,7 +478,7 @@ Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj) {
     return graph;
 }
 
-void add_new_affected_vars_to_worklist(vector<u64>& potential_vars, vector<u64>& worklist, unordered_set<u64> known_affected_vars) {
+void add_new_affected_vars_to_worklist(vector<u64>& potential_vars, vector<u64>& worklist, unordered_set<u64>& known_affected_vars) {
     for (u64 var: potential_vars) {
         if (!known_affected_vars.contains(var)) {
             known_affected_vars.insert(var);
@@ -457,7 +496,7 @@ unordered_set<u64> compute_overall_affected_vars(Dep_Graph& graph, u64 var) {
 
     // We care only about affected vars and therefore there is no need to distinguish between
     // different atom node types and we can work with atom vars directly
-    vector<u64> work_list;
+    vector<u64> work_list = {var};
 
     while (!work_list.empty()) {
         u64 affected_var = work_list.back();
@@ -510,9 +549,12 @@ bool is_safe_to_instantiate_var_wrt_deps(Dep_Graph& graph, u64 var) {
     // Check if picking a value and instantiating will influence multiple free vars as that can cause problems
     unordered_set<u64> all_affected_vars = compute_overall_affected_vars(graph, var);
     unordered_set<u64> vars_affected_linearly = compute_free_vars_affected_linearly(graph, var);
-    // At maximum one variable can be affected indirecly via congruence in order to safely
-    // determine instantiation value
-    return (all_affected_vars.size() <= (vars_affected_linearly.size() + 1)); 
+
+    u64 nonlinearly_affected_vars = all_affected_vars.size() - vars_affected_linearly.size();
+    // We either affect unlimited number of variables directly (we can tell what value is preferred), or at most
+    // one variable in nonlinearly, but then we cannot have any linearly dependent variables because a clear
+    // preference of value cannot be determined.
+    return (!nonlinearly_affected_vars || (nonlinearly_affected_vars == 1 && vars_affected_linearly.empty()));
 }
 
 
@@ -552,6 +594,18 @@ void identify_potential_variables(Dep_Graph& graph) {
     }
 }
 
+std::string get_node_attrs_for_hard_bound(Bound_Type type) {
+    switch (type) {
+        case Bound_Type::LOWER:
+            return ", style=filled, fillcolor=\"#6bb7ea\"";
+        case Bound_Type::UPPER: // Upper
+            return ", style=filled, fillcolor=\"#ea6b78\"";
+        default:
+            return "";
+    }
+}
+
+
 void write_dep_graph_dot(std::ostream& output, Dep_Graph& graph) {
     output << "graph deps {\n";
 
@@ -561,30 +615,25 @@ void write_dep_graph_dot(std::ostream& output, Dep_Graph& graph) {
         output << "  v" << var << " [label=\"x" << var << "\",shape=box" <<  quantif_attrs << "]\n";
     }
 
-    for (u64 atom_i = 0; atom_i < graph.atom_nodes.size(); atom_i++) {
-        auto& node = graph.atom_nodes[atom_i];
-
-        u64 is_hard_bound = 0;
-        for (auto var: node.vars) {
+    u64 atom_i = 0;
+    for (auto& linear_node: graph.linear_nodes) {
+        Bound_Type bound_type = Bound_Type::NONE;
+        for (auto var: linear_node.vars) {
             auto& var_node = graph.var_nodes[var];
-            if (var_node.is_hard_lower_bound(atom_i)) is_hard_bound = 1;
-            if (var_node.is_hard_upper_bound(atom_i)) is_hard_bound = 2;
+            if (var_node.is_hard_lower_bound(atom_i)) {
+                bound_type = Bound_Type::LOWER;
+                break;
+            }
+            if (var_node.is_hard_upper_bound(atom_i)) {
+                bound_type = Bound_Type::UPPER;
+                break;
+            }
         }
 
-        std::string hard_bound_attrs;
-        switch (is_hard_bound) {
-            case 1: // Lower
-                hard_bound_attrs = ", style=filled, fillcolor=\"#6bb7ea\"";
-                break;
-            case 2: // Upper
-                hard_bound_attrs = ", style=filled, fillcolor=\"#ea6b78\"";
-                break;
-            default:
-                hard_bound_attrs = "";
-                break;
-        }
+        std::string hard_bound_attrs = get_node_attrs_for_hard_bound(bound_type);
 
-        output << "  a" << atom_i << " [label=\"" << node.atom << "\"" << hard_bound_attrs << "]\n";
+        output << "  a" << atom_i << " [label=\"" << linear_node << "\"" << hard_bound_attrs << "]\n";
+        atom_i += 1;
     }
 
     for (u64 var = 0; var < graph.var_nodes.size(); var++) {
@@ -602,7 +651,7 @@ void write_dep_graph_dot(std::ostream& output, Dep_Graph& graph) {
     }
 
     for (auto quantif_var: graph.quantified_vars) {
-        unordered_set<u64> affected_vars = compute_overall_affected_vars(graph, quantif_var);
+        unordered_set<u64> affected_vars          = compute_overall_affected_vars(graph, quantif_var);
         unordered_set<u64> linearly_affected_vars = compute_free_vars_affected_linearly(graph, quantif_var);
         for (auto affected_var: affected_vars) {
             if (!linearly_affected_vars.contains(affected_var)) {
@@ -620,15 +669,17 @@ bool get_constant_value_implied_by_bounds(Dep_Graph& graph, u64 var, Conjunction
         return false;
     }
 
-    auto& upper_bound_i    = var_node.hard_upper_bound.atom_i;
-    auto& upper_bound_node = graph.atom_nodes[upper_bound_i];
-    s64 upper_bound_val    = div_bound_by_coef(state.constants[upper_bound_i],
-                                               upper_bound_node.atom.coefs[var]);
+    u64 linear_states_offset = graph.congruence_nodes.size();
 
-    auto& lower_bound_i    = var_node.hard_lower_bound.atom_i;
-    auto& lower_bound_node = graph.atom_nodes[lower_bound_i];
-    s64 lower_bound_val    = div_bound_by_coef(state.constants[lower_bound_i],
-                                               upper_bound_node.atom.coefs[var]);
+    u64 upper_bound_i             = var_node.hard_upper_bound.atom_i;
+    Linear_Node& upper_bound_node = graph.linear_nodes[upper_bound_i];
+    s64 upper_bound_val           = div_bound_by_coef(state.constants[upper_bound_i + linear_states_offset],
+                                                      upper_bound_node.coefs[var]);
+
+    u64 lower_bound_i             = var_node.hard_lower_bound.atom_i;
+    Linear_Node& lower_bound_node = graph.linear_nodes[lower_bound_i];
+    s64 lower_bound_val           = div_bound_by_coef(state.constants[lower_bound_i + linear_states_offset],
+                                                      upper_bound_node.coefs[var]);
 
     if (upper_bound_val == lower_bound_val) {
         *val = upper_bound_val;
@@ -637,37 +688,44 @@ bool get_constant_value_implied_by_bounds(Dep_Graph& graph, u64 var, Conjunction
     return false;
 }
 
+void set_var_value_in_lin_atom(Dep_Graph& graph, Conjunction_State& state, u64 lin_atom_i, u64 var, s64 val) {
+    auto& atom_node = graph.linear_nodes[lin_atom_i];
+
+    u64 atom_i = lin_atom_i + graph.congruence_nodes.size();
+    state.constants[atom_i] -= atom_node.coefs[var] * val;
+
+    atom_node.coefs[var] = 0;
+    vector_remove(atom_node.vars, var);
+    if (atom_node.vars.empty()) atom_node.is_satisfied = true;
+}
+
 Conjunction_State simplify_graph_using_value(Dep_Graph& graph, Conjunction_State& state, u64 var, s64 val) {
     auto& var_node = graph.var_nodes[var];
 
-    for (auto atom_i: var_node.lower_bounds) {
-        auto& atom_node = graph.atom_nodes[atom_i];
-        state.constants[atom_i] -= atom_node.atom.coefs[var] * val;
-        atom_node.atom.coefs[var] = 0;
-        vector_remove(atom_node.vars, var);
-        if (atom_node.vars.empty()) atom_node.is_satisfied = true;
-    }
-    for (auto atom_i: var_node.upper_bounds) {
-        auto& atom_node = graph.atom_nodes[atom_i];
-        state.constants[atom_i] -= atom_node.atom.coefs[var] * val;
-        atom_node.atom.coefs[var] = 0;
-        vector_remove(atom_node.vars, var);
-        if (atom_node.vars.empty()) atom_node.is_satisfied = true;
-    }
+    for (auto atom_i: var_node.lower_bounds)
+        set_var_value_in_lin_atom(graph, state, atom_i, var, val);
+
+    for (auto atom_i: var_node.upper_bounds)
+        set_var_value_in_lin_atom(graph, state, atom_i, var, val);
+
     for (auto atom_i: var_node.congruences) {
-        auto& atom_node = graph.atom_nodes[atom_i];
-        state.constants[atom_i] -= atom_node.atom.coefs[var] * val;
-        state.constants[atom_i] = normalize_reminder(state.constants[atom_i], atom_node.atom.modulus);
-        atom_node.atom.coefs[var] = 0;
-        vector_remove(atom_node.vars, var);
-        if (atom_node.vars.empty()) atom_node.is_satisfied = true;
+        auto& congruence_node = graph.congruence_nodes[atom_i];
+
+        // Congruences are at the front of the state, no need to introduce offset
+        s64 modulus = combine_moduli(congruence_node.modulus_2pow, congruence_node.modulus_odd);
+        state.constants[atom_i] -= congruence_node.coefs[var] * val;
+        state.constants[atom_i] = normalize_reminder(state.constants[atom_i], modulus);
+
+        congruence_node.coefs[var] = 0;
+        vector_remove(congruence_node.vars, var);
+        if (congruence_node.vars.empty()) congruence_node.is_satisfied = true;
     }
 
     return state;
 }
 
 void mark_lin_atom_as_satisfied(Dep_Graph& graph, u64 atom_i, u64 unbound_var) {
-    auto& atom_node = graph.atom_nodes[atom_i];
+    auto& atom_node = graph.linear_nodes[atom_i];
     atom_node.is_satisfied = true;
     for (auto atom_var: atom_node.vars) {
         if (atom_var == unbound_var) continue;  // The node for var causing atom to be satisfied will be "removed", do not modify it
@@ -690,14 +748,14 @@ void simplify_graph_with_unbound_var(Dep_Graph& graph, u64 var) {
     }
 
     for (auto atom_i: var_node.congruences) {
-        auto& atom_node = graph.atom_nodes[atom_i];
-        atom_node.is_satisfied = true;
-        for (auto atom_var: atom_node.vars) {
+        Congruence_Node& congruence_node = graph.congruence_nodes[atom_i];
+        congruence_node.is_satisfied = true;
+        for (auto atom_var: congruence_node.vars) {
             if (atom_var == var) continue;
             auto& dep_var_node = graph.var_nodes[atom_var];
             vector_remove(dep_var_node.congruences, atom_i);
         }
-        atom_node.vars.clear();
+        congruence_node.vars.clear();
     }
 
     var_node.congruences.clear();
@@ -759,10 +817,10 @@ bool get_value_close_to_bounds(Dep_Graph& graph, Conjunction_State& state, u64 v
 
     if (bound_type == Bound_Type::NONE) return false;
 
-    auto& bound_node = graph.atom_nodes[bound_node_i];
+    auto& bound_node = graph.linear_nodes[bound_node_i];
 
     // Var has a clear lower bound and its all of its ussages would like it to be some low value
-    s64 bound_value = div_bound_by_coef(state.constants[bound_node_i], bound_node.atom.coefs[var]);
+    s64 bound_value = div_bound_by_coef(state.constants[bound_node_i], bound_node.coefs[var]);
     if (var_node.congruences.empty()) {
         *value = bound_value;
         return true;
@@ -770,8 +828,8 @@ bool get_value_close_to_bounds(Dep_Graph& graph, Conjunction_State& state, u64 v
 
     if (var_node.congruences.size() > 1) return false;
 
-    auto congruence_i = var_node.congruences[0];
-    auto& congruence_node = graph.atom_nodes[congruence_i];
+    u64 congruence_i                 = var_node.congruences[0];
+    Congruence_Node& congruence_node = graph.congruence_nodes[congruence_i];
 
     if (congruence_node.vars.size() > 1) {
         // @Research: In case there are multiple variables in a congruence, but we affect only free vars,
@@ -779,24 +837,22 @@ bool get_value_close_to_bounds(Dep_Graph& graph, Conjunction_State& state, u64 v
         return false;   // We don't know how to infer value when there are multiple vars in congruence
     }
 
-    auto& congruence = graph.atom_nodes[congruence_i].atom;
-
     u64 nonzero_coefs = 0;
-    for (auto coef: congruence.coefs) nonzero_coefs += (coef != 0);
+    for (auto coef: congruence_node.coefs) nonzero_coefs += (coef != 0);
     if (nonzero_coefs > 1) return false;
 
     // Find a solution in the unshifted congruence range, e.g., -y ~ 100 (mod 303)
-    s64 modulus = congruence.modulus;
+    s64 modulus = combine_moduli(congruence_node.modulus_2pow, congruence_node.modulus_odd);
 
-    s64 rhs = normalize_reminder(state.constants[congruence_i], modulus);
-    s64 coef = normalize_reminder(congruence.coefs[var], modulus);
+    s64 rhs  = normalize_reminder(state.constants[congruence_i], modulus);
+    s64 coef = normalize_reminder(congruence_node.coefs[var], modulus);
 
     s64 mult_inv = compute_multiplicative_inverse(modulus, coef);
     rhs = (rhs * mult_inv) % modulus; // e.g., y ~ 200 (mod 303), rhs is now a solution
 
-    s64 shift_coef = bound_value / congruence.modulus;
-    shift_coef -= (bound_value < 0); // A signed floor division
-    s64 congruence_shift = congruence.modulus * shift_coef;
+    s64 shift_coef = bound_value / modulus;
+    shift_coef    -= (bound_value < 0); // A signed floor division
+    s64 congruence_shift = modulus * shift_coef;
 
     s64 instantiated_value = rhs + congruence_shift;
 
@@ -819,7 +875,6 @@ bool get_value_close_to_bounds(Dep_Graph& graph, Conjunction_State& state, u64 v
     *value = instantiated_value;
     return true;
 }
-
 
 bool simplify_graph(Dep_Graph& graph, Conjunction_State& state) {
     bool all_vars_probed = false;
@@ -869,32 +924,74 @@ bool simplify_graph(Dep_Graph& graph, Conjunction_State& state) {
     return was_graph_simplified;
 }
 
-Stateful_Formula convert_graph_into_formula(Dep_Graph& graph, Conjunction_State& state) {
-    // @Note: In theory, we could return a conjunction of the same number of atoms with satisfied atoms replaced
-    //        by TRUE and reuse the graph troughout the entire execution, however, this would require successor
-    //        computation to be aware about this and ignore such atoms.
-    vector<Presburger_Atom> atoms;
+Stateful_Formula convert_graph_into_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state) {
     vector<s64> formula_state;
-    for (u64 atom_i = 0; atom_i < graph.atom_nodes.size(); atom_i++) {
-        auto& atom_node = graph.atom_nodes[atom_i];
-        if (!atom_node.is_satisfied) {
-            formula_state.push_back(state.constants[atom_i]);
-            atoms.push_back(atom_node.atom);
+
+    for (u64 congr_i = 0; congr_i < graph.congruence_nodes.size(); congr_i++) {
+        Congruence_Node& congruence_node = graph.congruence_nodes[congr_i];
+        if (congruence_node.is_satisfied) continue;
+
+        formula_state.push_back(state.constants[congr_i]);
+
+        Congruence* congruence = allocator.alloc_temporary_congruence();
+
+        memcpy(congruence->coefs.items, congruence_node.coefs.data(), sizeof(s64) * congruence_node.coefs.size());
+
+        congruence->modulus_2pow = congruence_node.modulus_2pow;
+        congruence->modulus_odd = congruence_node.modulus_odd;
+    }
+
+    u64 linear_atoms_offset = graph.congruence_nodes.size();
+    for (u64 lin_node_i = 0; lin_node_i < graph.linear_nodes.size(); lin_node_i++) {
+        Linear_Node& atom_node = graph.linear_nodes[lin_node_i];
+        if (atom_node.is_satisfied) continue;
+
+        u64 state_coef_i = lin_node_i + linear_atoms_offset;
+        formula_state.push_back(state.constants[state_coef_i]);
+
+        if (atom_node.type == Linear_Node_Type::EQ) {
+            Equation* equation = allocator.alloc_temporary_equation();
+            memcpy(equation->coefs.items, atom_node.coefs.data(), sizeof(s64) * atom_node.coefs.size());
+            equation->coefs.size = atom_node.coefs.size();
+        } else {
+            Inequation* inequation = allocator.alloc_temporary_inequation();
+            memcpy(inequation->coefs.items, atom_node.coefs.data(), sizeof(s64) * atom_node.coefs.size());
+            inequation->coefs.size = atom_node.coefs.size();
         }
     }
 
-    Quantified_Atom_Conjunction conjunction(atoms, graph.quantified_vars, graph.var_nodes.size()); // new dep graph is automatically created
+    Quantified_Atom_Conjunction conjunction = allocator.get_tmp_formula();
+    conjunction.bound_vars = graph.quantified_vars;
+    conjunction.var_count  = graph.var_nodes.size();
+
     Conjunction_State new_state(formula_state);
     return {.state = new_state, .formula = conjunction};
 }
 
 std::pair<const Formula*, Conjunction_State> simplify_stateful_formula(const Formula* formula, Conjunction_State& state, Formula_Pool& pool) {
+    if (formula->dep_graph.potential_vars.empty()) return {formula, state};
+
     Dep_Graph graph_copy(formula->dep_graph);
     bool was_graph_simplified = simplify_graph(graph_copy, state);  // If the graph is simplified, then state will be modified
 
     if (was_graph_simplified) {
-        auto new_stateful_formula = convert_graph_into_formula(graph_copy, state);
-        auto formula_ptr = pool.store_formula(new_stateful_formula.formula);
+        auto new_stateful_formula = convert_graph_into_formula(graph_copy, pool.allocator, state);
+        const auto& [formula_ptr, was_formula_new] = pool.store_formula_with_info(new_stateful_formula.formula);
+        if (was_formula_new) {
+            // The formula that was inserted has pointers referring to the temporary storage
+            // that will be used in the future so that the formula coefficients might get
+            // overwritten with something else. We have to replace the formula pointers
+            // with the ones pointing to a commited memory.
+            Formula commited_formula = pool.allocator.commit_tmp_space();
+            // We are only changing pointers to point to a different memory with the exact same contents.
+            // Since we are hashing the pointer contents and not pointers, temporary dropping const should be ok.
+            Formula* modif_formula_ptr = const_cast<Formula*>(formula_ptr);
+            modif_formula_ptr->congruences.items = commited_formula.congruences.items;
+            modif_formula_ptr->equations.items   = commited_formula.equations.items;
+            modif_formula_ptr->inequations.items = commited_formula.inequations.items;
+        } else {
+           pool.allocator.drop_tmp();
+        }
         return {formula_ptr, new_stateful_formula.state};
     }
     return {formula, state};
@@ -914,97 +1011,8 @@ void add_var_coef_term(std::stringstream& dest, u64 var, s64 coef) {
     }
 }
 
-std::string Presburger_Atom::fmt_with_rhs(s64 rhs) const {
-    std::stringstream str_builder;
-
-    str_builder << "(";
-    if (type == Presburger_Atom_Type::PR_ATOM_INEQ) str_builder << "<= ";
-    else if (type == Presburger_Atom_Type::PR_ATOM_CONGRUENCE || Presburger_Atom_Type::PR_ATOM_EQ) str_builder << "= ";
-    else assert(0 && "The value of atom->type should be set!");
-
-    if (type == Presburger_Atom_Type::PR_ATOM_CONGRUENCE)
-        str_builder << "(mod ";
-
-    u64 nonzero_coefficients = 0;
-    bool is_first_coef_write_queued = false;
-    u64 first_coef_i = 0;
-    for (u64 var_i = 0u; var_i < coefs.size(); var_i++) {
-        if (!coefs[var_i]) continue;
-
-        // Postpone the writing of the first coefficient so that we know whether or not to print "(+"
-        if (!nonzero_coefficients) {
-            nonzero_coefficients++;
-            is_first_coef_write_queued = true;
-            first_coef_i = var_i;
-            continue;
-        }
-
-        nonzero_coefficients++;
-
-        if (is_first_coef_write_queued) {
-            str_builder << "(+ ";
-            str_builder << "x" << first_coef_i;
-            is_first_coef_write_queued = false;
-        }
-
-        str_builder << " ";
-        add_var_coef_term(str_builder, var_i, coefs[var_i]);
-    }
-
-    if (is_first_coef_write_queued)
-        add_var_coef_term(str_builder, first_coef_i, coefs[first_coef_i]);
-
-    if (nonzero_coefficients > 1)
-        str_builder << ")";
-
-    if (type == Presburger_Atom_Type::PR_ATOM_CONGRUENCE)
-        str_builder << " " << modulus << ")";
-
-    str_builder << " " << rhs << ")";
-
-    return str_builder.str();
-}
-
-std::string Quantified_Atom_Conjunction::fmt_with_state(Conjunction_State& state) const {
-    if (this->is_bottom())
-        return "false";
-    else if (this->is_top()) {
-        return "true";
-    }
-
-    std::stringstream str_builder;
-
-    str_builder << "(exists (";
-    if (!bound_vars.empty()) {
-        auto quantified_vars_iter = bound_vars.begin();
-        str_builder << "(x" << *quantified_vars_iter << " Int)";
-        ++quantified_vars_iter;
-        for (; quantified_vars_iter != bound_vars.end(); ++quantified_vars_iter) {
-            str_builder << " (x" << *quantified_vars_iter << " Int)";
-        }
-    }
-    str_builder << ") ";
-
-    if (atoms.size() == 1) {
-        str_builder << atoms[0].fmt_with_rhs(state.constants[0]);
-    } else {
-        str_builder << "(land ";
-        str_builder << atoms[0].fmt_with_rhs(state.constants[0]);
-        for (u64 atom_i = 1u; atom_i < atoms.size(); atom_i++) {
-            str_builder << " " << atoms[atom_i].fmt_with_rhs(state.constants[atom_i]);
-        }
-        str_builder << ")";
-    }
-
-    str_builder << ")";  // Closing the (exists
-    return str_builder.str();
-}
-
-
-void insert_successor_into_post_if_valuable(Structured_Macrostate& post, const Formula* formula, Conjunction_State& successor) {
-    auto& bucket = post.formulae[formula];
-
-    bool should_be_inserted = true;
+void insert_pareto_optimal(std::list<Conjunction_State>& queue, const u64 ineq_offset, Conjunction_State& state) {
+    bool should_be_inserted    = true;
     bool insert_position_found = false;
 
     /*
@@ -1012,47 +1020,28 @@ void insert_successor_into_post_if_valuable(Structured_Macrostate& post, const F
      *            larger, we don't have to iterate further.
      */
 
-    auto bucket_iter = bucket.begin();
+    auto bucket_iter = queue.begin();
     list<Conjunction_State>::iterator insert_position;
-    while (bucket_iter != bucket.end()) {
-        auto& other_successor = *bucket_iter;
+    while (bucket_iter != queue.end()) {
+        auto& other_state = *bucket_iter;
 
         // Compute pareto optimality
-        bool is_smaller = false; // successor <= other_successor at some fragment of the state (constant)
-        bool is_larger  = false; // successor >= other_successor
+        bool is_smaller = false; // successor <= other_successor at some fragment of the state
+        bool is_larger  = false; // successor >= other_successor at some fragment of the state
+        bool is_other_smaller_than_inserted = true;
 
-        bool is_other_smaller_then_inserted = true;
-
-        for (u64 state_fragment_i = 0u; state_fragment_i < successor.constants.size(); state_fragment_i++) {
-            auto& atom = formula->atoms[state_fragment_i];
-
-            bool is_simulation_plain = (atom.type == PR_ATOM_EQ || atom.type == PR_ATOM_CONGRUENCE);
-
-            if (is_simulation_plain) {
-                if (successor.constants[state_fragment_i] != other_successor.constants[state_fragment_i]) {
-                    // Successor and other successor are incomparable
-                    is_smaller = true;
-                    is_larger = true;
-                    break;
-                }
+        for (u64 state_fragment_i = 0u; state_fragment_i < state.constants.size(); state_fragment_i++) {
+            if (state.constants[state_fragment_i] < other_state.constants[state_fragment_i]) {
+                is_smaller = true; // The successor is simulated at the current field
+                is_other_smaller_than_inserted = false;
             }
-            else {
-                // @Optimize: Those IFs can be avoided by bitpacking the use booleans into one machine word and using bit OPs
-                if (successor.constants[state_fragment_i] < other_successor.constants[state_fragment_i]) {
-                    is_smaller = true; // The successor is simulated at the current field
-                }
-                else if (successor.constants[state_fragment_i] > other_successor.constants[state_fragment_i]) {
-                    is_larger = true;
-                }
-            }
-
-            if (other_successor.constants[state_fragment_i] > successor.constants[state_fragment_i]) {
-                is_other_smaller_then_inserted = false;
+            else if (state.constants[state_fragment_i] > other_state.constants[state_fragment_i]) {
+                is_larger = true;
             }
         }
 
         // The current successor should be inserted after all <= states were exhaused (insertion sort)
-        if (!is_other_smaller_then_inserted && !insert_position_found) {
+        if (!is_other_smaller_than_inserted && !insert_position_found) {
             // @Note: The usage of the insert_position iterator should not get invalidated future list erasures, because
             //        the iterator points to a state that is lexicographically larger than the inserted state. As the state
             //        is larger, it cannot be that it is simulated by the inserted - either it is larger in some plain constant,
@@ -1067,7 +1056,7 @@ void insert_successor_into_post_if_valuable(Structured_Macrostate& post, const F
         }
         else {
             if (is_larger) {
-                bucket.erase(bucket_iter++);
+                queue.erase(bucket_iter++);
             } else {
                 // Either the inserted atom is smaller (is_smaller = true), or they are the same (is_smaller = is_larger = false)
                 should_be_inserted = false;
@@ -1078,12 +1067,25 @@ void insert_successor_into_post_if_valuable(Structured_Macrostate& post, const F
     }
 
     if (should_be_inserted) {
-        if (!insert_position_found) insert_position = bucket.end();
-        bucket.insert(insert_position, successor);
+        if (!insert_position_found) insert_position = queue.end();
+        queue.insert(insert_position, state);
     }
 }
 
-void make_macrostate_canoical(Structured_Macrostate& macrostate) {
+void insert_into_post_if_valuable2(Intermediate_Macrostate& post, const Formula* formula, Conjunction_State& successor) {
+    Prefix_Table& formula_bucket = post.formulae[formula];
+
+    u64 prefix_size = formula->congruences.size + formula->equations.size;
+    vector<s64> prefix(prefix_size);
+    for (u64 i = 0; i < prefix_size; i++) {
+        prefix[i] = successor.constants[i];
+    }
+
+    list<Conjunction_State>& prefix_bucket = formula_bucket[prefix];
+    insert_pareto_optimal(prefix_bucket, prefix_size, successor);
+}
+
+Finalized_Macrostate finalize_macrostate(Intermediate_Macrostate& intermediate_macrostate) {
     auto comparator = [](const Conjunction_State& left, const Conjunction_State& right){
         // Is left < right ?
         for (u64 i = 0; i < left.constants.size(); i++) {
@@ -1093,34 +1095,57 @@ void make_macrostate_canoical(Structured_Macrostate& macrostate) {
         return false;
     };
 
-    for (auto& [formula, atoms]: macrostate.formulae) {
-        atoms.sort(comparator);
+    vector<Macrostate_Entry_Family> entries;
+    // formulae is a map, and therefore, the formula should  be kept in sorted order,
+    // no need to sort them right now.
+    for (auto& [formula, prefix_table]: intermediate_macrostate.formulae) {
+        u64 entry_elements_cnt = 0;
+        for (auto& [prefix, prefix_entries]: prefix_table) {
+            entry_elements_cnt += prefix_entries.size();
+        }
+
+        Macrostate_Entry_Family family;
+        family.formula = formula;
+        family.states.reserve(entry_elements_cnt);
+
+        for (auto& [prefix, prefix_entries]: prefix_table) {
+            for (auto& state: prefix_entries) family.states.push_back(state);
+        }
+
+        std::sort(family.states.begin(), family.states.end(), comparator);
+        entries.push_back(std::move(family));
     }
+
+    return {.entries = entries, .is_accepting = intermediate_macrostate.is_accepting};
 }
 
-Structured_Macrostate make_trivial_macrostate(Formula_Pool& pool, bool polarity) {
+Finalized_Macrostate make_trivial_macrostate(Formula_Pool& pool, bool polarity) {
     Formula formula(polarity);
     auto formula_ptr = pool.store_formula(formula);
-    Conjunction_State state ({});
-    list<Conjunction_State> state_list = {state};
-    map<const Formula*, list<Conjunction_State>> contents = {{formula_ptr, state_list}};
+    Macrostate_Entry_Family entry = {
+        .formula = formula_ptr,
+        .states = {}
+    };
 
-    Structured_Macrostate macrostate = {.is_accepting = polarity, .formulae = contents};
+    Finalized_Macrostate macrostate = {
+        .entries = {entry},
+        .is_accepting = polarity,
+    };
     return macrostate;
 }
 
 
 void explore_macrostate(NFA& constructed_nfa,
-                        Structured_Macrostate& macrostate,
+                        Finalized_Macrostate& macrostate,
                         Alphabet_Iterator& alphabet_iter,
                         Lazy_Construction_State& constr_state)
 {
     alphabet_iter.reset();
 
-    PRINT_DEBUG("Exploring " << macrostate);
+    // PRINT_DEBUG("Exploring " << macrostate);
 
     while (!alphabet_iter.finished) {
-        Structured_Macrostate post;
+        Intermediate_Macrostate post;
         bool is_accepting = false;
 
         u64 transition_symbol = alphabet_iter.init_quantif();  // The quantified bits will be masked away, so it is sufficient to take the first one
@@ -1130,26 +1155,29 @@ void explore_macrostate(NFA& constructed_nfa,
 #if DEBUG_RUNTIME
             auto start = std::chrono::system_clock::now();
 #endif
-            for (auto& [formula, states]: macrostate.formulae) {
-                for (auto& state: states) {
-                    auto maybe_successor = compute_successor(formula, state, symbol);
+            for (auto& macrostate_entry: macrostate.entries) {
+                for (auto& state: macrostate_entry.states) {
+                    const Formula* formula = macrostate_entry.formula;
+                    auto maybe_successor = compute_successor(constr_state.formula_pool, formula, state, symbol);
 
                     if (!maybe_successor.has_value()) continue;
 
                     auto successor = maybe_successor.value();
 
-                    auto new_formula_state_pair = simplify_stateful_formula(formula, successor, constr_state.formula_pool);
-                    successor = new_formula_state_pair.second;
+                    // The old formula needs to be used to determine whether the post is accepting
+                    post.is_accepting |= accepts_last_symbol(formula, state, symbol);
+                    formula = successor.formula;
+
+                    auto new_formula_state_pair = simplify_stateful_formula(formula, successor.state, constr_state.formula_pool);
+                    successor.state = new_formula_state_pair.second;
                     auto simplified_formula = new_formula_state_pair.first;
 
                     if (simplified_formula->is_top()) {
                         is_post_top = true;
                         break;
                     } else if (!simplified_formula->is_bottom()) {
-                        insert_successor_into_post_if_valuable(post, simplified_formula, successor);
+                        insert_into_post_if_valuable2(post, simplified_formula, successor.state);
                     }
-
-                    post.is_accepting |= accepts_last_symbol(simplified_formula, successor, symbol);
                 }
 
                 if (is_post_top) break;
@@ -1163,8 +1191,6 @@ void explore_macrostate(NFA& constructed_nfa,
                       << "; insertion took: " << elapsed_seconds.count() << " seconds." << std::endl;
 #endif
         }
-        make_macrostate_canoical(post);
-
         if (post.formulae.empty()) {
             constr_state.is_trap_state_needed = true;
             constructed_nfa.add_transition(macrostate.handle, constr_state.trap_state_handle, transition_symbol, alphabet_iter.quantified_bits_mask);
@@ -1177,22 +1203,24 @@ void explore_macrostate(NFA& constructed_nfa,
             continue;
         }
 
+        Finalized_Macrostate finalized_post = finalize_macrostate(post);
+
         // Assign a unique integer to every state
-        post.handle = constr_state.known_macrostates.size();
-        auto [element_iter, was_inserted] = constr_state.known_macrostates.emplace(post, post.handle);
+        finalized_post.handle = constr_state.known_macrostates.size();
+        auto [element_iter, was_inserted] = constr_state.known_macrostates.emplace(finalized_post, finalized_post.handle);
         if (was_inserted) {
             // @Simplicity: Maybe the known_macrostates should be a set instead of a map since we are storing the handle
             //              inside the macrostate either way.
-            constr_state.output_queue.push_back(post);
+            constr_state.output_queue.push_back(finalized_post);
 
             if (post.is_accepting) { // Do the hash-query only if we see the macrostate for the first time
-                constr_state.accepting_macrostates.emplace(post.handle);
+                constr_state.accepting_macrostates.emplace(finalized_post.handle);
             }
         } else {
-            post.handle = element_iter->second;  // Use the already existing handle
+            finalized_post.handle = element_iter->second;  // Use the already existing handle
         }
 
-        constructed_nfa.add_transition(macrostate.handle, post.handle, transition_symbol, alphabet_iter.quantified_bits_mask);
+        constructed_nfa.add_transition(macrostate.handle, finalized_post.handle, transition_symbol, alphabet_iter.quantified_bits_mask);
     }
 }
 
@@ -1279,7 +1307,7 @@ std::string NFA::show_transitions() const {
 }
 
 NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State& init_state, sylvan::BDDSET bdd_vars, Formula_Pool& formula_pool) {
-    vector<Structured_Macrostate> work_queue;
+    vector<Finalized_Macrostate> work_queue;
     Lazy_Construction_State constr_state = {.formula_pool = formula_pool, .output_queue = work_queue};
 
     // Prepare a trapstate in case it is needed
@@ -1303,7 +1331,7 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
 
     if (formula->is_top()) {
         State init_state = 0;
-        State acc_state = 1;
+        State acc_state  = 1;
         NFA nfa(bdd_vars, formula->var_count, {init_state, acc_state}, {acc_state}, {init_state});
         nfa.add_transition(init_state, acc_state, 0u, static_cast<u64>(-1));
         nfa.add_transition(acc_state, acc_state, 0u, static_cast<u64>(-1));
@@ -1313,9 +1341,13 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
     // Populate the queue with the initial states
     const u64 init_state_handle = constr_state.known_macrostates.size();
     {
-        list<Conjunction_State> init_list = {init_state};
-        map<const Formula*, list<Conjunction_State>> init_macrostate_formulae = { {formula, init_list} };
-        Structured_Macrostate init_macrostate = { .is_accepting = false, .handle = init_state_handle, .formulae = init_macrostate_formulae};
+        vector<Conjunction_State> init_macrostate_states = {init_state};
+        Macrostate_Entry_Family init_macrostate_family = {.formula = formula, .states = init_macrostate_states};
+        Finalized_Macrostate init_macrostate = {
+            .entries = {init_macrostate_family},
+            .is_accepting = false,
+            .handle = init_state_handle,
+        };
         work_queue.push_back(init_macrostate);
 
         auto [container_pos, was_inserted] = constr_state.known_macrostates.emplace(init_macrostate, constr_state.known_macrostates.size());
@@ -1329,6 +1361,7 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
     PRINT_DEBUG("Using the following mask: " << std::bitset<8>(alphabet_iter.quantified_bits_mask));
 
     u64 processed = 0;
+    u64 processed_batch = 0;
     while (!work_queue.empty()) {
         auto macrostate = work_queue.back();
         work_queue.pop_back();
@@ -1341,6 +1374,11 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
 
         explore_macrostate(nfa, macrostate, alphabet_iter, constr_state);
         processed += 1;
+        processed_batch += 1;
+        if (processed_batch >= 2000) {
+            PRINTF_DEBUG("Processed %lu states\n", processed);
+            processed_batch = 0;
+        }
     }
 
     const u64 all_bits_dont_care_mask = static_cast<u64>(-1);
@@ -1354,13 +1392,17 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
         nfa.add_transition(constr_state.topstate_handle, constr_state.topstate_handle, 0u, all_bits_dont_care_mask);
     }
 
-    PRINTF_DEBUG("The constructed NFA has %lu states", nfa.states.size());
+    PRINTF_DEBUG("The constructed NFA has %lu states\n", nfa.states.size());
+    PRINT_DEBUG(nfa.states);
     for (auto& [macrostate, handle]: constr_state.known_macrostates) {
         PRINT_DEBUG(handle << " :: " << macrostate);
     }
 
-    nfa.perform_pad_closure();
-    return determinize_nfa(nfa);
+    if (!formula->bound_vars.empty()) {
+        nfa.perform_pad_closure();
+        return determinize_nfa(nfa);
+    }
+    return nfa;
 }
 
 
@@ -1370,10 +1412,97 @@ const Quantified_Atom_Conjunction* Formula_Pool::store_formula(Quantified_Atom_C
     return &(*it);
 }
 
-Quantified_Atom_Conjunction::Quantified_Atom_Conjunction(const vector<Presburger_Atom>& atoms, const vector<u64>& bound_vars, u64 var_count) {
-    this->atoms = atoms;
-    this->bound_vars = bound_vars;
-    this->var_count = var_count;
-    this->dep_graph = build_dep_graph(*this);
-    identify_potential_variables(this->dep_graph);
+pair<const Formula*, bool> Formula_Pool::store_formula_with_info(Quantified_Atom_Conjunction& formula) {
+    auto [it, did_insertion_happen] = formulae.emplace(formula);
+    const Quantified_Atom_Conjunction* stored_formula_ptr = &(*it);
+    return {&(*it), did_insertion_happen};
 }
+
+template<typename InputIt>
+std::string fmt_coef_var_sum(InputIt coef_first, InputIt coef_end) {
+    std::stringstream builder;
+
+    u64 i = 0;
+    for (; coef_first != coef_end; ++coef_first) {
+        s64 coef  = *coef_first;
+        char sign = coef >= 0 ? '+' : '-';
+        if (i > 0) {
+            builder << ' ' << sign << ' ';
+            coef = abs(coef);
+        }
+        builder << coef << "*x" << i;
+        i += 1;
+    }
+
+    return builder.str();
+}
+
+std::ostream& operator<<(std::ostream& output, const Linear_Node& lin_node) {
+    output << fmt_coef_var_sum(lin_node.coefs.begin(), lin_node.coefs.end());
+    const char* log_symbol = lin_node.type == Linear_Node_Type::EQ ? " = ?" : " <= ?";
+    output << log_symbol;
+    return output;
+}
+
+std::ostream& operator<<(std::ostream& output, const Congruence_Node& congruence_node) {
+    s64 modulus = combine_moduli(congruence_node.modulus_2pow, congruence_node.modulus_odd);
+    output << fmt_coef_var_sum(congruence_node.coefs.begin(), congruence_node.coefs.end());
+    output << " ~ ? (mod " << modulus << ")";
+    return output;
+}
+
+std::ostream& operator<<(std::ostream& output, const map<const Quantified_Atom_Conjunction*, Prefix_Table>& macrostate) {
+    if (macrostate.empty()) {
+        output << "{}";
+        return output;
+    }
+
+    u64 row_cnt = 0;
+    output << "{\n";
+    for (auto& [formula_ptr, prefix_table]: macrostate) {
+        output << "  " << formula_ptr << " :: ";
+
+        for (auto& [prefix, states]: prefix_table) {
+            for (auto& state: states) output << state << ", ";
+        }
+
+        if (row_cnt < macrostate.size()) output << "\n";
+        row_cnt += 1;
+    }
+    std::cout << "}";
+    return output;
+
+}
+std::ostream& operator<<(std::ostream& output, const Congruence& congruence) {
+    output << fmt_coef_var_sum(congruence.coefs.begin(), congruence.coefs.end())
+           << " ~= (mod "
+           << combine_moduli(congruence.modulus_2pow, congruence.modulus_odd) << ")";
+    return output;
+}
+
+std::ostream& operator<<(std::ostream& output, const Quantified_Atom_Conjunction& formula) {
+    if (!formula.has_atoms()) {
+        const char* formula_str = formula.is_top() ? "(TRUE)" : "(FALSE)";
+        output << formula_str;
+        return output;
+    }
+
+    output << "(";
+    if (!formula.bound_vars.empty()) {
+        output << "exists (";
+        auto quantified_vars_iter = formula.bound_vars.begin();
+        output << "x" << *quantified_vars_iter;
+        ++quantified_vars_iter;
+        for (; quantified_vars_iter != formula.bound_vars.end(); ++quantified_vars_iter)
+            output << ", " << "x" << *quantified_vars_iter;
+        output << ")";
+    }
+
+    for (auto& atom: formula.congruences) {
+        output << "(" << atom << ") ";
+    }
+
+    output << ")";
+    return output;
+}
+

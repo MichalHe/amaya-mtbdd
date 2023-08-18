@@ -9,8 +9,151 @@
 
 typedef Quantified_Atom_Conjunction Formula;
 
+using std::pair;
 using std::vector;
 using std::unordered_map;
+
+
+#define DEBUG_TESTS 0
+#if DEBUG_TESTS
+#define TEST_PRINT_DEBUG(it) do { std::cerr << it << std::endl; } while (0)
+#define TEST_PRINTF_DEBUG(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
+#else
+#define TEST_PRINT_DEBUG(it)
+#define TEST_PRINTF_DEBUG(...)
+#endif
+
+
+struct Atom_Allocator {
+    vector<s64*> coef_blocks;
+    vector<Congruence*> congruence_blocks;
+    vector<Equation*>   equation_blocks;
+    vector<Inequation*> inequation_blocks;
+
+    ~Atom_Allocator() {
+        for (s64* coef_block: coef_blocks) delete[] coef_block;
+        for (Congruence* congruence_block: congruence_blocks) delete[] congruence_block;
+        for (Equation* equation_block: equation_blocks) delete[] equation_block;
+        for (Inequation* inequation_block: inequation_blocks) delete[] inequation_block;
+    }
+};
+
+std::pair<s64, s64> decompose_modulus(s64 modulus) {
+    s64 modulus_pow2 = 0;
+    while (modulus % 2 == 0) {
+        modulus_pow2 += 1;
+        modulus      /= 2;
+    }
+    return {modulus, modulus_pow2};
+}
+
+Sized_Array<Congruence> alloc_congruences(Atom_Allocator& alloc, const vector<pair<vector<s64>, s64>>& congruence_coefs) {
+    if (congruence_coefs.empty()) return {.items = nullptr, .size = 0};
+    u64 var_count = congruence_coefs[0].first.size();
+
+    s64* coef_block = new s64[var_count * congruence_coefs.size()];
+    alloc.coef_blocks.push_back(coef_block);
+    u64 next_free_coef_slot = 0;
+
+    Congruence* congruence_block = new Congruence[congruence_coefs.size()];
+    alloc.congruence_blocks.push_back(congruence_block);
+    u64 next_free_congruence_slot = 0;
+
+    for (auto& [coefs, modulus]: congruence_coefs) {
+        // Make a sized array out of coefficients
+        s64* congruence_coef_block = coef_block + next_free_coef_slot * var_count;
+
+        for (auto coef: coefs) {
+            coef_block[next_free_coef_slot] = coef;
+            next_free_coef_slot += 1;
+        }
+
+        Sized_Array<s64> coefs_block = {.items = congruence_coef_block, .size=var_count};
+
+        // Make a congruence and push it back
+        auto [modulus_odd, modulus_pow2] = decompose_modulus(modulus);
+        Congruence congruence = {.coefs = coefs_block, .modulus_odd = modulus_odd, .modulus_2pow = modulus_pow2};
+        congruence_block[next_free_congruence_slot] = congruence;
+        next_free_congruence_slot += 1;
+    }
+
+    return {.items = congruence_block, .size = congruence_coefs.size()};
+};
+
+Sized_Array<Equation> alloc_equations(Atom_Allocator& alloc, const vector<vector<s64>>& equation_coefs) {
+    if (equation_coefs.empty()) return {.items = nullptr, .size = 0};
+
+    u64 var_count = equation_coefs[0].size();
+
+    s64* coef_block = new s64[var_count * equation_coefs.size()];
+    alloc.coef_blocks.push_back(coef_block);
+    u64 next_free_coef_slot = 0;
+
+    Equation* equation_block = new Equation[equation_coefs.size()];
+    alloc.equation_blocks.push_back(equation_block);
+    u64 next_free_equation_slot = 0;
+
+    for (auto& coefs: equation_coefs) {
+        s64* eq_coef_block = coef_block + next_free_equation_slot * var_count;
+        for (auto coef: coefs) {
+            coef_block[next_free_coef_slot] = coef;
+            next_free_coef_slot += 1;
+        }
+        Sized_Array<s64> coefs_block = {.items = eq_coef_block, .size=var_count};
+
+        Equation equation = {.coefs = coefs_block};
+        equation_block[next_free_equation_slot] = equation;
+        next_free_equation_slot += 1;
+    }
+
+    return {.items = equation_block, .size = equation_coefs.size()};
+};
+
+Sized_Array<Inequation> alloc_inequations(Atom_Allocator& alloc, const vector<vector<s64>>& ineq_coefs) {
+    if (ineq_coefs.empty()) return {.items = nullptr, .size = 0};
+
+    u64 var_count = ineq_coefs[0].size();
+
+    s64* coef_block = new s64[var_count * ineq_coefs.size()];
+    alloc.coef_blocks.push_back(coef_block);
+    u64 next_free_coef_slot = 0;
+
+    Inequation* inequation_block = new Inequation[ineq_coefs.size()];
+    alloc.inequation_blocks.push_back(inequation_block);
+    u64 next_free_inequation_slot = 0;
+
+    for (auto& coefs: ineq_coefs) {
+        s64* eq_coef_block = coef_block + var_count * next_free_inequation_slot;
+        for (auto coef: coefs) {
+            coef_block[next_free_coef_slot] = coef;
+            next_free_coef_slot += 1;
+        }
+        Sized_Array<s64> coefs_block = {.items = eq_coef_block, .size=var_count};
+
+        Inequation ineq = {.coefs = coefs_block};
+        inequation_block[next_free_inequation_slot] = ineq;
+        next_free_inequation_slot += 1;
+    }
+
+    return {.items = inequation_block, .size = ineq_coefs.size()};
+};
+
+Formula make_formula(Atom_Allocator& allocator,
+                     const vector<pair<vector<s64>, s64>>& congruences_coefs,
+                     const vector<vector<s64>>& eqs,
+                     const vector<vector<s64>>& ineqs,
+                     const vector<u64> bound_vars) {
+    Sized_Array<Congruence> congruences = alloc_congruences(allocator, congruences_coefs);
+    Sized_Array<Equation> equations     = alloc_equations(allocator, eqs);
+    Sized_Array<Inequation> inequations = alloc_inequations(allocator, ineqs);
+
+    u64 var_count = 0;
+    if (!congruences_coefs.empty()) var_count = congruences_coefs[0].first.size();
+    else if (!ineqs.empty())        var_count = ineqs[0].size();
+    else if (!eqs.empty())          var_count = eqs[0].size();
+
+    return Formula(congruences, equations, inequations, bound_vars, var_count);
+}
 
 void assert_dfas_are_isomorphic(const NFA& expected, const NFA& actual) {
     CHECK(expected.initial_states.size() == 1);
@@ -31,11 +174,20 @@ void assert_dfas_are_isomorphic(const NFA& expected, const NFA& actual) {
         // Make sure that the (expected, actual) mapping has been inserted when the expected state has been discovered
         CHECK(actual_state_it != isomorphism.end());
         auto actual_state = actual_state_it->second;
+        TEST_PRINTF_DEBUG("Checking transitions between states: %lu (expected) <> %lu (actual)\n", expected_state, actual_state);
 
         auto expected_transitions = expected.get_symbolic_transitions_for_state(expected_state);
         auto actual_transitions   = actual.get_symbolic_transitions_for_state(actual_state);
-
-        CHECK(expected_transitions.size() == actual_transitions.size());
+        if (expected_transitions.size() != actual_transitions.size()) {
+            TEST_PRINT_DEBUG("Found mismatch between symbolic transition sizes.\n");
+            TEST_PRINT_DEBUG("  (expected): ");
+            for (Transition& et: expected_transitions) TEST_PRINT_DEBUG(et << ", ");
+            TEST_PRINT_DEBUG("\n");
+            TEST_PRINT_DEBUG("  (actual): ");
+            for (Transition& at: actual_transitions) TEST_PRINT_DEBUG(at << ", ");
+            TEST_PRINT_DEBUG("\n");
+            CHECK(expected_transitions.size() == actual_transitions.size());
+        }
 
         for (auto& expected_transition: expected_transitions) {
             // Find a transition matching origin and the transition symbol; make sure that there is exactly 1 as the automaton is a DFA
@@ -65,30 +217,28 @@ void assert_dfas_are_isomorphic(const NFA& expected, const NFA& actual) {
         auto mapping_it = isomorphism.find(expected_final_state);
         CHECK(mapping_it != isomorphism.end());
 
-        /*
-        if (mapping_it == isomorphism.end()) {
-            std::cout << "Cloud not map expected final state " << expected_final_state << " to an actual one!" << std::endl;
-            std::cout << "Mappings: " << std::endl;
-            for (auto [key, value]: isomorphism) {
-                std::cout << key << " -> " << value << std::endl;
-            }
+        // if (mapping_it == isomorphism.end()) {
+        //     std::cout << "Cloud not map expected final state " << expected_final_state << " to an actual one!" << std::endl;
+        //     std::cout << "Mappings: " << std::endl;
+        //     for (auto [key, value]: isomorphism) {
+        //         std::cout << key << " -> " << value << std::endl;
+        //     }
 
-            std::cout << "Actual final states: " << std::endl;
-            for (auto actual: actual.final_states) {
-                std::cout << actual << std::endl;
-            }
-        }
-        */
+        //     std::cout << "Actual final states: " << std::endl;
+        //     for (auto actual: actual.final_states) {
+        //         std::cout << actual << std::endl;
+        //     }
+        // }
 
         CHECK(actual.final_states.find(mapping_it->second) != actual.final_states.end());
     }
 }
 
-
 TEST_CASE("lazy_construct `\\exists x (x + y <= 0)`")
 {
-    Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 1})}, .bound_vars = {0}, .var_count = 2};
-    Formula_Pool pool = Formula_Pool();
+    Atom_Allocator allocator;
+    Formula formula = make_formula(allocator, {}, {}, {{1, 1}}, {0});;
+    Formula_Pool pool = Formula_Pool(&formula);
     auto formula_id = pool.store_formula(formula);
     Conjunction_State init_state({0});
 
@@ -98,10 +248,11 @@ TEST_CASE("lazy_construct `\\exists x (x + y <= 0)`")
 
     auto actual_nfa = build_nfa_with_formula_entailement(formula_id, init_state, vars, pool);
 
-    NFA expected_nfa(vars, 2, {0}, {0}, {0});
+    NFA expected_nfa(vars, 2, {0, 1}, {1}, {0});
 
     vector<Transition> symbolic_transitions {
-        {.from = 0, .to = 0, .symbol = {2, 2}},
+        {.from = 0, .to = 1, .symbol = {2, 2}},
+        {.from = 1, .to = 1, .symbol = {2, 2}},
     };
 
     for (auto it: symbolic_transitions) expected_nfa.add_transition(it.from, it.to, it.symbol.data());
@@ -112,8 +263,9 @@ TEST_CASE("lazy_construct `\\exists x (x + y <= 0)`")
 TEST_CASE("lazy_construct simple atoms")
 {
     SUBCASE("atom `x - y <= 2`") {
-        Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 1})}, .bound_vars = {}, .var_count = 2};
-        Formula_Pool pool = Formula_Pool();
+        Atom_Allocator alloc;
+        Formula formula = make_formula(alloc, {}, {}, {{1, 1}}, {});
+        Formula_Pool pool = Formula_Pool(&formula);
         auto formula_id = pool.store_formula(formula);
         Conjunction_State init_state({2});
 
@@ -139,34 +291,34 @@ TEST_CASE("lazy_construct simple atoms")
         );
 
         vector<Transition> symbolic_transitions {
-            /* {2} */
+            // {2}
             {.from = 0, .to = 1, .symbol = {0, 0}},
             {.from = 0, .to = 2, .symbol = {0, 1}},
             {.from = 0, .to = 2, .symbol = {1, 2}},
-            /* {1, F} */
+            // {1, F}
             {.from = 1, .to = 2, .symbol = {0, 2}},
             {.from = 1, .to = 2, .symbol = {1, 0}},
             {.from = 1, .to = 3, .symbol = {1, 1}},
-            /* {0, F} */
+            // {0, F}
             {.from = 2, .to = 2, .symbol = {0, 0}},
             {.from = 2, .to = 3, .symbol = {0, 1}},
             {.from = 2, .to = 3, .symbol = {1, 2}},
-            /* {-1, F} */
+            // {-1, F}
             {.from = 3, .to = 4, .symbol = {0, 0}},
             {.from = 3, .to = 3, .symbol = {0, 1}},
             {.from = 3, .to = 3, .symbol = {1, 0}},
             {.from = 3, .to = 5, .symbol = {1, 1}},
-            /* {-1} */
+            // {-1}
             {.from = 4, .to = 4, .symbol = {0, 0}},
             {.from = 4, .to = 3, .symbol = {0, 1}},
             {.from = 4, .to = 3, .symbol = {1, 0}},
             {.from = 4, .to = 5, .symbol = {1, 1}},
-            /* {-2, F} */
+            // {-2, F}
             {.from = 5, .to = 4, .symbol = {0, 0}},
             {.from = 5, .to = 6, .symbol = {0, 1}},
             {.from = 5, .to = 6, .symbol = {1, 0}},
             {.from = 5, .to = 5, .symbol = {1, 1}},
-            /* {-2} */
+            // {-2}
             {.from = 6, .to = 4, .symbol = {0, 0}},
             {.from = 6, .to = 6, .symbol = {0, 1}},
             {.from = 6, .to = 6, .symbol = {1, 0}},
@@ -179,8 +331,9 @@ TEST_CASE("lazy_construct simple atoms")
     }
 
     SUBCASE("atom `2x - y = 0`") {
-        Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_EQ, {2, -1})}, .bound_vars = {}, .var_count = 2};
-        Formula_Pool pool = Formula_Pool();
+        Atom_Allocator alloc;
+        Formula formula = make_formula(alloc, {}, {{2, -1}}, {}, {});
+        Formula_Pool pool = Formula_Pool(&formula);
         auto formula_id = pool.store_formula(formula);
         Conjunction_State init_state({0});
 
@@ -204,27 +357,27 @@ TEST_CASE("lazy_construct simple atoms")
         );
 
         vector<Transition> symbolic_transitions {
-            /* {0} */
+            // {0}
             {.from = 0, .to = 1, .symbol = {0, 0}},
             {.from = 0, .to = 4, .symbol = {0, 1}},
             {.from = 0, .to = 2, .symbol = {1, 0}},
             {.from = 0, .to = 4, .symbol = {1, 1}},
-            /* {0, F} */
+            // {0, F}
             {.from = 1, .to = 1, .symbol = {0, 0}},
             {.from = 1, .to = 4, .symbol = {0, 1}},
             {.from = 1, .to = 2, .symbol = {1, 0}},
             {.from = 1, .to = 4, .symbol = {1, 1}},
-            /* {-1} */
+            // {-1}
             {.from = 2, .to = 4, .symbol = {0, 0}},
             {.from = 2, .to = 0, .symbol = {0, 1}},
             {.from = 2, .to = 4, .symbol = {1, 0}},
             {.from = 2, .to = 3, .symbol = {1, 1}},
-            /* {-1, F} */
+            // {-1, F}
             {.from = 3, .to = 4, .symbol = {0, 0}},
             {.from = 3, .to = 0, .symbol = {0, 1}},
             {.from = 3, .to = 4, .symbol = {1, 0}},
             {.from = 3, .to = 3, .symbol = {1, 1}},
-            /* Trap */
+            // Trap
             {.from = 4, .to = 4, .symbol = {2, 2}},
         };
 
@@ -234,8 +387,9 @@ TEST_CASE("lazy_construct simple atoms")
     }
 
     SUBCASE("atom `x + 3y = 1 (mod 3)`") {
-        Formula formula = { .atoms = { Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 3}, 3)}, .bound_vars = {}, .var_count = 2};
-        Formula_Pool pool = Formula_Pool();
+        Atom_Allocator alloc;
+        Formula formula = make_formula(alloc, {{{1, 3}, 3}}, {}, {}, {});
+        Formula_Pool pool = Formula_Pool(&formula);
         auto formula_id = pool.store_formula(formula);
         Conjunction_State init_state({1});
 
@@ -259,19 +413,19 @@ TEST_CASE("lazy_construct simple atoms")
         );
 
         vector<Transition> symbolic_transitions {
-            /* {1} */
+            // {1}
             {.from = 0, .to = 1, .symbol = {0, 2}},
             {.from = 0, .to = 3, .symbol = {1, 2}},
-            /* {2} */
+            // {2}
             {.from = 1, .to = 0, .symbol = {0, 2}},
             {.from = 1, .to = 2, .symbol = {1, 2}},
-            /* {2, F} */
+            // {2, F}
             {.from = 2, .to = 0, .symbol = {0, 2}},
             {.from = 2, .to = 2, .symbol = {1, 2}},
-            /* {0} */
+            // {0}
             {.from = 3, .to = 4, .symbol = {0, 2}},
             {.from = 3, .to = 0, .symbol = {1, 2}},
-            /* {0, F} */
+            // {0, F}
             {.from = 4, .to = 4, .symbol = {0, 2}},
             {.from = 4, .to = 0, .symbol = {1, 2}},
         };
@@ -280,8 +434,61 @@ TEST_CASE("lazy_construct simple atoms")
 
         assert_dfas_are_isomorphic(expected_nfa, actual_nfa);
     }
+    SUBCASE("atom `x + y = 0 (mod 4)`") {
+        Atom_Allocator alloc;
+        Formula formula = make_formula(alloc, {{{1, 1}, 4}}, {}, {}, {});
+        Formula_Pool pool = Formula_Pool(&formula);
+        auto formula_id = pool.store_formula(formula);
+        Conjunction_State init_state({0});
+
+        sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
+        vars = sylvan::mtbdd_set_add(vars, 1);
+        vars = sylvan::mtbdd_set_add(vars, 2);
+
+        auto actual_nfa = build_nfa_with_formula_entailement(formula_id, init_state, vars, pool);
+
+        NFA expected_nfa(
+            vars, 2,
+            {
+                0,  // {0 (mod 4)}
+                1,  // {0 (mod 2), TOP}
+                2,  // {1 (mod 2)}
+                3,  // {0 (mod 1), TOP}
+                4,  // {BOTTOM}
+            },
+            {1, 3},
+            {0}
+        );
+
+        vector<Transition> symbolic_transitions {
+            // {0 (mod 4)}
+            {.from = 0, .to = 1, .symbol = {0, 0}},
+            {.from = 0, .to = 4, .symbol = {0, 1}},
+            {.from = 0, .to = 4, .symbol = {1, 0}},
+            {.from = 0, .to = 2, .symbol = {1, 1}},
+            // {0 (mod 2), TOP}
+            {.from = 1, .to = 3, .symbol = {0, 0}},
+            {.from = 1, .to = 4, .symbol = {0, 1}},
+            {.from = 1, .to = 4, .symbol = {1, 0}},
+            {.from = 1, .to = 3, .symbol = {1, 1}},
+            // {1 (mod 2), TOP}
+            {.from = 2, .to = 4, .symbol = {0, 0}},
+            {.from = 2, .to = 3, .symbol = {0, 1}},
+            {.from = 2, .to = 3, .symbol = {1, 0}},
+            {.from = 2, .to = 4, .symbol = {1, 1}},
+            // {0 (mod 1), TOP}
+            {.from = 3, .to = 3, .symbol = {2, 2}},
+            // {BOTTOM}
+            {.from = 4, .to = 4, .symbol = {2, 2}},
+        };
+
+        for (auto it: symbolic_transitions) expected_nfa.add_transition(it.from, it.to, it.symbol.data());
+
+        assert_dfas_are_isomorphic(expected_nfa, actual_nfa);
+    }
 }
 
+/*
 TEST_CASE("lazy_construct(1) `\\exists y,m (x - y <= -1 && y <= -1 && -m <= 0 && m <= 1 && m - y ~ 0 (mod 3))`")
 {
     Formula formula = {
@@ -334,45 +541,97 @@ TEST_CASE("lazy_construct(1) `\\exists y,m (x - y <= -1 && y <= -1 && -m <= 0 &&
 
     assert_dfas_are_isomorphic(expected_nfa, actual_nfa);
 }
+*/
 
-TEST_CASE("lazy_construct `\\exists y,m (x - y <= -1 && && m - z <= -1 && y <= -1 && -m <= 0 && m <= 1 && m - y ~ 0 (mod 299993))`")
+TEST_CASE("complex formula :: lazy_construct `\\exists y,m (x - y <= 5 && z - m <= -1 && y <= -1 && -m <= 0 && m <= 1 && m - y ~ 0 (mod 3))`")
 {
-    /* (exists ((y Int), (m Int))
-     *   (land
-     *     (<= (+ x (- y))  -1)
-     *     (<= (+ m (- z))  -1)
-     *     (<= y -1)
-     *     (<= (- m) 0)
-     *     (<= m 0)
-     *     (= (mod (+ m (- y)) 299_993) 303)
-     *   )
-     * )
-     *
-     * Variables are renamed as: m -> x0, x -> x1, y -> x2, z -> x3
-     */
-    Quantified_Atom_Conjunction real_formula(
-        {
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 0, 0, 0}),                // (<= (- m) 0)
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, 0}),                 // (<= m 299_992)
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 0, -1, 0}, 299993),  // (= (mod (+ m (- y)) 299_993) 303)
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, -1, 0, 0}),                // (<= (- x) 23)
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 0, -1, 0}),                // (<= (- y) 0)
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 5, -1, 0}),                // (<= (+ (- y) (* 5 x) 10)
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, -1}),                // (<= (+ m (- z))  7)
-        },
-        {0, 2},
-        4
-    );
+    // (exists ((y Int), (m Int))
+    //   (land
+    //     (<= (+ x (- y)) -1)
+    //     (<= (- z m) -1)
+    //     (<= y -1)
+    //     (<= (- m) 0)
+    //     (<= m 0)
+    //     (= (mod (+ m (- y)) 299_993) 303)
+    //   )
+    // )
+    //
+    // Variables are renamed as: m -> x0, x -> x1, y -> x2, z -> x3
+    //
+    Atom_Allocator allocator;
+    Formula formula = make_formula(allocator,
+                                   {{{1, 0, -1, 0}, 3}},
+                                   {},
+                                   {
+                                       {0, 1, -1, 0},   // (<= (- x y) 5)
+                                       {-1, 0, 0, 1},   // (<= (- z m) -1)
+                                       {0, 0, 1, 0},    // (<= y -1)
+                                       {-1, 0, 0, 0},   // (<= (- m) 0)
+                                       {1, 0, 0, 0},    // (<= m 0)
+                                   },
+                                   {0, 2});
 
-    Conjunction_State real_state({-1, -1, -1, 0, 0, 303});
+    Conjunction_State init_state({0 /*congruence*/, 5, -1, -1, 0, 0});
 
-    Formula_Pool pool = Formula_Pool();
-    pool.store_formula(real_formula);
+    Formula_Pool pool = Formula_Pool(&formula);
+    const Formula* canon_formula_ptr = pool.store_formula(formula);
 
-    // auto entailment_status = simplify_stateful_formula(&real_formula, real_state, pool);
-    //build_nfa_with_formula_entailement(pool, real_state);
+    u32 var_ids[] = {1, 2, 3, 4};
+    sylvan::BDDSET vars = sylvan::mtbdd_set_from_array(var_ids, 4);
+
+    NFA actual_dfa = build_nfa_with_formula_entailement(canon_formula_ptr, init_state, vars, pool);
+
+    // The formula should be simplified into: x <= 2 && z <= -1
+    NFA expected_dfa(vars,
+                     4,
+                     {
+                        0,  // (2, -1)
+                        1,  // (1, -1) + ACC
+                        2,  // (1, -1)
+                        3,  // (0, -1)
+                        4,  // (0, -1) + ACC
+                        5,  // (-1, -1)
+                        6   // (-1, -1) + ACC
+                     },
+                     {1, 4, 6}, {0});
+
+    vector<Transition> expected_transitions {
+        // (2, -1)
+        {.from = 0, .to = 2, .symbol = {2, 0, 2, 0}},
+        {.from = 0, .to = 1, .symbol = {2, 0, 2, 1}},
+        {.from = 0, .to = 3, .symbol = {2, 1, 2, 0}},
+        {.from = 0, .to = 4, .symbol = {2, 1, 2, 1}},
+        // (1, -1) + ACC
+        {.from = 1, .to = 3, .symbol = {2, 2, 2, 0}},
+        {.from = 1, .to = 4, .symbol = {2, 2, 2, 1}},
+        // (1, -1)
+        {.from = 2, .to = 3, .symbol = {2, 2, 2, 0}},
+        {.from = 2, .to = 4, .symbol = {2, 2, 2, 1}},
+        // (0, -1)
+        {.from = 3, .to = 3, .symbol = {2, 0, 2, 0}},
+        {.from = 3, .to = 4, .symbol = {2, 0, 2, 1}},
+        {.from = 3, .to = 5, .symbol = {2, 1, 2, 0}},
+        {.from = 3, .to = 6, .symbol = {2, 1, 2, 1}},
+        // (0, -1) + ACC
+        {.from = 4, .to = 3, .symbol = {2, 0, 2, 0}},
+        {.from = 4, .to = 4, .symbol = {2, 0, 2, 1}},
+        {.from = 4, .to = 5, .symbol = {2, 1, 2, 0}},
+        {.from = 4, .to = 6, .symbol = {2, 1, 2, 1}},
+        // (-1, -1)
+        {.from = 5, .to = 5, .symbol = {2, 0, 2, 2}},
+        {.from = 5, .to = 5, .symbol = {2, 1, 2, 0}},
+        {.from = 5, .to = 6, .symbol = {2, 1, 2, 1}},
+        // (-1, -1) + ACC
+        {.from = 6, .to = 5, .symbol = {2, 0, 2, 2}},
+        {.from = 6, .to = 5, .symbol = {2, 1, 2, 0}},
+        {.from = 6, .to = 6, .symbol = {2, 1, 2, 1}},
+    };
+
+    for (Transition& transition: expected_transitions)
+        expected_dfa.add_transition(transition.from, transition.to, transition.symbol.data());
+
+    assert_dfas_are_isomorphic(expected_dfa, actual_dfa);
 }
-
 
 TEST_CASE("NFA::pad_closure (simple)") {
     sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
@@ -394,7 +653,6 @@ TEST_CASE("NFA::pad_closure (simple)") {
         CHECK(std::find(transitions.begin(), transitions.end(), expected_transition) != transitions.end());
     }
 }
-
 
 TEST_CASE("NFA::determinize (simple)") {
     sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
@@ -559,19 +817,22 @@ TEST_CASE("Minimization - Wiki automaton") {
 }
 
 TEST_CASE("Dep. analysis :: potential var identifiction") {
-    // m(3) > x(2) > y(1) > z(0)
-    Quantified_Atom_Conjunction real_formula(
+    // m = vars[0] > x(1) > y(2) > z(3)
+    Atom_Allocator allocator;
+    Formula formula = make_formula(
+        allocator,
+        {{{1, 0, -1, 0}, 10}}, // m - y ~ 0
+        {},
         {
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 1, -1, 0}),             // x <= y
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 0, -1, 0}, 10),   // m - y ~ 0
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, -1}),             // m <= y
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 0, 0, 0}),             // m >= 0
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, 0}),              // m >=1 0
+            {0, 1, -1, 0},  // x <= y
+            {1, 0, 0, -1},  // m <= z
+            {-1, 0, 0, 0},  // m >= 0
+            {1, 0, 0, 0}    // m <= 0
         },
-        {0, 2},
-        4
+        {0, 2}
     );
-    auto graph = build_dep_graph(real_formula);
+
+    auto graph = build_dep_graph(formula);
     identify_potential_variables(graph);
 
     vector<u64> expected_potent_vars = {0};
@@ -580,57 +841,64 @@ TEST_CASE("Dep. analysis :: potential var identifiction") {
 
 TEST_CASE("Dep. analysis :: simplify (const var)") {
     // m(0) > x(1) > y(2) > z(3)
-    Quantified_Atom_Conjunction real_formula(
+    Atom_Allocator alloc;
+    Formula formula = make_formula(
+        alloc,
+        {{{1, 0, -1, 0}, 10}},  // m - y ~ 0
+        {},
         {
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 1, -1, 0}),             // x <= y
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 0, -1, 0}, 10),   // m - y ~ 0
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, -1}),             // m <= y
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 0, 0, 0}),             // m >= 0
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, 0}),              // m >= 0
+            {0, 1, -1, 0},  // x <= y
+            {1, 0, 0, -1},  // m <= z
+            {-1, 0, 0, 0},  // m >= 0
+            {1, 0, 0,  0},  // m >= 0
         },
-        {0, 2},
-        4
+        {0, 2}
     );
-    auto graph = build_dep_graph(real_formula);
+
+    auto graph = build_dep_graph(formula);
     identify_potential_variables(graph);
 
     Conjunction_State state({0, 0, 0, 1, 1});
-    auto was_simplfied = simplify_graph(graph, state);
+    bool was_simplified = simplify_graph(graph, state);
 
-    CHECK(was_simplfied);
+    CHECK(was_simplified);
 
     // The graph should be simplified to
     // 0. x <= y, m ~ y, m <= z, m >= 1, m <= 1
     // 1. x <= y, 1 ~ y, 1 <= z
     // 2. 1 <= z
-    CHECK(graph.atom_nodes[0].is_satisfied);
-    CHECK(graph.atom_nodes[1].is_satisfied);
-    CHECK(!graph.atom_nodes[2].is_satisfied);
-    CHECK(graph.atom_nodes[3].is_satisfied);
-    CHECK(graph.atom_nodes[4].is_satisfied);
+    CHECK( graph.linear_nodes[0].is_satisfied);
+    CHECK(!graph.linear_nodes[1].is_satisfied);
+    CHECK( graph.linear_nodes[2].is_satisfied);
+    CHECK( graph.linear_nodes[3].is_satisfied);
+    CHECK( graph.congruence_nodes[0].is_satisfied);
 
-    auto& actual_atom = graph.atom_nodes[2].atom;
+    auto& actual_atom = graph.linear_nodes[1];
     Presburger_Atom expected_atom(PR_ATOM_INEQ, {0, 0, 0, -1}); // 0 <= z
-    CHECK(actual_atom == expected_atom);
+    vector<s64> expected_coefs = {0, 0, 0, -1};
+    CHECK(actual_atom.coefs == expected_coefs);
     CHECK(state.constants[2] == -1);
 }
 
 TEST_CASE("Dep. analysis :: simplify (unbound vars)") {
-    // x1(0) < x2 < x3 < x4
-    Quantified_Atom_Conjunction conj(
+    // vars = {[0]=x1, x2 < x3 < x4}
+    Atom_Allocator alloc;
+    Formula formula = make_formula(
+        alloc,
+        {{{1, 0, 0, -1}, 13}},
+        {},
         {
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 0, 0, 0}),   // 0  <= x1
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, -1, 0, 0}),   // 23 <= x2
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 5, 0, 0}),   // 5*x2 - x1 <= 0
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 0, -1, 1}),   // x4 <= x3
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 0, 0, -1}),   // x4 >= 0
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 0, 0,  1}),   // x4 <= 12
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 0, 0, -1}, 13),   // x1 ~ x4
+            {-1, 0, 0, 0},  // 0  <= x1
+            {0, -1, 0, 0},  // 23 <= x2
+            {-1, 5, 0, 0},  // 5*x2 - x1 <= 0
+            {0, 0, -1, 1},  // x4 <= x3
+            {0, 0, 0, -1},  // x4 >= 0
+            {0, 0, 0,  1}   // x4 <= 12
         },
-        {0, 1, 3},
-        4
+        {0, 1, 3}// x1 ~ x4
     );
-    auto graph = build_dep_graph(conj);
+
+    auto graph = build_dep_graph(formula);
     identify_potential_variables(graph);
 
     Conjunction_State state({0, -23, 0, 0, 0, 12, 0});
@@ -642,68 +910,117 @@ TEST_CASE("Dep. analysis :: simplify (unbound vars)") {
     // 1)  23 <= x2, x4 <= x3, x4 >= 0, x4 <= 12
     // 2)  x4 <= x3, x4 >= 0, x4 <= 12
     // 3)  0 <= x3
-    CHECK(graph.atom_nodes[0].is_satisfied);
-    CHECK(graph.atom_nodes[1].is_satisfied);
-    CHECK(graph.atom_nodes[2].is_satisfied);
-    CHECK(!graph.atom_nodes[3].is_satisfied);
-    CHECK(graph.atom_nodes[4].is_satisfied);
-    CHECK(graph.atom_nodes[5].is_satisfied);
-    CHECK(graph.atom_nodes[6].is_satisfied);
+    CHECK( graph.linear_nodes[0].is_satisfied);
+    CHECK( graph.linear_nodes[1].is_satisfied);
+    CHECK( graph.linear_nodes[2].is_satisfied);
+    CHECK(!graph.linear_nodes[3].is_satisfied);
+    CHECK( graph.linear_nodes[4].is_satisfied);
+    CHECK( graph.linear_nodes[5].is_satisfied);
+    CHECK(graph.congruence_nodes[0].is_satisfied);
 
     CHECK(state.constants[3] == 0);
 }
 
 TEST_CASE("Dep. analysis :: simplify (presentation formula)") {
+    Atom_Allocator allocator;
     // m(0) < x < y < z
     const u64 modulus = 299993;
-    Quantified_Atom_Conjunction conj(
+    Formula formula = make_formula(
+        allocator,
+        {{{1, 0, -1, 0}, modulus}},// m - y ~ 303
+        {},
         {
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 1, -1, 0}),   // x - y <= -1
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, -1}),   // m - z <= -1
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 0, 1, 0}),    // y <= -1
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {-1, 0, 0, 0}),   // -m <= 0
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_INEQ, {1, 0, 0, 0}),   // m <= 12
-            Presburger_Atom(Presburger_Atom_Type::PR_ATOM_CONGRUENCE, {1, 0, -1, 0}, modulus),   // m - y ~ 303
+            {0, 1, -1, 0},   // x - y <= -1
+            {1, 0, 0, -1},   // m - z <= -1
+            {0, 0, 1,  0},    // y <= -1
+            {-1, 0, 0, 0},   // -m <= 0
+            {1, 0, 0,  0},   // m <= 12
         },
-        {0, 2},
-        4
+        {0, 2}
     );
-    auto graph = build_dep_graph(conj);
+
+    auto graph = build_dep_graph(formula);
     identify_potential_variables(graph);
 
-    Conjunction_State state({-1, -1, -1, 0, 0, 303});
+    Conjunction_State state({303, -1, -1, -1, 0, 0});
 
     auto was_simplified = simplify_graph(graph, state);
     CHECK(was_simplified);
     // 0)  x - y <= -1, m - z <= -1, y <= -1, -m <= 0, m <= M, m - y ~ 303
     // 0)  x - y <= -1, -z <= -1, y <= -1, -y ~ 303   (instantiate y=-303)
     // 0)  x <= -304, -z <= -1
-    CHECK(!graph.atom_nodes[0].is_satisfied);
-    CHECK(!graph.atom_nodes[1].is_satisfied);
-    CHECK(graph.atom_nodes[2].is_satisfied);
-    CHECK(graph.atom_nodes[3].is_satisfied);
-    CHECK(graph.atom_nodes[4].is_satisfied);
-    CHECK(graph.atom_nodes[5].is_satisfied);
+    CHECK(!graph.linear_nodes[0].is_satisfied);
+    CHECK(!graph.linear_nodes[1].is_satisfied);
+    CHECK( graph.linear_nodes[2].is_satisfied);
+    CHECK( graph.linear_nodes[3].is_satisfied);
+    CHECK( graph.linear_nodes[4].is_satisfied);
+    CHECK( graph.congruence_nodes[0].is_satisfied);
 
-    std::cout << state.constants << std::endl;
-    CHECK(state.constants[0] == -304);
-    CHECK(state.constants[1] == -1);
+    CHECK(state.constants[1] == -304);
+    CHECK(state.constants[2] == -1);
 
-    auto stateful_formula = convert_graph_into_formula(graph, state);
-    auto& formula = stateful_formula.formula;
+    Formula_Allocator formula_allocator (&formula);
 
-    CHECK(formula.atoms.size() == 2);
+    auto stateful_formula = convert_graph_into_formula(graph, formula_allocator, state);
+    auto& simplified_formula = stateful_formula.formula;
+
+    CHECK(simplified_formula.inequations.size == 2);
+    CHECK(simplified_formula.equations.size   == 0);
+    CHECK(simplified_formula.congruences.size == 0);
     CHECK(stateful_formula.state.constants.size() == 2);
 
-    Presburger_Atom expected_atom0(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 1, 0, 0});
-    Presburger_Atom expected_atom1(Presburger_Atom_Type::PR_ATOM_INEQ, {0, 0, 0, -1});
-    CHECK(formula.atoms[0] == expected_atom0);
-    CHECK(formula.atoms[1] == expected_atom1);
-    CHECK(formula.bound_vars.empty());
+    s64 simplfied_ineq_coefs1[] = {0, 1, 0,  0};
+    s64 simplfied_ineq_coefs2[] = {0, 0, 0, -1};
+    Sized_Array<s64> ineq1_coefs = {.items = simplfied_ineq_coefs1, .size = 4};
+    Sized_Array<s64> ineq2_coefs = {.items = simplfied_ineq_coefs2, .size = 4};
+    CHECK(simplified_formula.inequations.items[0].coefs == ineq1_coefs);
+    CHECK(simplified_formula.inequations.items[1].coefs == ineq2_coefs);
 
-    auto& new_state = stateful_formula.state;
-    CHECK(new_state.constants[0] == -304);
-    CHECK(new_state.constants[1] == -1);
+    CHECK(simplified_formula.bound_vars.empty());
+
+    vector<s64> expected_state = {-304, -1};
+    CHECK(stateful_formula.state.constants == expected_state);
+}
+
+TEST_CASE("Test Structured_Macrostate insertions (pareto optimality)") {
+    Atom_Allocator alloc;
+    Formula formula1 = make_formula(alloc, {{{1, 2}, 3}}, {{1, 2}}, {{1, 2}}, {});
+
+    Intermediate_Macrostate macrostate;
+
+    Conjunction_State post1({1, 2, 3});
+    insert_into_post_if_valuable2(macrostate, &formula1, post1);
+    CHECK(macrostate.formulae[&formula1].size() == 1);
+
+    insert_into_post_if_valuable2(macrostate, &formula1, post1);
+    CHECK(macrostate.formulae[&formula1].size() == 1);
+
+    Conjunction_State post2({1, 2, 4});
+    insert_into_post_if_valuable2(macrostate, &formula1, post2);
+    CHECK(macrostate.formulae[&formula1].size() == 1);
+
+    insert_into_post_if_valuable2(macrostate, &formula1, post1);
+    CHECK(macrostate.formulae[&formula1].size() == 1);
+
+
+    Conjunction_State post3({1, 3, 4});
+    insert_into_post_if_valuable2(macrostate, &formula1, post3);
+    CHECK(macrostate.formulae[&formula1].size() == 2);
+    CHECK(macrostate.formulae[&formula1][{1, 3}].size() == 1);
+    CHECK(macrostate.formulae[&formula1][{1, 2}].size() == 1);
+
+
+    Formula formula2 = make_formula(alloc, {}, {}, {{1, 2}, {1, 3}}, {});
+    Conjunction_State post2_1({1, 1});
+    Conjunction_State post2_2({1, 2});
+    Conjunction_State post2_3({2, 1});
+    Conjunction_State post2_4({2, 2});
+    insert_into_post_if_valuable2(macrostate, &formula2, post2_1);
+    insert_into_post_if_valuable2(macrostate, &formula2, post2_2);
+    insert_into_post_if_valuable2(macrostate, &formula2, post2_3);
+    insert_into_post_if_valuable2(macrostate, &formula2, post2_4);
+
+    CHECK(macrostate.formulae[&formula2].size() == 1);
 }
 
 TEST_CASE("Test extended Euclidean") {
