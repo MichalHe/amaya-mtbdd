@@ -182,6 +182,7 @@ std::vector<Transition> nfa_unpack_transitions(struct NFA& nfa) {
         }
     }
 
+    free(path_in_mtbdd_to_leaf);
     return transitions;
 }
 

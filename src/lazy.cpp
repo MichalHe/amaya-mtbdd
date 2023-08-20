@@ -130,12 +130,12 @@ struct Successor {
     Conjunction_State state;
 };
 
-optional<Successor> compute_successor(Formula_Pool& formula_pool, const Formula* formula, Conjunction_State& state, u64 symbol) {
-    vector<s64> successor_values(state.constants.size());
+optional<Successor> compute_successor(Formula_Pool& formula_pool, const Formula* formula, s64* state_data, u64 symbol) {
+    vector<s64> successor_values(formula->atom_count());
 
     u64 atom_idx = 0;
     for (auto& cong: formula->congruences) {
-        auto maybe_successor = congruence_compute_post(cong, state.constants[atom_idx], symbol);
+        auto maybe_successor = congruence_compute_post(cong, state_data[atom_idx], symbol);
 
         if (!maybe_successor.has_value()) {
             return std::nullopt;
@@ -148,7 +148,7 @@ optional<Successor> compute_successor(Formula_Pool& formula_pool, const Formula*
     }
 
     for (auto& eq: formula->equations) {
-        auto successor_value = equation_compute_post(eq, state.constants[atom_idx], symbol);
+        auto successor_value = equation_compute_post(eq, state_data[atom_idx], symbol);
 
         if (!successor_value.has_value()) return std::nullopt;
 
@@ -157,7 +157,7 @@ optional<Successor> compute_successor(Formula_Pool& formula_pool, const Formula*
     }
 
     for (auto& ineq: formula->inequations) {
-        s64 post = inequation_compute_post(ineq, state.constants[atom_idx], symbol);
+        s64 post = inequation_compute_post(ineq, state_data[atom_idx], symbol);
         successor_values[atom_idx] = post;
         atom_idx += 1;
     };
@@ -213,22 +213,22 @@ optional<Successor> compute_successor(Formula_Pool& formula_pool, const Formula*
     return successor;
 }
 
-bool accepts_last_symbol(const Formula* formula, Conjunction_State& state, u64 symbol) {
+bool accepts_last_symbol(const Formula* formula, s64* state_data, u64 symbol) {
     bool accepts = true;
 
     u64 atom_i = 0;
     for (auto& eq: formula->equations) {
-        accepts &= equation_accepts_symbol(eq, state.constants[atom_i], symbol);
+        accepts &= equation_accepts_symbol(eq, state_data[atom_i], symbol);
         atom_i += 1;
     }
 
     for (auto& congr: formula->congruences) {
-        accepts &= congruence_accepts_symbol(congr, state.constants[atom_i], symbol);
+        accepts &= congruence_accepts_symbol(congr, state_data[atom_i], symbol);
         atom_i += 1;
     }
 
     for (auto& ineq: formula->inequations) {
-        accepts &= inequation_accepts_symbol(ineq, state.constants[atom_i], symbol);
+        accepts &= inequation_accepts_symbol(ineq, state_data[atom_i], symbol);
         atom_i += 1;
     }
 
@@ -327,28 +327,35 @@ std::ostream& operator<<(std::ostream& output, const Conjunction_State& atom) {
     return output;
 }
 
+
+void write_memview(std::ostream& output, s64* data, s64 count) {
+    for (s64 i = 0; i < count; i++) {
+        if (i > 0) output << ", ";
+        output << data[i];
+    }
+}
+
 std::ostream& operator<<(std::ostream& output, const Finalized_Macrostate& macrostate) {
     output << "{";
-    u64 written_formulae = 0;
-    for (auto& macrostate_entry: macrostate.entries) {
-        if (written_formulae > 0) output << ", ";
-        output << "`" << *macrostate_entry.formula << "`: [";
+    s64 constants_written = 0;
+    for (s64 formula_idx = 0; formula_idx < macrostate.header.size; formula_idx++) {
+        const Macrostate_Header_Elem& header = macrostate.header.items[formula_idx];
 
-        if (macrostate_entry.states.empty()) {
-            output << "]";
-            continue;
+        if (formula_idx > 0) output << ", ";
+        output << "`" << *header.formula << "`: [";
+
+        for (s64 state_idx = 0; state_idx < header.state_cnt; state_idx++) {
+            if (state_idx > 0) output << ", ";
+
+            output << "(";
+            write_memview(output, macrostate.state_data.items + constants_written, header.formula->atom_count());
+            output << ")";
+            constants_written += header.formula->atom_count();
         }
 
-        auto state_it = macrostate_entry.states.begin();
-        output << *state_it;
-        ++state_it;
-
-        for (; state_it != macrostate_entry.states.end(); ++state_it) {
-            output << ", " << *state_it;
-        }
         output << "]";
-        written_formulae += 1;
     }
+
     if (macrostate.is_accepting) {
         output << " (+ ACCEPTING)";
     }
@@ -356,16 +363,22 @@ std::ostream& operator<<(std::ostream& output, const Finalized_Macrostate& macro
     return output;
 }
 
-bool Macrostate_Entry_Family::operator==(const Macrostate_Entry_Family& other) const {
-    if (formula != other.formula) return false;
-    bool is_equal = states == other.states;
-    return is_equal;
-};
-
 bool Finalized_Macrostate::operator==(const Finalized_Macrostate& other) const {
     if (is_accepting != other.is_accepting) return false;
-    bool is_equal = entries == other.entries;
-    return is_equal;
+    if (header.size  != other.header.size) return false;
+    if (state_data.size != other.state_data.size) return false;
+
+    // @Optimize: Ensure that these loops get properly vectorized
+    for (s64 i = 0; i < header.size; i++) {
+        bool is_equal = (header.items[i].formula == other.header.items[i].formula) && (header.items[i].state_cnt == other.header.items[i].state_cnt);
+        if (!is_equal) return false;
+    }
+
+    for (s64 i = 0; i < state_data.size; i++) {
+        if (state_data.items[i] != other.state_data.items[i]) return false;
+    }
+
+    return true;
 };
 
 s64 div_bound_by_coef(s64 bound, s64 coef) {
@@ -1032,7 +1045,7 @@ void insert_pareto_optimal(std::list<Conjunction_State>& queue, const u64 ineq_o
 
         for (u64 state_fragment_i = 0u; state_fragment_i < state.constants.size(); state_fragment_i++) {
             if (state.constants[state_fragment_i] < other_state.constants[state_fragment_i]) {
-                is_smaller = true; // The successor is simulated at the current field
+                is_smaller = true; // The successor is subsumed at the current field
                 is_other_smaller_than_inserted = false;
             }
             else if (state.constants[state_fragment_i] > other_state.constants[state_fragment_i]) {
@@ -1081,12 +1094,16 @@ void insert_into_post_if_valuable2(Intermediate_Macrostate& post, const Formula*
         prefix[i] = successor.constants[i];
     }
 
+    // @Optimize: Currently we are storing the entire state (including congruence and equation data)
+    //            which is redundant since we already have this information in post.
+
     list<Conjunction_State>& prefix_bucket = formula_bucket[prefix];
     insert_pareto_optimal(prefix_bucket, prefix_size, successor);
 }
 
-Finalized_Macrostate finalize_macrostate(Intermediate_Macrostate& intermediate_macrostate) {
-    auto comparator = [](const Conjunction_State& left, const Conjunction_State& right){
+Finalized_Macrostate finalize_macrostate(Formula_Allocator& alloc, Intermediate_Macrostate& intermediate_macrostate) {
+    // Finalize the intermediate macrostate into a final form that is canonical (atoms are sorted)
+    auto comparator = [](const Conjunction_State& left, const Conjunction_State& right) {
         // Is left < right ?
         for (u64 i = 0; i < left.constants.size(); i++) {
             if (left.constants[i] > right.constants[i]) return false;
@@ -1095,40 +1112,67 @@ Finalized_Macrostate finalize_macrostate(Intermediate_Macrostate& intermediate_m
         return false;
     };
 
-    vector<Macrostate_Entry_Family> entries;
     // formulae is a map, and therefore, the formula should  be kept in sorted order,
     // no need to sort them right now.
-    for (auto& [formula, prefix_table]: intermediate_macrostate.formulae) {
-        u64 entry_elements_cnt = 0;
-        for (auto& [prefix, prefix_entries]: prefix_table) {
-            entry_elements_cnt += prefix_entries.size();
-        }
+    Sized_Array<Macrostate_Header_Elem> headers = alloc.alloc_macrostate_headers(intermediate_macrostate.formulae.size());
+    s64 header_idx = 0;
+    s64 max_states_per_formula = 0;
+    s64 required_constant_count = 0;
+    for (const auto& [formula, prefix_table]: intermediate_macrostate.formulae) {
+        headers.items[header_idx].formula   = formula;
+        headers.items[header_idx].state_cnt = prefix_table.size();
 
-        Macrostate_Entry_Family family;
-        family.formula = formula;
-        family.states.reserve(entry_elements_cnt);
+        max_states_per_formula = prefix_table.size() > max_states_per_formula ? prefix_table.size() : max_states_per_formula;
 
-        for (auto& [prefix, prefix_entries]: prefix_table) {
-            for (auto& state: prefix_entries) family.states.push_back(state);
-        }
-
-        std::sort(family.states.begin(), family.states.end(), comparator);
-        entries.push_back(std::move(family));
+        header_idx += 1;
     }
 
-    return {.entries = entries, .is_accepting = intermediate_macrostate.is_accepting};
+    vector<Conjunction_State> sort_space; // This can be reused by an allocator that caches the space pointer and does a malloc only if the current size < request
+    sort_space.reserve(max_states_per_formula);
+
+    // Count how many s64's will have to be in the allocated block
+    for (auto& [formula, prefix_table]: intermediate_macrostate.formulae) {
+        u64 states_with_this_formula = 0; // How many states are there in the prefix table
+        for (auto& [prefix, prefix_entries]: prefix_table) {
+            for (auto& state: prefix_entries) {
+                states_with_this_formula += prefix_entries.size();
+            }
+        }
+        required_constant_count += states_with_this_formula * formula->atom_count();
+    }
+
+    Sized_Array<s64> macrostate_data = alloc.alloc_macrostate_data(required_constant_count);
+    s64 macrostate_data_next_free_slot = 0;
+
+    for (auto& [formula, prefix_table]: intermediate_macrostate.formulae) {
+        sort_space.clear();
+
+        for (auto& [prefix, prefix_entries]: prefix_table) {
+            for (auto& state: prefix_entries) {
+                sort_space.push_back(state);
+            }
+        }
+        std::sort(sort_space.begin(), sort_space.end(), comparator);
+
+        for (const auto& state: sort_space) {
+            // Memcpy
+            for (const auto& constant: state.constants) {
+                macrostate_data.items[macrostate_data_next_free_slot] = constant;
+                macrostate_data_next_free_slot += 1;
+            }
+        }
+    }
+
+    return {.header = headers, .state_data = macrostate_data, .is_accepting = intermediate_macrostate.is_accepting};
 }
 
 Finalized_Macrostate make_trivial_macrostate(Formula_Pool& pool, bool polarity) {
     Formula formula(polarity);
     auto formula_ptr = pool.store_formula(formula);
-    Macrostate_Entry_Family entry = {
-        .formula = formula_ptr,
-        .states = {}
-    };
 
     Finalized_Macrostate macrostate = {
-        .entries = {entry},
+        .header = {.items = nullptr, .size = 0},
+        .state_data = {.items = nullptr, .size = 0},
         .is_accepting = polarity,
     };
     return macrostate;
@@ -1155,17 +1199,21 @@ void explore_macrostate(NFA& constructed_nfa,
 #if DEBUG_RUNTIME
             auto start = std::chrono::system_clock::now();
 #endif
-            for (auto& macrostate_entry: macrostate.entries) {
-                for (auto& state: macrostate_entry.states) {
-                    const Formula* formula = macrostate_entry.formula;
-                    auto maybe_successor = compute_successor(constr_state.formula_pool, formula, state, symbol);
+            s64 state_data_read_idx = 0;
+            for (auto& macrostate_header: macrostate.header) {
+                const Formula* formula = macrostate_header.formula;
+                for (s64 formula_state_idx = 0; formula_state_idx < macrostate_header.state_cnt; formula_state_idx++) {
+                    s64* current_origin_state_data = macrostate.state_data.items + state_data_read_idx;
+                    state_data_read_idx += formula->atom_count();
+
+                    auto maybe_successor = compute_successor(constr_state.formula_pool, formula, current_origin_state_data, symbol);
 
                     if (!maybe_successor.has_value()) continue;
 
                     auto successor = maybe_successor.value();
 
                     // The old formula needs to be used to determine whether the post is accepting
-                    post.is_accepting |= accepts_last_symbol(formula, state, symbol);
+                    post.is_accepting |= accepts_last_symbol(formula, current_origin_state_data, symbol);
                     formula = successor.formula;
 
                     auto new_formula_state_pair = simplify_stateful_formula(formula, successor.state, constr_state.formula_pool);
@@ -1203,7 +1251,7 @@ void explore_macrostate(NFA& constructed_nfa,
             continue;
         }
 
-        Finalized_Macrostate finalized_post = finalize_macrostate(post);
+        Finalized_Macrostate finalized_post = finalize_macrostate(constr_state.formula_pool.allocator, post);
 
         // Assign a unique integer to every state
         finalized_post.handle = constr_state.known_macrostates.size();
@@ -1341,10 +1389,18 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
     // Populate the queue with the initial states
     const u64 init_state_handle = constr_state.known_macrostates.size();
     {
-        vector<Conjunction_State> init_macrostate_states = {init_state};
-        Macrostate_Entry_Family init_macrostate_family = {.formula = formula, .states = init_macrostate_states};
+        Sized_Array<Macrostate_Header_Elem> header = formula_pool.allocator.alloc_macrostate_headers(1);
+        header.items[0].formula = formula;
+        header.items[0].state_cnt = 1;
+
+        Sized_Array<s64> macrostate_data = formula_pool.allocator.alloc_macrostate_data(formula->atom_count());
+        for (s64 state_constant_idx = 0; state_constant_idx < init_state.constants.size(); state_constant_idx++) {
+            macrostate_data.items[state_constant_idx]  = init_state.constants[state_constant_idx];
+        }
+
         Finalized_Macrostate init_macrostate = {
-            .entries = {init_macrostate_family},
+            .header = header,
+            .state_data = macrostate_data,
             .is_accepting = false,
             .handle = init_state_handle,
         };

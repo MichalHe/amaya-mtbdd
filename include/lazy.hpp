@@ -474,6 +474,19 @@ Slab_Fragment<T> make_equaly_sized_fragment(Slab_Fragment<T>& buffer) {
     return Slab_Fragment(buffer.capacity, new_items);
 }
 
+struct Macrostate_Header_Elem {
+    const Quantified_Atom_Conjunction* formula;
+    u64 state_cnt;
+};
+
+struct Finalized_Macrostate {
+    Sized_Array<Macrostate_Header_Elem> header;     // Formula information with the number of corresponding states for fast comparision
+    Sized_Array<s64>                    state_data; // State constants, serialized for AVX memcmp
+    bool is_accepting = false;
+    u64 handle;
+
+    bool operator==(const Finalized_Macrostate& other) const;
+};
 
 struct Allocator_Limits {
     u64 max_congruences, max_equations, max_inequations;
@@ -505,6 +518,10 @@ struct Formula_Allocator {
     vector<list<Slab_Fragment<Congruence>>> congruence_slabs;
     vector<list<Slab_Fragment<Equation>>>   equation_slabs;
     vector<list<Slab_Fragment<Inequation>>> inequation_slabs;
+
+    // Macrostate data
+    list<Macrostate_Header_Elem*> macrostate_headers;
+    list<s64*>                    macrostate_data;    // @Design: We could probably use a stack allocator for this since we know that the memory is only acquired
 
     list<s64*> coef_blocks;
 
@@ -676,8 +693,22 @@ struct Formula_Allocator {
         tmp_space.coefs.next_free = 0;
     }
 
+    Sized_Array<Macrostate_Header_Elem> alloc_macrostate_headers(u64 count) {
+        Macrostate_Header_Elem* headers = new Macrostate_Header_Elem[count];
+        macrostate_headers.push_back(headers);
+        return {.items = headers, .size = count};
+    }
+
+    Sized_Array<s64> alloc_macrostate_data(u64 state_count) {
+        s64* state_data = new s64[state_count];
+        macrostate_data.push_back(state_data);
+        return {.items = state_data, .size = state_count};
+    }
+
     ~Formula_Allocator() {
         for (auto coef_block: coef_blocks) delete[] coef_block;
+        for (auto macrostate_header: macrostate_headers)  delete[] macrostate_header;
+        for (auto macrostate_data_block: macrostate_data) delete[] macrostate_data_block;
     }
 };
 
@@ -706,47 +737,19 @@ struct Intermediate_Macrostate { // Macrostate that is being created, optimized 
     map<const Quantified_Atom_Conjunction*, Prefix_Table> formulae;
 };
 
-struct Macrostate_Entry_Family {
-    const Quantified_Atom_Conjunction* formula;
-    vector<Conjunction_State> states;
-
-    bool operator==(const Macrostate_Entry_Family& other) const;
-};
-
-struct Finalized_Macrostate {
-    vector<Macrostate_Entry_Family> entries; // In sorted order by formula pointeres.
-    bool is_accepting = false;
-    u64 handle;
-
-    bool operator==(const Finalized_Macrostate& other) const;
-};
-
 template <>
 struct std::hash<Finalized_Macrostate> {
     std::size_t operator() (const Finalized_Macrostate& macrostate) const {
         std::size_t hash = 0u;
 
-        // Hash the states constituting macrostate
-        for (auto& macrostate_entry : macrostate.entries) {
-            std::size_t formula_hash = std::hash<const Quantified_Atom_Conjunction*>{}(macrostate_entry.formula);
-
-            // @Simplicity: Is hashing really useful in this case?
-            for (auto& state: macrostate_entry.states) {
-                std::size_t state_hash = 0u;
-
-                for (auto state_constant: state.constants) {
-                    std::size_t state_constant_hash = ((state_constant >> 16) ^ state_constant) * 0x45d9f3b;
-                    state_constant = ((state_constant >> 16) ^ state_constant) * 0x45d9f3b;
-                    state_constant = (state_constant >> 16) ^ state_constant;
-
-                    hash = hash_combine(hash, formula_hash);
-                }
-
-                // @Note: hash combination must be order independent here, because we do not impose any ordering on the states
-                formula_hash ^= state_hash;
-            }
-
+        for (Macrostate_Header_Elem& header: macrostate.header) {
+            std::size_t formula_hash = std::hash<const Quantified_Atom_Conjunction*>{}(header.formula);
             hash = hash_combine(hash, formula_hash);
+            hash = hash_combine(hash, header.state_cnt);
+        }
+
+        for (s64 state_constant: macrostate.state_data) {
+            hash = hash_combine(hash, state_constant);
         }
 
         hash += macrostate.is_accepting * 33;
