@@ -700,59 +700,84 @@ void amaya_sylvan_try_performing_gc() {
 }
 
 void amaya_sylvan_clear_cache() {
-  LACE_ME;
-  sylvan_clear_cache();
+    LACE_ME;
+    sylvan_clear_cache();
 }
 
 Serialized_NFA* amaya_construct_dfa_for_atom_conjunction(Serialized_Quantified_Atom_Conjunction* raw_formula) {
-    Quantified_Atom_Conjunction conjunction = {
-        .atoms = {},
-        .bound_vars = {},
-        .var_count = raw_formula->atom_cnt,
-    };
-    conjunction.atoms.resize(raw_formula->atom_cnt);
-
-    for (u64 atom_idx = 0u; atom_idx < raw_formula->atom_cnt; atom_idx++) {
-        auto raw_atom = raw_formula->atoms[atom_idx];
-        Presburger_Atom atom(static_cast<Presburger_Atom_Type>(raw_atom.type), {});
-        atom.coefs.resize(raw_atom.coef_cnt);
-
-        for (u64 coef_idx = 0u; coef_idx < raw_atom.coef_cnt; coef_idx++) {
-            atom.coefs[coef_idx] = raw_atom.coefs[coef_idx];
+    Formula_Description formula_desc;
+    formula_desc.var_count = raw_formula->var_cnt;
+    for (u64 atom_i = 0; atom_i < raw_formula->atom_cnt; atom_i++) {
+        auto& atom = raw_formula->atoms[atom_i];
+        switch (atom.type) {
+            case (Presburger_Atom_Type::PR_ATOM_EQ):         formula_desc.equation_count   += 1; break;
+            case (Presburger_Atom_Type::PR_ATOM_INEQ):       formula_desc.inequation_count += 1; break;
+            case (Presburger_Atom_Type::PR_ATOM_CONGRUENCE): formula_desc.congruence_count += 1; break;
         }
+    }
 
-        if (atom.type == PR_ATOM_CONGRUENCE) {
-            atom.modulus = raw_atom.modulus;
+    Formula_Pool pool (formula_desc);
+    auto formula_atoms = pool.allocator.allocate_formula(formula_desc);
+
+    u64 next_free_congruence = 0;
+    u64 next_free_equation   = 0;
+    u64 next_free_inequation = 0;
+
+    vector<s64> initial_state_data (raw_formula->atom_cnt);
+
+    for (u64 atom_i = 0; atom_i < raw_formula->atom_cnt; atom_i++) {
+        auto& atom = raw_formula->atoms[atom_i];
+        switch (atom.type) {
+            case (Presburger_Atom_Type::PR_ATOM_EQ): {
+                Equation& eq = formula_atoms.equations.items[next_free_equation];
+                std::memcpy(eq.coefs.items, atom.coefs, sizeof(s64) * formula_desc.var_count);
+
+                initial_state_data[formula_desc.congruence_count + next_free_equation] = raw_formula->initial_state[atom_i];
+
+                next_free_equation += 1;
+                break;
+            }
+            case (Presburger_Atom_Type::PR_ATOM_INEQ): {
+                Inequation& ineq = formula_atoms.inequations.items[next_free_inequation];
+                std::memcpy(ineq.coefs.items, atom.coefs, sizeof(s64) * formula_desc.var_count);
+
+                initial_state_data[formula_desc.congruence_count + formula_desc.equation_count + next_free_inequation] = raw_formula->initial_state[atom_i];
+
+                next_free_inequation += 1;
+                break;
+            }
+            case (Presburger_Atom_Type::PR_ATOM_CONGRUENCE): {
+                Congruence& congruence = formula_atoms.congruences.items[next_free_congruence];
+                std::memcpy(congruence.coefs.items, atom.coefs, sizeof(s64) * formula_desc.var_count);
+
+                auto decomposed_modulus = decompose_modulus(atom.modulus);
+                congruence.modulus_2pow = decomposed_modulus.modulus_2pow;
+                congruence.modulus_odd  = decomposed_modulus.modulus_odd;
+
+                initial_state_data[next_free_congruence] = raw_formula->initial_state[atom_i];
+
+                next_free_congruence += 1;
+                break;
+            }
         }
-        conjunction.atoms[atom_idx] = atom;
     }
 
-    conjunction.var_count = raw_formula->var_cnt;
-
-    conjunction.bound_vars.resize(raw_formula->quantified_var_cnt);
-    for (u64 quantified_var_idx = 0u; quantified_var_idx < raw_formula->quantified_var_cnt; quantified_var_idx++) {
-        conjunction.bound_vars[quantified_var_idx] = raw_formula->quantified_vars[quantified_var_idx];
-    }
-
-    std::vector<s64> initial_state_data (raw_formula->atom_cnt);
-    for (u64 atom_idx = 0u; atom_idx < raw_formula->atom_cnt; atom_idx++) {
-        initial_state_data[atom_idx] = raw_formula->initial_state[atom_idx];
-    }
+    vector<u64> quantified_vars;
+    quantified_vars.resize(raw_formula->quantified_var_cnt);
+    std::memcpy(quantified_vars.data(), raw_formula->quantified_vars, sizeof(u64) * raw_formula->quantified_var_cnt);
 
     sylvan::BDDSET var_set = sylvan::mtbdd_set_empty();
     for (u64 var_idx = 0u; var_idx < raw_formula->var_cnt; var_idx++) {
         var_set = sylvan::mtbdd_set_add(var_set, raw_formula->vars[var_idx]);
     }
 
-    conjunction.dep_graph = build_dep_graph(conjunction);
-    identify_potential_variables(conjunction.dep_graph);
+    Quantified_Atom_Conjunction formula (formula_atoms.congruences, formula_atoms.equations,
+                                         formula_atoms.inequations, quantified_vars, formula_desc.var_count);
 
-    Formula_Pool formula_pool;
-    auto stored_formula_ptr = formula_pool.store_formula(conjunction);
+    auto stored_formula_ptr = pool.store_formula(formula);
 
     Conjunction_State initial_state(initial_state_data);
-    auto graph = build_dep_graph(*stored_formula_ptr);
-    auto created_nfa = build_nfa_with_formula_entailement(stored_formula_ptr, initial_state, var_set, formula_pool);
+    auto created_nfa = build_nfa_with_formula_entailement(stored_formula_ptr, initial_state, var_set, pool);
 
     auto result = serialize_nfa(created_nfa);
     return result;

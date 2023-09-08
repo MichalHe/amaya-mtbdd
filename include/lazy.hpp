@@ -21,6 +21,13 @@ using std::unordered_set;
 using std::map;
 using std::list;
 
+
+struct Decomposed_Modulus {
+    s64 modulus_2pow, modulus_odd;
+};
+
+Decomposed_Modulus decompose_modulus(s64 modulus);
+
 template <typename T>
 struct Sized_Array {
     T* items;
@@ -173,36 +180,6 @@ enum Presburger_Atom_Type {
     PR_ATOM_INEQ = 1,
     PR_ATOM_EQ = 2,
     PR_ATOM_CONGRUENCE = 3
-};
-
-struct Presburger_Atom {
-    Presburger_Atom_Type type;
-    vector<s64>          coefs;
-    s64                  modulus;
-
-    Presburger_Atom() : type(Presburger_Atom_Type::PR_ATOM_INVALID) {
-        coefs = {};
-    }
-
-    Presburger_Atom(Presburger_Atom_Type atom_type, const vector<s64>& coefficients, s64 modulus=0) : type(atom_type), coefs(coefficients), modulus(modulus) {}
-
-    optional<s64> compute_post_along_sym(s64 constant, u64 symbol_bits) const;
-    bool accepts_last_symbol(s64 state, u64 symbol_bits) const;
-
-    std::string fmt_with_rhs(s64 rhs) const;
-    bool operator==(const Presburger_Atom& other) const;
-};
-
-template <>
-struct std::hash<Presburger_Atom> {
-    std::size_t operator() (const Presburger_Atom& state) const {
-        std::size_t hash = 0;
-        for (auto coef: state.coefs) {
-            std::size_t coef_hash = std::hash<s64>{}(coef);
-            hash = hash + 0x9e3779b9 + (coef_hash << 6) + (coef_hash >> 2);
-        }
-        return hash;
-    }
 };
 
 struct Sparse_Presburger_Atom {
@@ -362,6 +339,10 @@ struct Conjunction_State {
     void post(unordered_set<Conjunction_State>& known_states, vector<Conjunction_State>& dest);
     bool operator==(const Conjunction_State& other) const;
     bool operator<(const Conjunction_State& other) const;
+
+    s64 get_lin_atom_val(u64 offset, u64 atom_idx) const {
+        return constants[offset + atom_idx];
+    }
 };
 
 template <>
@@ -378,7 +359,6 @@ struct std::hash<Conjunction_State> {
     }
 };
 
-std::ostream& operator<<(std::ostream& output, const Presburger_Atom& atom);
 std::ostream& operator<<(std::ostream& output, const Quantified_Atom_Conjunction& formula);
 std::ostream& operator<<(std::ostream& output, const Conjunction_State& atom);
 
@@ -488,16 +468,49 @@ struct Finalized_Macrostate {
     bool operator==(const Finalized_Macrostate& other) const;
 };
 
+struct Formula_Description { // Formula description so that we know how to setup the allocator
+    u64 congruence_count = 0;
+    u64 equation_count   = 0;
+    u64 inequation_count = 0;
+    u64 var_count        = 0;
+
+    Formula_Description() {};
+
+    Formula_Description(const Quantified_Atom_Conjunction* formula) :
+        congruence_count(formula->congruences.size),
+        equation_count(formula->equations.size),
+        inequation_count(formula->inequations.size),
+        var_count(formula->var_count)
+        {};
+
+    Formula_Description(u64 congruence_count, u64 equation_count, u64 inequation_count, u64 var_count) :
+        congruence_count(congruence_count),
+        equation_count(equation_count),
+        inequation_count(inequation_count),
+        var_count(var_count)
+        {};
+
+    u64 atom_count() const {
+        return congruence_count + inequation_count + equation_count;
+    }
+};
+
 struct Allocator_Limits {
     u64 max_congruences, max_equations, max_inequations;
     u64 var_count;
 
-    Allocator_Limits(const Quantified_Atom_Conjunction* root_formula):
-        var_count(root_formula->var_count),
-        max_congruences(root_formula->congruences.size),
-        max_equations(root_formula->equations.size),
-        max_inequations(root_formula->inequations.size)
+    Allocator_Limits(const Formula_Description& root_formula):
+        var_count(root_formula.var_count),
+        max_congruences(root_formula.congruence_count),
+        max_equations(root_formula.congruence_count + root_formula.equation_count),  // Allow for linearization
+        max_inequations(root_formula.inequation_count)
     {};
+};
+
+struct Formula_Atoms {
+    Sized_Array<Congruence> congruences;
+    Sized_Array<Equation>   equations;
+    Sized_Array<Inequation> inequations;
 };
 
 struct Temporary_Space {
@@ -506,12 +519,13 @@ struct Temporary_Space {
     Slab_Fragment<Inequation> inequations;  // Temporary space for inequations
     Slab_Fragment<s64>        coefs;        // Coefs for all the above temporary atoms
 
-    Temporary_Space(const Quantified_Atom_Conjunction* root_formula) :
-        congruences(root_formula->congruences.size),
-        equations(root_formula->equations.size),
-        inequations(root_formula->inequations.size),
-        coefs(root_formula->var_count * (root_formula->congruences.size + root_formula->equations.size + root_formula->inequations.size)) {}
+    Temporary_Space(const Formula_Description& root_formula_desc) :
+        congruences(root_formula_desc.congruence_count),
+        equations(root_formula_desc.equation_count + root_formula_desc.congruence_count),
+        inequations(root_formula_desc.inequation_count),
+        coefs(root_formula_desc.var_count * root_formula_desc.atom_count()) {}
 };
+
 
 struct Formula_Allocator {
     u64 largest_congruence_block_size;
@@ -531,11 +545,11 @@ struct Formula_Allocator {
     Temporary_Space tmp_space;
     Allocator_Limits limits;
 
-    Formula_Allocator(const Quantified_Atom_Conjunction* root_formula) :
-        largest_congruence_block_size(root_formula->congruences.size),
-        var_count(root_formula->var_count),
-        tmp_space(root_formula),
-        limits(root_formula)
+    Formula_Allocator(const Formula_Description& root_formula_desc) :
+        largest_congruence_block_size(root_formula_desc.congruence_count),
+        var_count(root_formula_desc.var_count),
+        tmp_space(root_formula_desc),
+        limits(root_formula_desc)
     {
         congruence_slabs.resize(limits.max_congruences);
         equation_slabs.resize(limits.max_equations);
@@ -686,6 +700,39 @@ struct Formula_Allocator {
         return new_formula;
     }
 
+    Formula_Atoms allocate_formula(Formula_Description& desc) {
+        const u64 coefs_needed = desc.atom_count() * desc.var_count;
+
+        auto equations   = this->alloc_equations(desc.equation_count);
+        auto inequations = this->alloc_inequations(desc.inequation_count);
+        auto congruences = this->alloc_congruences(desc.congruence_count);
+        auto coefs       = this->alloc_coefs(coefs_needed);
+
+        u64 next_free_congruence = 0;
+        u64 next_free_equation   = 0;
+        u64 next_free_inequation = 0;
+
+        for (auto& eq: equations) {
+            eq.coefs.items = coefs;
+            eq.coefs.size  = desc.var_count;
+            coefs += desc.var_count;
+        }
+
+        for (auto& ineq: inequations) {
+            ineq.coefs.items = coefs;
+            ineq.coefs.size  = desc.var_count;
+            coefs += desc.var_count;
+        }
+
+        for (auto& congruence: congruences) {
+            congruence.coefs.items = coefs;
+            congruence.coefs.size  = desc.var_count;
+            coefs += desc.var_count;
+        }
+
+        return {.congruences = congruences, .equations = equations, .inequations = inequations};
+    }
+
     void drop_tmp() {  // "Free" the temporary storage
         tmp_space.congruences.next_free = 0;
         tmp_space.equations.next_free = 0;
@@ -718,12 +765,14 @@ struct Formula_Pool { // Formula memory management
     unordered_set<Quantified_Atom_Conjunction> formulae;
     Formula_Allocator allocator;
 
-    Formula_Pool(const Quantified_Atom_Conjunction* root_formula) : allocator(root_formula) {
+    Formula_Pool(const Formula_Description& root_formula_description) : allocator(root_formula_description) {
         auto top = Quantified_Atom_Conjunction(true);
         auto bottom = Quantified_Atom_Conjunction(false);
         formulae.insert(top);
         formulae.insert(bottom);
     }
+
+    Formula_Pool(const Quantified_Atom_Conjunction* root_formula) : allocator(root_formula) {};
 
     const Quantified_Atom_Conjunction* store_formula(Quantified_Atom_Conjunction& formula);
     std::pair<const Quantified_Atom_Conjunction*, bool> store_formula_with_info(Quantified_Atom_Conjunction& formula);
@@ -780,7 +829,21 @@ struct Stateful_Formula {
     Conjunction_State state;
     Quantified_Atom_Conjunction formula;
 };
+
+struct Stateful_Formula_Ptr {
+    Conjunction_State state;
+    const Quantified_Atom_Conjunction* formula;
+};
+
+struct New_Atoms_Info {
+    u64  first_new_lin_atom_index;
+    u64  eq_count;
+    s64* new_lin_state_data;  // The data must be organized <EQ0,EQ1,...,INEQ0, INEQ1,...>
+};
+
 Stateful_Formula convert_graph_into_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state);
+Stateful_Formula convert_graph_into_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state, const New_Atoms_Info& delta_info);
+
 std::pair<const Quantified_Atom_Conjunction*, Conjunction_State> simplify_stateful_formula(const Quantified_Atom_Conjunction* formula, Conjunction_State& state, Formula_Pool& pool);
 
 enum class Bound_Type : unsigned {
@@ -817,6 +880,58 @@ Sized_Array<T> make_sized_array(const vector<T>& items) {
     }
     return Sized_Array<T> {.items = buf, .size = items.size()};
 }
+
+// ----- MODULO LINEARIZATION -----
+enum class Var_Preference_Type : u8 {
+    NONE = 0x00,
+    C_INCREASING = 0x01,
+    C_DECREASING = 0x02,  // The number of soutions to free variables grows as the value of y decreases
+};
+
+struct Var_Preference {  // Captures the notion of C-{increasing/decreasing}
+    Var_Preference_Type type;
+    s64 c;
+};
+
+struct Interval {
+     s64 low, high;
+};
+
+struct Linear_Function { // y = a*x + b
+    s64 a, b;
+    bool valid = true;
+};
+
+struct Captured_Modulus {
+    u64 leading_var;      // y in (y mod K)
+    u64 subordinate_var;  // Variable representing modulus
+
+    bool is_mod_captured() {
+        return leading_var != subordinate_var;
+    }
+};
+
+struct Linearization_Info {
+    u64              congruence_idx;
+    Linear_Function  resulting_fn;
+    Captured_Modulus captured_mod;
+};
+
+// Compute m when given y in : n*y + {+- 1}* m ~ K  (mod MODULUS). The result is in [0, ... MODULUS]
+s64 eval_mod_congruence_at_point(const Congruence_Node& congruence, s64 K, Captured_Modulus& mod, s64 point);
+
+// Compute y when given m in : n*y + {+- 1}* m ~ K  (mod MODULUS). The result is in [0, ... MODULUS]
+s64 get_point_for_mod_congruence_to_obtain_value(const Congruence_Node& congruence, s64 K, Captured_Modulus& mod, s64 value);
+
+void shift_interval(Interval& interval, Var_Preference preference, s64 modulus);
+
+Linear_Function linearize_congruence(const Dep_Graph& graph, Conjunction_State& state, u64 congruence_idx, Captured_Modulus& captured_mod, Var_Preference& preference);
+
+std::optional<Stateful_Formula> linearize_formula(Formula_Allocator& allocator,
+                                                  const Quantified_Atom_Conjunction* formula_to_linearize,
+                                                  Conjunction_State& state);
+
+bool do_any_hard_bounds_imply_contradiction(const Dep_Graph& graph, const Conjunction_State& state);
 
 #endif
 

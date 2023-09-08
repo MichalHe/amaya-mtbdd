@@ -38,15 +38,6 @@ struct Atom_Allocator {
     }
 };
 
-std::pair<s64, s64> decompose_modulus(s64 modulus) {
-    s64 modulus_pow2 = 0;
-    while (modulus % 2 == 0) {
-        modulus_pow2 += 1;
-        modulus      /= 2;
-    }
-    return {modulus, modulus_pow2};
-}
-
 Sized_Array<Congruence> alloc_congruences(Atom_Allocator& alloc, const vector<pair<vector<s64>, s64>>& congruence_coefs) {
     if (congruence_coefs.empty()) return {.items = nullptr, .size = 0};
     u64 var_count = congruence_coefs[0].first.size();
@@ -104,6 +95,7 @@ Sized_Array<Equation> alloc_equations(Atom_Allocator& alloc, const vector<vector
         Equation equation = {.coefs = coefs_block};
         equation_block[next_free_equation_slot] = equation;
         next_free_equation_slot += 1;
+        .congruences
     }
 
     return {.items = equation_block, .size = equation_coefs.size()};
@@ -1028,6 +1020,154 @@ TEST_CASE("Test extended Euclidean") {
     CHECK(compute_multiplicative_inverse(13, 12) == 12);
 }
 
+TEST_CASE("Test evaluate_mod_congruence_at_point") {
+    SUBCASE("atom `y - m = 0 (mod 4)`") {
+        Atom_Allocator alloc;
+        Formula formula1 = make_formula(alloc, {{{1, -1}, 4}}, {}, {}, {});
+
+        Formula_Allocator formula_allocator (&formula1);
+
+        CHECK(formula1.dep_graph.congruence_nodes.size() == 1);
+        Congruence_Node& node = formula1.dep_graph.congruence_nodes[0];
+
+        Captured_Modulus mod = {.leading_var = 0, .subordinate_var = 1};
+        s64 value = eval_mod_congruence_at_point(node, 0, mod, 0);
+        CHECK(value == 0);
+
+        value = eval_mod_congruence_at_point(node, 0, mod, 4);
+        CHECK(value == 0);
+
+        value = eval_mod_congruence_at_point(node, 0, mod, -1);
+        CHECK(value == 3);
+    }
+
+    SUBCASE("atom `3*y - m = 0 (mod 5)`") {
+        Atom_Allocator alloc;
+        Formula formula1 = make_formula(alloc, {{{3, -1}, 5}}, {}, {}, {});
+
+        Formula_Allocator formula_allocator (&formula1);
+
+        CHECK(formula1.dep_graph.congruence_nodes.size() == 1);
+        Congruence_Node& node = formula1.dep_graph.congruence_nodes[0];
+
+        Captured_Modulus mod = {.leading_var = 0, .subordinate_var = 1};
+        s64 value = eval_mod_congruence_at_point(node, 0, mod, 0);
+        CHECK(value == 0);
+
+        value = eval_mod_congruence_at_point(node, 0, mod, 4);
+        CHECK(value == 2);
+
+        value = eval_mod_congruence_at_point(node, 0, mod, -1);
+        CHECK(value == 2);
+    }
+}
+
+TEST_CASE("Test get_point_for_mod_congruence_to_obtain_value") {
+    SUBCASE("atom `3*y - m = 0 (mod 5)`") {
+        Atom_Allocator alloc;
+        Formula formula1 = make_formula(alloc, {{{3, -1}, 5}}, {}, {}, {});
+
+        Formula_Allocator formula_allocator (&formula1);
+
+        CHECK(formula1.dep_graph.congruence_nodes.size() == 1);
+        Congruence_Node& node = formula1.dep_graph.congruence_nodes[0];
+
+        Captured_Modulus mod = {.leading_var = 0, .subordinate_var = 1};
+        s64 value = get_point_for_mod_congruence_to_obtain_value(node, 0, mod, 0);
+        CHECK(value == 0);
+
+        value = get_point_for_mod_congruence_to_obtain_value(node, 0, mod, 3);
+        CHECK(value == 1);
+
+        value = get_point_for_mod_congruence_to_obtain_value(node, 0, mod, 4);
+        CHECK(value == 3);
+    }
+    SUBCASE("atom `y - m = 0 (mod 5)` (real formula)") {
+        Atom_Allocator alloc;
+        Formula formula1 = make_formula(alloc, {{{1, -1}, 5}}, {}, {}, {});
+        Formula_Allocator formula_allocator (&formula1);
+
+        CHECK(formula1.dep_graph.congruence_nodes.size() == 1);
+        Congruence_Node& node = formula1.dep_graph.congruence_nodes[0];
+
+        Captured_Modulus mod = {.leading_var = 0, .subordinate_var = 1};
+        s64 value = get_point_for_mod_congruence_to_obtain_value(node, 0, mod, 1);
+        CHECK(value == 1);
+
+        value = get_point_for_mod_congruence_to_obtain_value(node, 0, mod, 4);
+        CHECK(value == 4);
+    }
+}
+
+TEST_CASE("Test linearize_congruence - `y - m ~ 0 && 1 <= m <= 4` (real formula)") {
+    Atom_Allocator alloc;
+    Formula formula1 = make_formula(alloc, {{{1, -1}, 5}}, {}, {{0, -1}, {0, 1}}, {});
+    Conjunction_State state ({0, 1, 4});
+
+    Captured_Modulus captured_mod = {.leading_var = 0, .subordinate_var = 1};
+    Var_Preference preference = {.type = Var_Preference_Type::C_INCREASING, .c = -1};
+
+    Linear_Function fn = linearize_congruence(formula1.dep_graph, state, 0, captured_mod, preference);
+    CHECK(fn.a == 1);
+    CHECK(fn.b == 5);
+    CHECK(fn.valid);
+}
+
+TEST_CASE("Test linearize_formula - `\\exists y (x - y <= 0 && m - z <= 60_000 && y <= -1 && y - m ~ 0 (mod 299_993) && 1 <= m <= 299_992)` (real formula)") {
+    Atom_Allocator alloc;
+    // Vars: m -> x0, x -> x1, y -> x2, z -> x3
+    Formula formula = make_formula(alloc,
+                                   {{{-1, 0, 1, 0}, 299993}},  // y - m ~ 0 (mod 299_993)
+                                   {},                   // No equations
+                                   {
+                                    {0, 1, -1, 0},       // x - y <= 0
+                                    {1, 0, 0, -1},       // m - z <= 60_000
+                                    {0, 0, 1, 0},        // y <= -1
+                                    {-1, 0, 0, 0},       // m >= 1
+                                    {1, 0, 0, 0},        // m <= 299_992
+                                   },
+                                   {});
+    Formula_Allocator allocator(&formula);
+    Conjunction_State state ({0 /*congruence*/, 0, 60000, -1, 1, 299992});
+
+    auto result = linearize_formula(allocator, &formula, state);
+    CHECK(result.has_value());
+    auto linearized_formula = result.value().formula;
+    CHECK(linearized_formula.congruences.size == 0);
+    CHECK(linearized_formula.equations.size == 1);
+    CHECK(linearized_formula.inequations.size == formula.inequations.size);
+
+    auto& equation = linearized_formula.equations.items[0];
+
+    s64 expected_coef_data[] = {-1, 0, 1, 0};
+    Sized_Array<s64> expected_coefs = {.items = expected_coef_data, .size = 4};
+    CHECK(equation.coefs == expected_coefs);
+
+    auto& modified_state = result.value().state;
+    std::cout << "modified state: " << modified_state << "\n";
+    vector<s64> expected_state_data = {-299993 /*equation*/, 0, 60000, -1, 1, 299992};
+    CHECK(modified_state.constants == expected_state_data);
+}
+
+TEST_CASE("Test shift_interval") {
+    SUBCASE("[0, 3] <= -1 with (mod 4)") {
+        Interval interval = {.low = 0, .high = 3};
+        Var_Preference preference = {.type = Var_Preference_Type::C_INCREASING, .c = -1};
+        shift_interval(interval, preference, 4);
+
+        CHECK(interval.high == -1);
+        CHECK(interval.low  == -4);
+    }
+
+    SUBCASE("[0, 3] <= 10 with (mod 4)") {
+        Interval interval = {.low = 0, .high = 3};
+        Var_Preference preference = {.type = Var_Preference_Type::C_INCREASING, .c = -1};
+        shift_interval(interval, preference, 4);
+
+        CHECK(interval.high == -1);
+        CHECK(interval.low  == -4);
+    }
+}
 
 int main(int argc, char* argv[]) {
     init_mtbdd_libs();
