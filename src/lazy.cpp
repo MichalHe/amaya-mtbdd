@@ -975,7 +975,7 @@ Linear_Function linearize_congruence(const Dep_Graph& graph,
         modulus_values.low  = state.constants[offset + mod_var_node.hard_lower_bound.atom_i];
     }
 
-    printf("The interval of the modulo variable is [%lu, %lu]\n", modulus_values.low, modulus_values.high);
+    PRINTF_DEBUG("The interval of the modulo variable is [%lu, %lu]\n", modulus_values.low, modulus_values.high);
 
     s64 modulus = combine_moduli(congruence.modulus_2pow, congruence.modulus_odd);
 
@@ -999,17 +999,17 @@ Linear_Function linearize_congruence(const Dep_Graph& graph,
         }
     }
 
-    printf("The range of leading var values to achieve such mod interval is [%ld, %ld]\n", y_values.low, y_values.high);
+    PRINTF_DEBUG("The range of leading var values to achieve such mod interval is [%ld, %ld]\n", y_values.low, y_values.high);
 
     // It might be the case that as we do modulo on intervals we obtained [L, H] that contains less values than the origial modulo interval
     assert (y_values.high - y_values.low == modulus_values.high - modulus_values.low);
 
     shift_interval(y_values, preference, modulus);
 
-    printf("The shifted interval is [%ld, %ld]\n", y_values.low, y_values.high);
+    PRINTF_DEBUG("The shifted interval is [%ld, %ld]\n", y_values.low, y_values.high);
 
     bool crosses_zero = ((y_values.high / modulus) != (y_values.low / modulus));
-    std::cout << "Crosses zero? " << crosses_zero << "\n";
+    PRINT_DEBUG("Crosses zero? " << (crosses_zero ? "Yes." : "No.") << "\n");
     if (crosses_zero) {
         // @ToDo @Incomplete
         // If there is a point where at which the congruence is valued 0 and it is not one of the border points
@@ -1026,12 +1026,12 @@ Linear_Function linearize_congruence(const Dep_Graph& graph,
 
     s64 left_mod_val  = eval_mod_congruence_at_point(congruence, K, captured_mod, y_values.low);
 
-    printf("Evaluating the congruence at %ld would yield %ld, evaluating a linear function would yield %ld\n", y_values.low, left_mod_val, left_val);
+    PRINTF_DEBUG("Evaluating the congruence at %ld would yield %ld, evaluating a linear function would yield %ld\n", y_values.low, left_mod_val, left_val);
 
     s64 linear_offset = left_mod_val - left_val;
-    printf("The offset of the created linear function would be: %ld\n", linear_offset);
+    PRINTF_DEBUG("The offset of the created linear function would be: %ld\n", linear_offset);
 
-    printf("The resulting linear function is: m = %ld*y + %ld\n", linear_function_dir, linear_offset);
+    PRINTF_DEBUG("The resulting linear function is: m = %ld*y + %ld\n", linear_function_dir, linear_offset);
     return {.a = linear_function_dir, .b = linear_offset, .valid = true};
 }
 
@@ -1733,9 +1733,8 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
     while (!work_queue.empty()) {
         auto macrostate = work_queue.back();
         work_queue.pop_back();
-        // PRINT_DEBUG("Proccessing" << macrostate << " (Queue size " << work_queue.size() << ')');
 
-        std::cout << processed << ") " << macrostate << std::endl;
+        PRINT_DEBUG("Proccessing" << macrostate << " (Queue size " << work_queue.size() << ')');
 
         nfa.states.insert(macrostate.handle);
         if (macrostate.is_accepting) {
@@ -1743,7 +1742,8 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
         }
 
         explore_macrostate(nfa, macrostate, alphabet_iter, constr_state);
-        processed += 1;
+
+        processed       += 1;
         processed_batch += 1;
         if (processed_batch >= 2000) {
             PRINTF_DEBUG("Processed %lu states\n", processed);
@@ -1848,7 +1848,7 @@ std::ostream& operator<<(std::ostream& output, const map<const Quantified_Atom_C
         if (row_cnt < macrostate.size()) output << "\n";
         row_cnt += 1;
     }
-    std::cout << "}";
+    output << "}";
     return output;
 
 }
