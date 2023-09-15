@@ -435,7 +435,7 @@ struct Slab_Fragment {
     Slab_Fragment(u64 capacity, T* items_buffer) : next_free(0), capacity(capacity), items(items_buffer) {};
 
     Slab_Fragment(u64 capacity) : capacity(capacity), next_free(0) {
-        items = (T*) malloc(sizeof(Congruence) * capacity);
+        items = (T*) malloc(sizeof(T) * capacity);
         assert(items);
     }
 
@@ -446,13 +446,6 @@ struct Slab_Fragment {
     }
 };
 
-
-template <typename T>
-Slab_Fragment<T> make_equaly_sized_fragment(Slab_Fragment<T>& buffer) {
-    T* new_items = (T*) malloc(sizeof(T) * buffer.capacity);
-    assert(new_items);
-    return Slab_Fragment(buffer.capacity, new_items);
-}
 
 struct Macrostate_Header_Elem {
     const Quantified_Atom_Conjunction* formula;
@@ -574,15 +567,15 @@ struct Formula_Allocator {
             slab_fragments.emplace_back(slab_item_size);
         }
 
-        auto& last_slab = slab_fragments.back();
+        Slab_Fragment<Atom_Type>* last_slab = &slab_fragments.back();
 
-        if (last_slab.next_free >= last_slab.capacity) {
-            slab_fragments.emplace_back(last_slab.capacity);
-            last_slab = slab_fragments.back();
+        if (last_slab->next_free >= last_slab->capacity) {
+            slab_fragments.emplace_back(last_slab->capacity);
+            last_slab = &slab_fragments.back();
         }
 
-        Atom_Type* allocated_atoms = &last_slab.items[last_slab.next_free];
-        last_slab.next_free += count;
+        Atom_Type* allocated_atoms = &last_slab->items[last_slab->next_free];
+        last_slab->next_free += count;
 
         return {.items = allocated_atoms, .size = count};
     }
