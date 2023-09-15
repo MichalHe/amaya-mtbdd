@@ -47,7 +47,7 @@ s64 vector_dot(const Sized_Array<s64>& coefs, const u64 symbol) {
 };
 
 s64 combine_moduli(s64 mod_2pow, s64 mod_odd) {
-    s64 modulus = (1 << mod_2pow) * mod_odd;
+    s64 modulus = (1ull << mod_2pow) * mod_odd;
     return modulus;
 }
 
@@ -1456,7 +1456,7 @@ void explore_macrostate(NFA& constructed_nfa,
 #endif
             s64 state_data_read_idx = 0;
             for (auto& macrostate_header: macrostate.header) {
-                const Formula* formula = macrostate_header.formula;
+                const Formula* const formula = macrostate_header.formula;
                 for (s64 formula_state_idx = 0; formula_state_idx < macrostate_header.state_cnt; formula_state_idx++) {
                     s64* current_origin_state_data = macrostate.state_data.items + state_data_read_idx;
                     state_data_read_idx += formula->atom_count();
@@ -1469,17 +1469,17 @@ void explore_macrostate(NFA& constructed_nfa,
 
                     // The old formula needs to be used to determine whether the post is accepting
                     post.is_accepting |= accepts_last_symbol(formula, current_origin_state_data, symbol);
-                    formula = successor.formula;
+                    auto post_formula = successor.formula;
 
-                    auto new_formula_state_pair = simplify_stateful_formula(formula, successor.state, constr_state.formula_pool);
+                    auto new_formula_state_pair = simplify_stateful_formula(post_formula, successor.state, constr_state.formula_pool);
                     successor.state = new_formula_state_pair.second;
-                    auto simplified_formula = new_formula_state_pair.first;
+                    post_formula    = new_formula_state_pair.first;
 
-                    if (simplified_formula->is_top()) {
+                    if (post_formula->is_top()) {
                         is_post_top = true;
                         break;
-                    } else if (!simplified_formula->is_bottom()) {
-                        insert_into_post_if_valuable2(post, simplified_formula, successor.state);
+                    } else if (!post_formula->is_bottom()) {
+                        insert_into_post_if_valuable2(post, post_formula, successor.state);
                     }
                 }
 
