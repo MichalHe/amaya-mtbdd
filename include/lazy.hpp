@@ -258,7 +258,7 @@ void write_dep_graph_dot(std::ostream& output, Dep_Graph& graph);
 void identify_potential_variables(Dep_Graph& graph);
 Conjunction_State simplify_graph_using_value(Dep_Graph& graph, Conjunction_State& state, u64 var, s64 val);
 void simplify_graph_with_unbound_var(Dep_Graph& graph, u64 var);
-bool simplify_graph(Dep_Graph& graph, Conjunction_State& state);
+Dep_Graph* simplify_graph(Dep_Graph& graph, Conjunction_State& state);
 std::ostream& operator<<(std::ostream& output, const Congruence_Node& congruence_node);
 std::ostream& operator<<(std::ostream& output, const Linear_Node& lin_node);
 

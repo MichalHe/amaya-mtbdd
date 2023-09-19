@@ -631,7 +631,7 @@ void write_dep_graph_dot(std::ostream& output, Dep_Graph& graph) {
     output << "}\n";
 }
 
-bool get_constant_value_implied_by_bounds(Dep_Graph& graph, u64 var, Conjunction_State& state, s64* val) {
+bool get_constant_value_implied_by_bounds(const Dep_Graph& graph, u64 var, Conjunction_State& state, s64* val) {
     auto& var_node = graph.var_nodes[var];
     if (!var_node.hard_lower_bound.is_present || !var_node.hard_upper_bound.is_present) {
         return false;
@@ -640,12 +640,12 @@ bool get_constant_value_implied_by_bounds(Dep_Graph& graph, u64 var, Conjunction
     u64 linear_states_offset = graph.congruence_nodes.size();
 
     u64 upper_bound_i             = var_node.hard_upper_bound.atom_i;
-    Linear_Node& upper_bound_node = graph.linear_nodes[upper_bound_i];
+    const Linear_Node& upper_bound_node = graph.linear_nodes[upper_bound_i];
     s64 upper_bound_val           = div_bound_by_coef(state.constants[upper_bound_i + linear_states_offset],
                                                       upper_bound_node.coefs[var]);
 
     u64 lower_bound_i             = var_node.hard_lower_bound.atom_i;
-    Linear_Node& lower_bound_node = graph.linear_nodes[lower_bound_i];
+    const Linear_Node& lower_bound_node = graph.linear_nodes[lower_bound_i];
     s64 lower_bound_val           = div_bound_by_coef(state.constants[lower_bound_i + linear_states_offset],
                                                       upper_bound_node.coefs[var]);
 
@@ -1099,31 +1099,41 @@ optional<Stateful_Formula> linearize_formula(Formula_Allocator& allocator,
 }
 
 
-bool simplify_graph(Dep_Graph& graph, Conjunction_State& state) {
+Dep_Graph* simplify_graph(const Dep_Graph& original_graph, Conjunction_State& state) {
     bool all_vars_probed = false;
     bool was_graph_simplified = false;
+
+    Dep_Graph* work_graph = &const_cast<Dep_Graph&>(original_graph); // If we need to modify it, we do a copy so const_cast is fine
+
     while (!all_vars_probed) {
         bool was_graph_invalidated = false;
-        for (auto potential_var: graph.potential_vars) {
+        for (auto potential_var: work_graph->potential_vars) {
+            std::cout << "Trying var: " << potential_var << std::endl;
             s64 inst_val = 0;
-            bool is_val_implied = get_constant_value_implied_by_bounds(graph, potential_var, state, &inst_val);
+            bool is_val_implied = get_constant_value_implied_by_bounds(*work_graph, potential_var, state, &inst_val);
             if (is_val_implied) {
                 PRINT_DEBUG("Simplifying graph - bounds imply value " << inst_val << " for x" << potential_var);
-                state = simplify_graph_using_value(graph, state, potential_var, inst_val);
-                vector_remove(graph.quantified_vars, potential_var);
+
+                if (work_graph == &original_graph) work_graph = new Dep_Graph(original_graph);
+
+                state = simplify_graph_using_value(*work_graph, state, potential_var, inst_val);
+                vector_remove(work_graph->quantified_vars, potential_var);
                 was_graph_invalidated = true;
                 was_graph_simplified = true;
                 break;
             }
 
             // Try simplifying unbound vars
-            auto& var_node = graph.var_nodes[potential_var];
+            auto& var_node = work_graph->var_nodes[potential_var];
             bool can_be_neg_inf = var_node.lower_bounds.empty();
             bool can_be_pos_inf = var_node.upper_bounds.empty();
             if (can_be_neg_inf || can_be_pos_inf) {
                 PRINT_DEBUG("Simplifying graph on unbound var: x" << potential_var);
-                simplify_graph_with_unbound_var(graph, potential_var);
-                vector_remove(graph.quantified_vars, potential_var);
+
+                if (work_graph == &original_graph) work_graph = new Dep_Graph(original_graph);
+
+                simplify_graph_with_unbound_var(*work_graph, potential_var);
+                vector_remove(work_graph->quantified_vars, potential_var);
                 was_graph_simplified = true;
                 was_graph_invalidated = true;
                 break;
@@ -1131,20 +1141,26 @@ bool simplify_graph(Dep_Graph& graph, Conjunction_State& state) {
 
             // Try simplifying using a var with a hard bound such that the var context directly
             // tells what such a value should be
-            bool can_be_instantiated = get_value_close_to_bounds(graph, state, potential_var, &inst_val);
+            bool can_be_instantiated = get_value_close_to_bounds(*work_graph, state, potential_var, &inst_val);
             if (can_be_instantiated) {
                 PRINT_DEBUG("Simplifying graph - instantiating var: x" << potential_var << " with value " << inst_val);
-                state = simplify_graph_using_value(graph, state, potential_var, inst_val);
-                vector_remove(graph.quantified_vars, potential_var);
+
+                if (work_graph == &original_graph) work_graph = new Dep_Graph(original_graph);
+
+                state = simplify_graph_using_value(*work_graph, state, potential_var, inst_val);
+                vector_remove(work_graph->quantified_vars, potential_var);
                 was_graph_simplified = true;
                 was_graph_invalidated = true;
                 break;
             }
         }
-        if (was_graph_invalidated) identify_potential_variables(graph);
+
+        if (was_graph_invalidated) identify_potential_variables(*work_graph);
         else all_vars_probed = true;
     }
-    return was_graph_simplified;
+
+    if (work_graph == &original_graph) return nullptr;  // Nothing was simplified, there is no new dependency graph
+    return work_graph;
 }
 
 Stateful_Formula convert_graph_into_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state, const New_Atoms_Info& delta_info) {
@@ -1236,34 +1252,37 @@ Stateful_Formula convert_graph_into_formula(Dep_Graph& graph, Formula_Allocator&
 }
 
 std::pair<const Formula*, Conjunction_State> simplify_stateful_formula(const Formula* formula, Conjunction_State& state, Formula_Pool& pool) {
+    std::cout << "Simplifying formula: " << *formula << std::endl;
     if (formula->dep_graph.potential_vars.empty()) return {formula, state};
 
-    Dep_Graph graph_copy(formula->dep_graph);
-    bool was_graph_simplified = simplify_graph(graph_copy, state);  // If the graph is simplified, then state will be modified
+    Dep_Graph* simplified_graph = simplify_graph(formula->dep_graph, state);  // If the graph is simplified, then state will be modified
 
-    if (was_graph_simplified) {
-        auto new_stateful_formula = convert_graph_into_formula(graph_copy, pool.allocator, state);
-        const auto& [formula_ptr, was_formula_new] = pool.store_formula_with_info(new_stateful_formula.formula);
-        if (was_formula_new) {
-            // The formula that was inserted has pointers referring to the temporary storage
-            // that will be used in the future so that the formula coefficients might get
-            // overwritten with something else. We have to replace the formula pointers
-            // with the ones pointing to a commited memory.
-            Formula commited_formula = pool.allocator.commit_tmp_space();
-            // We are only changing pointers to point to a different memory with the exact same contents.
-            // Since we are hashing the pointer contents and not pointers, temporary dropping const should be ok.
-            Formula* modif_formula_ptr = const_cast<Formula*>(formula_ptr);
-            modif_formula_ptr->congruences.items = commited_formula.congruences.items;
-            modif_formula_ptr->equations.items   = commited_formula.equations.items;
-            modif_formula_ptr->inequations.items = commited_formula.inequations.items;
+    if (simplified_graph == nullptr) return {formula, state};
 
-            modif_formula_ptr->dep_graph = build_dep_graph(*modif_formula_ptr);
-        } else {
-           pool.allocator.drop_tmp();
-        }
-        return {formula_ptr, new_stateful_formula.state};
+    auto new_stateful_formula = convert_graph_into_formula(*simplified_graph, pool.allocator, state);
+    const auto& [formula_ptr, was_formula_new] = pool.store_formula_with_info(new_stateful_formula.formula);
+    if (was_formula_new) {
+        // The formula that was inserted has pointers referring to the temporary storage
+        // that will be used in the future so that the formula coefficients might get
+        // overwritten with something else. We have to replace the formula pointers
+        // with the ones pointing to a commited memory.
+        Formula commited_formula = pool.allocator.commit_tmp_space();
+        // We are only changing pointers to point to a different memory with the exact same contents.
+        // Since we are hashing the pointer contents and not pointers, temporary dropping const should be ok.
+        Formula* modif_formula_ptr = const_cast<Formula*>(formula_ptr);
+        modif_formula_ptr->congruences.items = commited_formula.congruences.items;
+        modif_formula_ptr->equations.items   = commited_formula.equations.items;
+        modif_formula_ptr->inequations.items = commited_formula.inequations.items;
+
+        modif_formula_ptr->dep_graph = build_dep_graph(*modif_formula_ptr);
+    } else {
+       pool.allocator.drop_tmp();
     }
-    return {formula, state};
+
+    // @Optimize: Reuse the simplified graph instead of deleting it?
+    delete simplified_graph;  // The new formula has a new graph built for it; this one is not reused
+
+    return {formula_ptr, new_stateful_formula.state};
 }
 
 

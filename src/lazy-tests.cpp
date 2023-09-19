@@ -95,7 +95,6 @@ Sized_Array<Equation> alloc_equations(Atom_Allocator& alloc, const vector<vector
         Equation equation = {.coefs = coefs_block};
         equation_block[next_free_equation_slot] = equation;
         next_free_equation_slot += 1;
-        .congruences
     }
 
     return {.items = equation_block, .size = equation_coefs.size()};
@@ -866,7 +865,6 @@ TEST_CASE("Dep. analysis :: simplify (const var)") {
     CHECK( graph.congruence_nodes[0].is_satisfied);
 
     auto& actual_atom = graph.linear_nodes[1];
-    Presburger_Atom expected_atom(PR_ATOM_INEQ, {0, 0, 0, -1}); // 0 <= z
     vector<s64> expected_coefs = {0, 0, 0, -1};
     CHECK(actual_atom.coefs == expected_coefs);
     CHECK(state.constants[2] == -1);
