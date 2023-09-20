@@ -253,12 +253,11 @@ struct Quantified_Atom_Conjunction;
 struct Formula_Allocator;
 
 Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj);
-Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj);
 void write_dep_graph_dot(std::ostream& output, Dep_Graph& graph);
 void identify_potential_variables(Dep_Graph& graph);
 Conjunction_State simplify_graph_using_value(Dep_Graph& graph, Conjunction_State& state, u64 var, s64 val);
 void simplify_graph_with_unbound_var(Dep_Graph& graph, u64 var);
-Dep_Graph* simplify_graph(Dep_Graph& graph, Conjunction_State& state);
+Dep_Graph* simplify_graph(const Dep_Graph& graph, Conjunction_State& state);
 std::ostream& operator<<(std::ostream& output, const Congruence_Node& congruence_node);
 std::ostream& operator<<(std::ostream& output, const Linear_Node& lin_node);
 
@@ -834,10 +833,13 @@ struct New_Atoms_Info {
     s64* new_lin_state_data;  // The data must be organized <EQ0,EQ1,...,INEQ0, INEQ1,...>
 };
 
-Stateful_Formula convert_graph_into_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state);
-Stateful_Formula convert_graph_into_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state, const New_Atoms_Info& delta_info);
+Stateful_Formula convert_graph_into_persistent_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state);
+Stateful_Formula convert_graph_into_persistent_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state, const New_Atoms_Info& delta_info);
+Stateful_Formula convert_graph_into_tmp_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state);
+Stateful_Formula convert_graph_into_tmp_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state, const New_Atoms_Info& delta_info);
 
 std::pair<const Quantified_Atom_Conjunction*, Conjunction_State> simplify_stateful_formula(const Quantified_Atom_Conjunction* formula, Conjunction_State& state, Formula_Pool& pool);
+Stateful_Formula_Ptr try_inf_projection_on_equations(const Dep_Graph& graph, Formula_Pool& pool, Conjunction_State state);
 
 enum class Bound_Type : unsigned {
     NONE  = 0x00,
@@ -854,7 +856,7 @@ void vector_remove(vector<T>& vec, T& elem) {
 }
 
 template <typename T>
-bool vector_contains(vector<T>& vec, T& elem) {
+bool vector_contains(const vector<T>& vec, T& elem) {
     auto pos = std::find(vec.begin(), vec.end(), elem);
     return (pos != vec.end());
 }

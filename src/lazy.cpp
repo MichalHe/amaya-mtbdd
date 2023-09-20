@@ -439,6 +439,7 @@ Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj) {
     }
 
     graph.quantified_vars = conj.bound_vars;
+
     return graph;
 }
 
@@ -641,11 +642,13 @@ bool get_constant_value_implied_by_bounds(const Dep_Graph& graph, u64 var, Conju
 
     u64 upper_bound_i             = var_node.hard_upper_bound.atom_i;
     const Linear_Node& upper_bound_node = graph.linear_nodes[upper_bound_i];
+    if (upper_bound_node.is_satisfied) return false;
     s64 upper_bound_val           = div_bound_by_coef(state.constants[upper_bound_i + linear_states_offset],
                                                       upper_bound_node.coefs[var]);
 
     u64 lower_bound_i             = var_node.hard_lower_bound.atom_i;
     const Linear_Node& lower_bound_node = graph.linear_nodes[lower_bound_i];
+    if (lower_bound_node.is_satisfied) return false;
     s64 lower_bound_val           = div_bound_by_coef(state.constants[lower_bound_i + linear_states_offset],
                                                       upper_bound_node.coefs[var]);
 
@@ -1091,7 +1094,7 @@ optional<Stateful_Formula> linearize_formula(Formula_Allocator& allocator,
     };
 
     New_Atoms_Info info = {.first_new_lin_atom_index = graph.linear_nodes.size(), .new_lin_state_data = new_state_data->data()};
-    auto result = convert_graph_into_formula(*graph_copy, allocator, state, info);
+    auto result = convert_graph_into_persistent_formula(*graph_copy, allocator, state, info);
 
     delete graph_copy;
     delete new_state_data;
@@ -1117,7 +1120,7 @@ Dep_Graph* simplify_graph(const Dep_Graph& original_graph, Conjunction_State& st
                 if (work_graph == &original_graph) work_graph = new Dep_Graph(original_graph);
 
                 state = simplify_graph_using_value(*work_graph, state, potential_var, inst_val);
-                vector_remove(work_graph->quantified_vars, potential_var);
+                // vector_remove(work_graph->quantified_vars, potential_var);
                 was_graph_invalidated = true;
                 was_graph_simplified = true;
                 break;
@@ -1133,7 +1136,7 @@ Dep_Graph* simplify_graph(const Dep_Graph& original_graph, Conjunction_State& st
                 if (work_graph == &original_graph) work_graph = new Dep_Graph(original_graph);
 
                 simplify_graph_with_unbound_var(*work_graph, potential_var);
-                vector_remove(work_graph->quantified_vars, potential_var);
+                vector_remove(work_graph->potential_vars, potential_var);
                 was_graph_simplified = true;
                 was_graph_invalidated = true;
                 break;
@@ -1148,7 +1151,7 @@ Dep_Graph* simplify_graph(const Dep_Graph& original_graph, Conjunction_State& st
                 if (work_graph == &original_graph) work_graph = new Dep_Graph(original_graph);
 
                 state = simplify_graph_using_value(*work_graph, state, potential_var, inst_val);
-                vector_remove(work_graph->quantified_vars, potential_var);
+                vector_remove(work_graph->potential_vars, potential_var);
                 was_graph_simplified = true;
                 was_graph_invalidated = true;
                 break;
@@ -1163,7 +1166,23 @@ Dep_Graph* simplify_graph(const Dep_Graph& original_graph, Conjunction_State& st
     return work_graph;
 }
 
-Stateful_Formula convert_graph_into_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state, const New_Atoms_Info& delta_info) {
+Stateful_Formula convert_graph_into_persistent_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state) {
+    auto tmp_formula = convert_graph_into_tmp_formula(graph, allocator, state);
+    auto presistent_formula = allocator.commit_tmp_space();
+    presistent_formula.var_count = tmp_formula.formula.var_count;
+    presistent_formula.bound_vars = tmp_formula.formula.bound_vars;
+    return {.state = tmp_formula.state, .formula = presistent_formula};
+}
+
+Stateful_Formula convert_graph_into_persistent_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state, const New_Atoms_Info& delta_info) {
+    auto tmp_formula = convert_graph_into_tmp_formula(graph, allocator, state, delta_info);
+    auto presistent_formula = allocator.commit_tmp_space();
+    presistent_formula.var_count = tmp_formula.formula.var_count;
+    presistent_formula.bound_vars = tmp_formula.formula.bound_vars;
+    return {.state = tmp_formula.state, .formula = presistent_formula};
+}
+
+Stateful_Formula convert_graph_into_tmp_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state, const New_Atoms_Info& delta_info) {
     vector<s64> formula_state;
 
     for (u64 congr_i = 0; congr_i < graph.congruence_nodes.size(); congr_i++) {
@@ -1247,8 +1266,8 @@ Stateful_Formula convert_graph_into_formula(Dep_Graph& graph, Formula_Allocator&
     return {.state = new_state, .formula = conjunction};
 }
 
-Stateful_Formula convert_graph_into_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state) {
-    return convert_graph_into_formula(graph, allocator, state, {.new_lin_state_data = nullptr});
+Stateful_Formula convert_graph_into_tmp_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state) {
+    return convert_graph_into_tmp_formula(graph, allocator, state, {.new_lin_state_data = nullptr});
 }
 
 std::pair<const Formula*, Conjunction_State> simplify_stateful_formula(const Formula* formula, Conjunction_State& state, Formula_Pool& pool) {
@@ -1259,7 +1278,7 @@ std::pair<const Formula*, Conjunction_State> simplify_stateful_formula(const For
 
     if (simplified_graph == nullptr) return {formula, state};
 
-    auto new_stateful_formula = convert_graph_into_formula(*simplified_graph, pool.allocator, state);
+    auto new_stateful_formula = convert_graph_into_tmp_formula(*simplified_graph, pool.allocator, state);
     const auto& [formula_ptr, was_formula_new] = pool.store_formula_with_info(new_stateful_formula.formula);
     if (was_formula_new) {
         // The formula that was inserted has pointers referring to the temporary storage
@@ -1634,6 +1653,164 @@ NFA make_trivial_rejecting_nfa(sylvan::BDDSET vars, u64 var_count) {
     return nfa;
 }
 
+bool does_variable_allow_inf_projection(const Dep_Graph& graph, u64 var, bool positive_inf, u64 ignored_atom) {
+    auto& node = graph.var_nodes[var];
+    bool inf_projection_possible = true;
+
+    if (positive_inf) {
+        for (u64 lin_atom_idx: node.upper_bounds) {
+            if (lin_atom_idx == ignored_atom) continue;
+            inf_projection_possible = false;
+            break;
+        }
+    } else {
+        for (u64 lin_atom_idx: node.lower_bounds) {
+            if (lin_atom_idx == ignored_atom) continue;
+            inf_projection_possible = false;
+            break;
+        }
+    }
+
+    return inf_projection_possible;
+}
+
+
+bool can_var_affect_free_variable_via_equations(const Dep_Graph& graph, u64 var) {
+    auto& var_node = graph.var_nodes[var];
+
+    u64 eq_count = 0;
+    for (auto& bound_i: var_node.lower_bounds) {
+        auto& node = graph.linear_nodes[bound_i];
+        eq_count += (node.type == Linear_Node_Type::EQ);
+    }
+
+    // @Incomplete: This is underapproximation. Generally, we can be dealing with multiple equations
+    //              that all contain free variables and none of these can change the value of a free variable.
+
+    // @Incomplete: We need a notion of "almost" equation - (a.x <= K1 && and a.x => K2) - these
+    //              would break the logic implemented here.
+    return eq_count > 1;
+};
+
+
+struct Linear_Term {
+    u64 var;
+    s64 coef;
+};
+
+struct Inf_Projection_Info {
+    bool can_be_inf = false;
+    bool has_granularity_1 = false;
+};
+
+Inf_Projection_Info can_eq_side_be_inf_with_granularity(const Dep_Graph& graph, vector<Linear_Term>& eq_side, bool positive_inf, u64 eq_idx) {
+    Inf_Projection_Info projection_info;
+
+    for (auto& term: eq_side) {
+        bool can_be_inf = does_variable_allow_inf_projection(graph, term.var, positive_inf, eq_idx);
+        if (!can_be_inf) continue;
+
+        auto& var_node = graph.var_nodes[term.var];
+        bool is_granularity_1 = var_node.congruences.empty() && abs(term.coef) == 1;
+
+        projection_info.can_be_inf = true;
+        projection_info.has_granularity_1 |= is_granularity_1;
+    }
+    return projection_info;
+}
+
+Stateful_Formula_Ptr perform_inf_projection(const Dep_Graph& graph, Formula_Pool& pool, Conjunction_State& state, u64 eq_idx) {
+    auto& eq = graph.linear_nodes[eq_idx];
+    Dep_Graph graph_copy(graph);
+
+    for (u64 var: eq.vars) {
+        auto& var_node = graph.var_nodes[var];
+        for (u64 var_atom_idx: var_node.lower_bounds) {
+            auto& atom_node = graph_copy.linear_nodes[var_atom_idx];
+            atom_node.is_satisfied = true;
+        }
+        for (u64 var_atom_idx: var_node.upper_bounds) {
+            auto& atom_node = graph_copy.linear_nodes[var_atom_idx];
+            atom_node.is_satisfied = true;
+        }
+    }
+
+    Stateful_Formula formula_with_state = convert_graph_into_persistent_formula(graph_copy, pool.allocator, state);
+    auto formula_ptr = pool.store_formula(formula_with_state.formula);
+    return {.state = formula_with_state.state, .formula = formula_ptr};
+}
+
+Stateful_Formula_Ptr try_inf_projection_on_equations(const Dep_Graph& graph, Formula_Pool& pool, Conjunction_State state) {
+    // For now limit to only one equation that cannot influence (via equations) free variables
+    Linear_Node* target_equation = nullptr;
+
+    vector<Linear_Term> lhs, rhs;
+    lhs.reserve(graph.var_nodes.size());
+    rhs.reserve(graph.var_nodes.size());
+
+    for (s64 lin_atom_idx = 0; lin_atom_idx < graph.linear_nodes.size(); lin_atom_idx++) {
+        auto& node = graph.linear_nodes[lin_atom_idx];
+        if (node.type != Linear_Node_Type::EQ) break;
+
+        bool all_vars_quantified = true;
+        for (u64 var: node.vars) {
+            if (!vector_contains(graph.quantified_vars, var)) {
+                all_vars_quantified = false;
+                break;
+            }
+        }
+
+        if (!all_vars_quantified) continue;
+
+        bool would_inf_projection_cause_problems = false;
+        for (u64 var: node.vars) {
+            would_inf_projection_cause_problems = can_var_affect_free_variable_via_equations(graph, var);
+            if (would_inf_projection_cause_problems) break;
+        }
+
+        if (would_inf_projection_cause_problems) continue;
+
+        for (s64 term_i = 0; term_i < node.vars.size(); term_i++) {
+            u64 var = node.vars[term_i];
+            s64 coef = node.coefs[var];
+            if (coef < 0) rhs.push_back({.var = var, .coef = -coef});
+            else lhs.push_back({.var = var, .coef = coef});
+        }
+
+
+        {   // Try +\inf projection
+            auto lhs_proj_info = can_eq_side_be_inf_with_granularity(graph, lhs, true, lin_atom_idx);
+            auto rhs_proj_info = can_eq_side_be_inf_with_granularity(graph, rhs, true, lin_atom_idx);
+
+            bool do_inf_projection = false;
+            if (lhs_proj_info.can_be_inf && rhs_proj_info.can_be_inf) {
+                do_inf_projection = (lhs_proj_info.has_granularity_1 || rhs_proj_info.has_granularity_1);
+            }
+
+            if (do_inf_projection) {
+                return perform_inf_projection(graph, pool, state, lin_atom_idx);
+            }
+        }
+
+        {   // Try -\inf projection
+            auto lhs_proj_info = can_eq_side_be_inf_with_granularity(graph, lhs, false, lin_atom_idx);
+            auto rhs_proj_info = can_eq_side_be_inf_with_granularity(graph, rhs, false, lin_atom_idx);
+
+            bool do_inf_projection = false;
+            if (lhs_proj_info.can_be_inf && rhs_proj_info.can_be_inf) {
+                do_inf_projection = (lhs_proj_info.has_granularity_1 || rhs_proj_info.has_granularity_1);
+            }
+
+            if (do_inf_projection) {
+                return perform_inf_projection(graph, pool, state, lin_atom_idx);
+            }
+        }
+    }
+    return {.state = state, .formula = nullptr};
+}
+
+
+
 Stateful_Formula_Ptr perform_initial_simplification_of_formula(const Formula* formula, Conjunction_State& init_state, Formula_Pool& pool) {
 
     PRINT_DEBUG("Performing initial formula simplification.");
@@ -1657,7 +1834,6 @@ Stateful_Formula_Ptr perform_initial_simplification_of_formula(const Formula* fo
             state = simplification_result.second;
         }
 
-        PRINT_DEBUG("Was formula simplified on some variable? " << (was_variable_removed ? "Yes." : "No."));
         if (do_any_hard_bounds_imply_contradiction(formula->dep_graph, state)) {
             Formula bottom (false);
             auto formula_ptr = pool.store_formula(bottom);
@@ -1674,6 +1850,14 @@ Stateful_Formula_Ptr perform_initial_simplification_of_formula(const Formula* fo
             state = linearization_result.value().state;
         }
 
+        auto inf_eq_projection_result = try_inf_projection_on_equations(formula->dep_graph, pool, state);
+        PRINT_DEBUG("Performed inf projection on equations? " << (inf_eq_projection_result.formula != nullptr ? "Yes." : "No."));
+        if (inf_eq_projection_result.formula != nullptr) {
+            formula = inf_eq_projection_result.formula;
+            state = inf_eq_projection_result.state;
+        }
+
+        if (formula->is_bottom() || formula->is_top()) break;
         was_any_simplification_performed = (was_variable_removed || was_modulo_linearized);
     }
 

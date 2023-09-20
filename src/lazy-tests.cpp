@@ -62,8 +62,8 @@ Sized_Array<Congruence> alloc_congruences(Atom_Allocator& alloc, const vector<pa
         Sized_Array<s64> coefs_block = {.items = congruence_coef_block, .size=var_count};
 
         // Make a congruence and push it back
-        auto [modulus_odd, modulus_pow2] = decompose_modulus(modulus);
-        Congruence congruence = {.coefs = coefs_block, .modulus_odd = modulus_odd, .modulus_2pow = modulus_pow2};
+        auto decomposed_modulus = decompose_modulus(modulus);
+        Congruence congruence = {.coefs = coefs_block, .modulus_odd = decomposed_modulus.modulus_odd, .modulus_2pow = decomposed_modulus.modulus_2pow};
         congruence_block[next_free_congruence_slot] = congruence;
         next_free_congruence_slot += 1;
     }
@@ -826,7 +826,9 @@ TEST_CASE("Dep. analysis :: potential var identifiction") {
     auto graph = build_dep_graph(formula);
     identify_potential_variables(graph);
 
-    vector<u64> expected_potent_vars = {0};
+    // m (=x0) has potential because it is squeezed between its hard bounds
+    // y (=x2) has potential because it can be infinitely large
+    vector<u64> expected_potent_vars = {0, 2};
     CHECK(graph.potential_vars == expected_potent_vars);
 }
 
@@ -840,8 +842,8 @@ TEST_CASE("Dep. analysis :: simplify (const var)") {
         {
             {0, 1, -1, 0},  // x <= y
             {1, 0, 0, -1},  // m <= z
-            {-1, 0, 0, 0},  // m >= 0
-            {1, 0, 0,  0},  // m >= 0
+            {-1, 0, 0, 0},  // -m <= -1 (equivalent to m >= 1)
+            {1, 0, 0,  0},  // m  <= 1
         },
         {0, 2}
     );
@@ -849,22 +851,22 @@ TEST_CASE("Dep. analysis :: simplify (const var)") {
     auto graph = build_dep_graph(formula);
     identify_potential_variables(graph);
 
-    Conjunction_State state({0, 0, 0, 1, 1});
-    bool was_simplified = simplify_graph(graph, state);
+    Conjunction_State state({0, 0, 0, -1, 1});
+    Dep_Graph* new_graph = simplify_graph(graph, state);
 
-    CHECK(was_simplified);
+    CHECK(new_graph != nullptr);
 
     // The graph should be simplified to
     // 0. x <= y, m ~ y, m <= z, m >= 1, m <= 1
     // 1. x <= y, 1 ~ y, 1 <= z
     // 2. 1 <= z
-    CHECK( graph.linear_nodes[0].is_satisfied);
-    CHECK(!graph.linear_nodes[1].is_satisfied);
-    CHECK( graph.linear_nodes[2].is_satisfied);
-    CHECK( graph.linear_nodes[3].is_satisfied);
-    CHECK( graph.congruence_nodes[0].is_satisfied);
+    CHECK( new_graph->linear_nodes[0].is_satisfied);
+    CHECK(!new_graph->linear_nodes[1].is_satisfied);
+    CHECK( new_graph->linear_nodes[2].is_satisfied);
+    CHECK( new_graph->linear_nodes[3].is_satisfied);
+    CHECK( new_graph->congruence_nodes[0].is_satisfied);
 
-    auto& actual_atom = graph.linear_nodes[1];
+    auto& actual_atom = new_graph->linear_nodes[1];
     vector<s64> expected_coefs = {0, 0, 0, -1};
     CHECK(actual_atom.coefs == expected_coefs);
     CHECK(state.constants[2] == -1);
@@ -893,22 +895,52 @@ TEST_CASE("Dep. analysis :: simplify (unbound vars)") {
 
     Conjunction_State state({0, -23, 0, 0, 0, 12, 0});
 
-    auto was_simplified = simplify_graph(graph, state);
-    CHECK(was_simplified);
+    Dep_Graph* new_graph = simplify_graph(graph, state);
+    CHECK(new_graph != nullptr);
 
     // 0)  0 <= x1, 23 <= x2, 5x2 <= x1, x4 <= x3, x4 >= 0, x4 <= 12, x1 ~ x4
     // 1)  23 <= x2, x4 <= x3, x4 >= 0, x4 <= 12
     // 2)  x4 <= x3, x4 >= 0, x4 <= 12
     // 3)  0 <= x3
-    CHECK( graph.linear_nodes[0].is_satisfied);
-    CHECK( graph.linear_nodes[1].is_satisfied);
-    CHECK( graph.linear_nodes[2].is_satisfied);
-    CHECK(!graph.linear_nodes[3].is_satisfied);
-    CHECK( graph.linear_nodes[4].is_satisfied);
-    CHECK( graph.linear_nodes[5].is_satisfied);
-    CHECK(graph.congruence_nodes[0].is_satisfied);
+    CHECK( new_graph->linear_nodes[0].is_satisfied);
+    CHECK( new_graph->linear_nodes[1].is_satisfied);
+    CHECK( new_graph->linear_nodes[2].is_satisfied);
+    CHECK(!new_graph->linear_nodes[3].is_satisfied);
+    CHECK( new_graph->linear_nodes[4].is_satisfied);
+    CHECK( new_graph->linear_nodes[5].is_satisfied);
+    CHECK( new_graph->congruence_nodes[0].is_satisfied);
 
     CHECK(state.constants[3] == 0);
+}
+
+TEST_CASE("Infinite projection with equation") {
+    Atom_Allocator allocator;
+
+    Formula formula = make_formula(
+        allocator,
+        {},
+        {{1, -1, -5, 0}},  //  x0 - x1 - 5*x2 = 0
+        {
+            {1, 0, 0, 0},  //  x0 <= -13
+            {0, -1, 0, 0}, //  -x1 <= -1
+            {0, 1, 0, 0},  //  x1 <= 5
+            {0, 0, 1, -1}, //  x3 - x4 <= 10
+        },
+        {0, 1, 2}
+    );
+
+    auto graph = build_dep_graph(formula);
+    identify_potential_variables(graph);
+
+    Formula_Pool pool(&formula);
+    Conjunction_State state({0, -13, -1, 5, 10});
+    auto result = try_inf_projection_on_equations(graph, pool, state);
+    CHECK(result.formula != nullptr);
+
+    vector<s64> expected_state({});
+    CHECK(result.state == expected_state);
+
+    CHECK(result.formula->is_top());
 }
 
 TEST_CASE("Dep. analysis :: simplify (presentation formula)") {
@@ -934,24 +966,24 @@ TEST_CASE("Dep. analysis :: simplify (presentation formula)") {
 
     Conjunction_State state({303, -1, -1, -1, 0, 0});
 
-    auto was_simplified = simplify_graph(graph, state);
-    CHECK(was_simplified);
+    Dep_Graph* new_graph = simplify_graph(graph, state);
+    CHECK(new_graph != nullptr);
     // 0)  x - y <= -1, m - z <= -1, y <= -1, -m <= 0, m <= M, m - y ~ 303
     // 0)  x - y <= -1, -z <= -1, y <= -1, -y ~ 303   (instantiate y=-303)
     // 0)  x <= -304, -z <= -1
-    CHECK(!graph.linear_nodes[0].is_satisfied);
-    CHECK(!graph.linear_nodes[1].is_satisfied);
-    CHECK( graph.linear_nodes[2].is_satisfied);
-    CHECK( graph.linear_nodes[3].is_satisfied);
-    CHECK( graph.linear_nodes[4].is_satisfied);
-    CHECK( graph.congruence_nodes[0].is_satisfied);
+    CHECK(!new_graph->linear_nodes[0].is_satisfied);
+    CHECK(!new_graph->linear_nodes[1].is_satisfied);
+    CHECK( new_graph->linear_nodes[2].is_satisfied);
+    CHECK( new_graph->linear_nodes[3].is_satisfied);
+    CHECK( new_graph->linear_nodes[4].is_satisfied);
+    CHECK( new_graph->congruence_nodes[0].is_satisfied);
 
     CHECK(state.constants[1] == -304);
     CHECK(state.constants[2] == -1);
 
     Formula_Allocator formula_allocator (&formula);
 
-    auto stateful_formula = convert_graph_into_formula(graph, formula_allocator, state);
+    auto stateful_formula = convert_graph_into_persistent_formula(*new_graph, formula_allocator, state);
     auto& simplified_formula = stateful_formula.formula;
 
     CHECK(simplified_formula.inequations.size == 2);
@@ -1121,12 +1153,12 @@ TEST_CASE("Test linearize_formula - `\\exists y (x - y <= 0 && m - z <= 60_000 &
                                     {0, 1, -1, 0},       // x - y <= 0
                                     {1, 0, 0, -1},       // m - z <= 60_000
                                     {0, 0, 1, 0},        // y <= -1
-                                    {-1, 0, 0, 0},       // m >= 1
+                                    {-1, 0, 0, 0},       // -m <= -1  (equivalent to m >= 1)
                                     {1, 0, 0, 0},        // m <= 299_992
                                    },
                                    {});
     Formula_Allocator allocator(&formula);
-    Conjunction_State state ({0 /*congruence*/, 0, 60000, -1, 1, 299992});
+    Conjunction_State state ({0 /*congruence*/, 0, 60000, -1, -1, 299992});
 
     auto result = linearize_formula(allocator, &formula, state);
     CHECK(result.has_value());
@@ -1143,7 +1175,7 @@ TEST_CASE("Test linearize_formula - `\\exists y (x - y <= 0 && m - z <= 60_000 &
 
     auto& modified_state = result.value().state;
     std::cout << "modified state: " << modified_state << "\n";
-    vector<s64> expected_state_data = {-299993 /*equation*/, 0, 60000, -1, 1, 299992};
+    vector<s64> expected_state_data = {-299993 /*equation*/, 0, 60000, -1, -1, 299992};
     CHECK(modified_state.constants == expected_state_data);
 }
 
