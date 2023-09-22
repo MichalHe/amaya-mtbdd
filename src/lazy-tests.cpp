@@ -998,7 +998,7 @@ TEST_CASE("Dep. analysis :: simplify (presentation formula)") {
     CHECK(simplified_formula.inequations.items[0].coefs == ineq1_coefs);
     CHECK(simplified_formula.inequations.items[1].coefs == ineq2_coefs);
 
-    CHECK(simplified_formula.bound_vars.empty());
+    CHECK(simplified_formula.dep_graph.vars_not_removed_in_simplification.empty());
 
     vector<s64> expected_state = {-304, -1};
     CHECK(stateful_formula.state.constants == expected_state);

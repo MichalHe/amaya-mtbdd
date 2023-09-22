@@ -242,11 +242,12 @@ struct Var_Node {
 };
 
 struct Dep_Graph {
-    vector<u64>             potential_vars;
-    vector<u64>             quantified_vars;
-    vector<Var_Node>        var_nodes;
-    vector<Linear_Node>     linear_nodes; // First nodes are equations then inequations
-    vector<Congruence_Node> congruence_nodes;
+    vector<u64>                 potential_vars;
+    vector<u64>                 quantified_vars;
+    vector<u64>                 vars_not_removed_in_simplification;
+    vector<Var_Node>            var_nodes;
+    vector<Linear_Node>         linear_nodes; // First nodes are equations then inequations
+    vector<Congruence_Node>     congruence_nodes;
 };
 
 struct Quantified_Atom_Conjunction;
@@ -766,7 +767,7 @@ struct Formula_Pool { // Formula memory management
 
     Formula_Pool(const Quantified_Atom_Conjunction* root_formula) : allocator(root_formula) {};
 
-    const Quantified_Atom_Conjunction* store_formula(Quantified_Atom_Conjunction& formula);
+    const Quantified_Atom_Conjunction* store_formula(const Quantified_Atom_Conjunction& formula);
     std::pair<const Quantified_Atom_Conjunction*, bool> store_formula_with_info(Quantified_Atom_Conjunction& formula);
 };
 

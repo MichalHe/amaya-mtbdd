@@ -57,6 +57,7 @@ Decomposed_Modulus decompose_modulus(s64 modulus) {
         modulus_pow2 += 1;
         modulus      /= 2;
     }
+    modulus += (modulus == 0); // If odd modulus = 0, then make it 1
     return {.modulus_2pow = modulus_pow2, .modulus_odd = modulus};
 }
 
@@ -349,6 +350,7 @@ s64 normalize_reminder(s64 reminder, s64 modulus) {
 }
 
 
+
 Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj) {
     Dep_Graph graph;
     graph.var_nodes = vector<Var_Node>(conj.var_count);
@@ -439,6 +441,7 @@ Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj) {
     }
 
     graph.quantified_vars = conj.bound_vars;
+    graph.vars_not_removed_in_simplification = conj.bound_vars;
 
     return graph;
 }
@@ -531,7 +534,11 @@ bool is_safe_to_instantiate(Dep_Graph& graph, u64 var) {
     auto& node = graph.var_nodes[var];
 
     bool has_both_hard_bounds = node.hard_lower_bound.is_present && node.hard_upper_bound.is_present;
-    if (has_both_hard_bounds) return true; // Can be simplified in the future when the bounds imply a constant value
+    if (has_both_hard_bounds) {
+        bool is_upper_bound_valid = !graph.linear_nodes[node.hard_upper_bound.atom_i].is_satisfied;
+        bool is_lower_bound_valid = !graph.linear_nodes[node.hard_lower_bound.atom_i].is_satisfied;
+        return is_lower_bound_valid && is_upper_bound_valid; // Can be simplified in the future when the bounds imply a constant value
+    }
 
     // The variable is missing at least one hard bound, check if its ussages all desire the same kind of value
     bool has_soft_upper_bounds = node.upper_bounds.size() > (node.hard_upper_bound.is_present);
@@ -557,7 +564,7 @@ bool is_safe_to_instantiate(Dep_Graph& graph, u64 var) {
 
 void identify_potential_variables(Dep_Graph& graph) {
     graph.potential_vars.clear();
-    for (auto var: graph.quantified_vars) {
+    for (auto var: graph.vars_not_removed_in_simplification) {
         auto& node = graph.var_nodes[var];
         if (is_safe_to_instantiate(graph, var)) graph.potential_vars.push_back(var);
     }
@@ -789,6 +796,7 @@ bool get_value_close_to_bounds(Dep_Graph& graph, Conjunction_State& state, u64 v
     if (bound_type == Bound_Type::NONE) return false;
 
     auto& bound_node = graph.linear_nodes[bound_node_i];
+    if (bound_node.is_satisfied) return false;
 
     // Var has a clear lower bound and its all of its ussages would like it to be some low value
     s64 bound_raw_val = state.get_lin_atom_val(graph.congruence_nodes.size(), bound_node_i);
@@ -1005,7 +1013,9 @@ Linear_Function linearize_congruence(const Dep_Graph& graph,
     PRINTF_DEBUG("The range of leading var values to achieve such mod interval is [%ld, %ld]\n", y_values.low, y_values.high);
 
     // It might be the case that as we do modulo on intervals we obtained [L, H] that contains less values than the origial modulo interval
-    assert (y_values.high - y_values.low == modulus_values.high - modulus_values.low);
+    if (y_values.high - y_values.low != modulus_values.high - modulus_values.low) {
+       return {.valid = false}; 
+    }
 
     shift_interval(y_values, preference, modulus);
 
@@ -1111,7 +1121,7 @@ Dep_Graph* simplify_graph(const Dep_Graph& original_graph, Conjunction_State& st
     while (!all_vars_probed) {
         bool was_graph_invalidated = false;
         for (auto potential_var: work_graph->potential_vars) {
-            std::cout << "Trying var: " << potential_var << std::endl;
+            // std::cout << "Trying var: " << potential_var << std::endl;
             s64 inst_val = 0;
             bool is_val_implied = get_constant_value_implied_by_bounds(*work_graph, potential_var, state, &inst_val);
             if (is_val_implied) {
@@ -1120,7 +1130,7 @@ Dep_Graph* simplify_graph(const Dep_Graph& original_graph, Conjunction_State& st
                 if (work_graph == &original_graph) work_graph = new Dep_Graph(original_graph);
 
                 state = simplify_graph_using_value(*work_graph, state, potential_var, inst_val);
-                // vector_remove(work_graph->quantified_vars, potential_var);
+                vector_remove(work_graph->vars_not_removed_in_simplification, potential_var);
                 was_graph_invalidated = true;
                 was_graph_simplified = true;
                 break;
@@ -1136,7 +1146,7 @@ Dep_Graph* simplify_graph(const Dep_Graph& original_graph, Conjunction_State& st
                 if (work_graph == &original_graph) work_graph = new Dep_Graph(original_graph);
 
                 simplify_graph_with_unbound_var(*work_graph, potential_var);
-                vector_remove(work_graph->potential_vars, potential_var);
+                vector_remove(work_graph->vars_not_removed_in_simplification, potential_var);
                 was_graph_simplified = true;
                 was_graph_invalidated = true;
                 break;
@@ -1151,7 +1161,7 @@ Dep_Graph* simplify_graph(const Dep_Graph& original_graph, Conjunction_State& st
                 if (work_graph == &original_graph) work_graph = new Dep_Graph(original_graph);
 
                 state = simplify_graph_using_value(*work_graph, state, potential_var, inst_val);
-                vector_remove(work_graph->potential_vars, potential_var);
+                vector_remove(work_graph->vars_not_removed_in_simplification, potential_var);
                 was_graph_simplified = true;
                 was_graph_invalidated = true;
                 break;
@@ -1271,7 +1281,7 @@ Stateful_Formula convert_graph_into_tmp_formula(Dep_Graph& graph, Formula_Alloca
 }
 
 std::pair<const Formula*, Conjunction_State> simplify_stateful_formula(const Formula* formula, Conjunction_State& state, Formula_Pool& pool) {
-    std::cout << "Simplifying formula: " << *formula << std::endl;
+    // std::cout << "Simplifying formula: " << *formula << std::endl;
     if (formula->dep_graph.potential_vars.empty()) return {formula, state};
 
     Dep_Graph* simplified_graph = simplify_graph(formula->dep_graph, state);  // If the graph is simplified, then state will be modified
@@ -1850,12 +1860,12 @@ Stateful_Formula_Ptr perform_initial_simplification_of_formula(const Formula* fo
             state = linearization_result.value().state;
         }
 
-        auto inf_eq_projection_result = try_inf_projection_on_equations(formula->dep_graph, pool, state);
-        PRINT_DEBUG("Performed inf projection on equations? " << (inf_eq_projection_result.formula != nullptr ? "Yes." : "No."));
-        if (inf_eq_projection_result.formula != nullptr) {
-            formula = inf_eq_projection_result.formula;
-            state = inf_eq_projection_result.state;
-        }
+        // auto inf_eq_projection_result = try_inf_projection_on_equations(formula->dep_graph, pool, state);
+        // PRINT_DEBUG("Performed inf projection on equations? " << (inf_eq_projection_result.formula != nullptr ? "Yes." : "No."));
+        // if (inf_eq_projection_result.formula != nullptr) {
+        //     formula = inf_eq_projection_result.formula;
+        //     state = inf_eq_projection_result.state;
+        // }
 
         if (formula->is_bottom() || formula->is_top()) break;
         was_any_simplification_performed = (was_variable_removed || was_modulo_linearized);
@@ -1973,7 +1983,7 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
         PRINT_DEBUG(handle << " :: " << macrostate);
     }
 
-    if (!formula->bound_vars.empty() && false) {
+    if (!formula->bound_vars.empty()) {
         nfa.perform_pad_closure();
         return determinize_nfa(nfa);
     }
@@ -1982,7 +1992,7 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
 }
 
 
-const Quantified_Atom_Conjunction* Formula_Pool::store_formula(Quantified_Atom_Conjunction& formula) {
+const Quantified_Atom_Conjunction* Formula_Pool::store_formula(const Quantified_Atom_Conjunction& formula) {
     auto [it, did_insertion_happen] = formulae.emplace(formula);
     const Quantified_Atom_Conjunction* stored_formula_ptr = &(*it);
     return &(*it);
