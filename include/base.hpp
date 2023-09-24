@@ -30,9 +30,13 @@ using std::unordered_map;
 
 typedef uint64_t u64;
 typedef uint32_t u32;
+typedef uint16_t u16;
 typedef uint8_t  u8;
-typedef int64_t  s64;
-typedef int32_t  s32;
+
+typedef int64_t s64;
+typedef int32_t s32;
+typedef int16_t s16;
+typedef int8_t  s8;
 
 typedef int64_t State;
 
@@ -188,5 +192,20 @@ void in_place_set_difference(std::set<T>& left, const std::set<T>& right) {
         }
     }
 }
+
+inline std::size_t hash_combine(std::size_t hash1, std::size_t hash2) {
+    return hash1 + 0x9e3779b9 + (hash2 << 6) + (hash2 >> 2);
+}
+
+template <typename T>
+std::size_t hash_vector(std::vector<T>& arr, std::size_t seed) {
+    std::size_t hash = seed;
+    for (u64 i = 0; i < arr.size; i++) {
+        std::size_t item_hash = std::hash<T>{}(arr.items[i]);
+        hash = hash_combine(hash, item_hash);
+    }
+    return hash;
+}
+
 
 #endif

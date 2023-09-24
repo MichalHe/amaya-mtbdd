@@ -4,6 +4,7 @@
 #include "base.hpp"
 #include "custom_leaf.hpp"
 #include "operations.hpp"
+#include "tfa_leaf.h"
 
 #include <bitset>
 #include <list>
@@ -146,10 +147,6 @@ struct Sized_Array {
 };
 
 std::size_t hash_array(Sized_Array<s64>& arr);
-
-inline std::size_t hash_combine(std::size_t hash1, std::size_t hash2) {
-    return hash1 + 0x9e3779b9 + (hash2 << 6) + (hash2 >> 2);
-}
 
 struct Congruence {
     Sized_Array<s64> coefs;
@@ -928,6 +925,77 @@ std::optional<Stateful_Formula> linearize_formula(Formula_Allocator& allocator,
                                                   Conjunction_State& state);
 
 bool do_any_hard_bounds_imply_contradiction(const Dep_Graph& graph, const Conjunction_State& state);
+
+
+u64 perfect_bit_hash(u64 symbol, const vector<u64>& interestring_vars);
+
+struct Atom {
+    unordered_map<s64, sylvan::MTBDD> post_cache;
+
+    vector<s64> coefs;
+    vector<u64> vars;
+    u64 interesting_bits_mask;
+    sylvan::BDDSET var_set;
+
+    Atom(const vector<u64>& vars, const vector<s64>& coefs);
+    ~Atom() {
+        sylvan::mtbdd_deref(var_set);
+    }
+    s64 dot_with_symbol(u64 symbol) const;
+
+    template <typename Post_Maker>
+    sylvan::MTBDD make_extended_post(Post_Maker& maker, s64 rhs, u64 quantif_bit_mask, u64 var_cnt);
+
+    void invalidate_cache();
+};
+
+struct Inequation2 : Atom {
+    Inequation2(const vector<u64>& vars, const vector<s64>& coefs) : Atom(vars, coefs) {};
+
+    s64  post(s64 rhs, u64 symbol) const;
+    bool accepts(s64 rhs, u64 symbol) const;
+
+    sylvan::MTBDD compute_entire_post(s64 rhs, u64 quantif_bit_mask, u64 var_cnt);
+    sylvan::MTBDD extend_post(sylvan::MTBDD current_post, vector<u8> ritch_symbol_space, s64 rhs, u64 symbol);
+};
+
+struct Equation2 : Atom {
+    Equation2(const vector<u64>& vars, const vector<s64>& coefs) : Atom(vars, coefs) {};
+
+    optional<s64> post(s64 rhs, u64 symbol) const;
+    bool accepts(s64 rhs, u64 symbol) const;
+
+    sylvan::MTBDD compute_entire_post(s64 rhs, u64 quantif_bit_mask, u64 var_cnt);
+    sylvan::MTBDD extend_post(sylvan::MTBDD current_post, vector<u8> ritch_symbol_space, s64 rhs, u64 symbol);
+};
+
+struct Congruence2 : Atom {
+    s64 modulus_2pow = 0;
+    s64 modulus_odd  = 0;
+
+    Congruence2(const vector<u64>& vars, const vector<s64>& coefs, s64 modulus_2pow, s64 modulus_odd) :
+        Atom(vars, coefs), modulus_2pow(modulus_2pow), modulus_odd(modulus_odd) {
+    };
+
+    Congruence2(const vector<u64>& vars, const vector<s64>& coefs, s64 modulus) : Atom(vars, coefs) {
+        auto decomposed_modulus = decompose_modulus(modulus);
+        modulus_2pow = decomposed_modulus.modulus_2pow;
+        modulus_odd = decomposed_modulus.modulus_odd;
+    };
+
+    optional<s64> post(s64 rhs, u64 symbol) const;
+    bool accepts(s64 rhs, u64 symbol) const;
+
+    sylvan::MTBDD compute_entire_post(s64 rhs, u64 quantif_bit_mask, u64 var_cnt);
+    sylvan::MTBDD extend_post(sylvan::MTBDD current_post, vector<u8> ritch_symbol_space, s64 rhs, u64 symbol);
+
+
+    bool post_results_in_new_formula() const {
+        return modulus_2pow > 1;
+    }
+};
+
+void explore_macrostate()
 
 #endif
 

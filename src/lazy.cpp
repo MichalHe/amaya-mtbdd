@@ -16,6 +16,9 @@
 #include <unordered_set>
 #include <utility>
 
+#define VAR_ID_TO_BIT_POS(var) (var - 1)
+#define VAR_ID_TO_BIT_MASK(var) (1ull << VAR_ID_TO_BIT_POS(var))
+
 using std::list;
 using std::map;
 using std::vector;
@@ -23,6 +26,8 @@ using std::unordered_set;
 
 using std::pair;
 using std::optional;
+
+using namespace sylvan;
 
 #define DEBUG_RUNTIME 0
 
@@ -2148,4 +2153,197 @@ bool do_any_hard_bounds_imply_contradiction(const Dep_Graph& graph, const Conjun
     return false;
 }
 
+u64 perfect_bit_hash(u64 symbol, const vector<u64>& interestring_vars) {
+    u64 hash = 0;
+    for (u64 var_i = 0; var_i < interestring_vars.size(); var_i++) {
+        u64 var = interestring_vars[var_i];
+        u64 weight = (1ull << var_i);
+        hash += weight * ((symbol & VAR_ID_TO_BIT_MASK(var)) > 0);
+    }
+    return hash;
+}
 
+Atom::Atom(const vector<u64>& vars, const vector<s64>& coefs) {
+    this->vars = vars;
+    this->coefs = coefs;
+
+    interesting_bits_mask = 0;
+    for (auto& var: vars) {
+        interesting_bits_mask |= VAR_ID_TO_BIT_MASK(var);
+    }
+
+    var_set = sylvan::mtbdd_set_empty();
+    sylvan::mtbdd_ref(var_set);
+    for (auto var: vars) {
+        sylvan::BDDSET new_var_set = sylvan::mtbdd_set_add(var_set, var);
+        sylvan::mtbdd_ref(new_var_set);
+        sylvan::mtbdd_deref(var_set);
+        var_set = new_var_set;
+    }
+}
+
+s64 Atom::dot_with_symbol(u64 symbol) const {
+    s64 dot = 0;
+    for (s64 lin_term_idx = 0; lin_term_idx < vars.size(); lin_term_idx++) {
+        s64 coef = coefs[lin_term_idx];
+        u64 var  = vars[lin_term_idx];
+        u64 mask = (1ull << lin_term_idx);
+        dot += ((symbol & mask) > 0) * coef;
+    }
+    return dot;
+}
+
+template <typename Maker>
+sylvan::MTBDD Atom::make_extended_post(Maker& maker, s64 rhs, u64 quantif_bit_mask, u64 var_cnt) {
+    auto cache_entry = post_cache.find(rhs);
+    if (cache_entry != post_cache.end()) return cache_entry->second;
+
+    u64 symbol = (1ull << vars.size()) - 1; // Make lower #var.size bits 1s
+    symbol = ~symbol;  // Make variable bits 0, non-variable 1
+
+    u64 dont_care_bits_mask = ~interesting_bits_mask;
+
+    vector<u8> ritch_symbol(this->vars.size());
+
+    sylvan::MTBDD post = sylvan::mtbdd_false;
+    sylvan::mtbdd_ref(post);
+
+    for (; symbol != 0; symbol += 1) {
+        post = maker.extend_post(post, ritch_symbol, rhs, symbol);
+    }
+
+    post_cache.insert({rhs, post});
+    return post;
+}
+
+void make_rich_symbol_from_bits(vector<u8>& dest, u64 symbol, const vector<u64>& vars) {
+    for (s64 var_i = 0; var_i < vars.size(); var_i++) {
+        u64 mask = (1ull << var_i);
+        dest[var_i] = (symbol & mask) > 0;
+    }
+}
+
+sylvan::MTBDD extend_post_with_cube(
+    const Atom& atom,
+    sylvan::MTBDD post,
+    TFA_Leaf_Contents& content,
+    vector<u8>& ritch_symbol_space,
+    u64 symbol)
+{
+    make_rich_symbol_from_bits(ritch_symbol_space, symbol, atom.vars);
+    auto leaf = make_tfa_leaf(&content);
+    auto cube = sylvan::mtbdd_cube(atom.var_set, ritch_symbol_space.data(), leaf);
+    sylvan::MTBDD new_post = perform_tfa_mtbdd_union(post, cube);
+    sylvan::mtbdd_ref(new_post);
+    sylvan::mtbdd_deref(post);
+    return new_post;
+}
+
+sylvan::MTBDD Inequation2::extend_post(
+    sylvan::MTBDD current_post,
+    vector<u8> ritch_symbol_space,
+    s64 rhs,
+    u64 symbol)
+{
+    s64 post = this->post(rhs, symbol);
+    bool is_accepting = accepts(rhs, symbol);
+    TFA_Leaf_Contents leaf_contents = {.post = post, .is_accepting = is_accepting};
+    return extend_post_with_cube(*this, current_post, leaf_contents, ritch_symbol_space, symbol);
+}
+
+
+s64 Inequation2::post(s64 rhs, u64 symbol) const {
+    const s64 dot = dot_with_symbol(symbol);
+    s64 post = rhs - dot;
+    s64 has_reminder = (post % 2) > 0;
+    post = (post / 2) - (post < 0) * has_reminder;
+    return post;
+}
+
+bool Inequation2::accepts(s64 rhs, u64 symbol) const {
+    const s64 dot = dot_with_symbol(symbol);
+    s64 post = rhs + dot;
+    return post >= 0;
+}
+
+sylvan::MTBDD Inequation2::compute_entire_post(s64 rhs, u64 quantif_bit_mask, u64 var_cnt) {
+    return make_extended_post(*this, rhs, quantif_bit_mask, var_cnt);
+}
+
+optional<s64> Equation2::post(s64 rhs, u64 symbol) const {
+    s64 dot = dot_with_symbol(symbol);   
+    s64 post = rhs - dot;
+
+    s64 has_reminder = (post % 2) > 0;
+    if (has_reminder) return std::nullopt;
+
+    post /= 2;
+    return post;
+}
+
+bool Equation2::accepts(s64 rhs, u64 symbol) const {
+    s64 dot = dot_with_symbol(symbol);   
+    s64 post = rhs + dot;
+    return post == 0;
+}
+
+sylvan::MTBDD Equation2::extend_post(sylvan::MTBDD current_post,
+    vector<u8> ritch_symbol_space,
+    s64 rhs,
+    u64 symbol)
+{
+    optional<s64> post = this->post(rhs, symbol);
+    if (!post.has_value()) return current_post;
+    bool is_accepting = accepts(rhs, symbol);
+    TFA_Leaf_Contents leaf_contents = {.post = post.value(), .is_accepting = is_accepting};
+    return extend_post_with_cube(*this, current_post, leaf_contents, ritch_symbol_space, symbol);
+}
+
+sylvan::MTBDD Equation2::compute_entire_post(s64 rhs, u64 quantif_bit_mask, u64 var_cnt) {
+    return make_extended_post(*this, rhs, quantif_bit_mask, var_cnt);
+}
+
+optional<s64> Congruence2::post(s64 rhs, u64 symbol) const {
+    s64 dot = dot_with_symbol(symbol);   
+    s64 modulus = combine_moduli(modulus_2pow, modulus_odd);
+    s64 post = (rhs - dot) % modulus;
+    post += modulus * (post < 0);
+
+    if (modulus_2pow > 1) {
+        if (post % 2) return std::nullopt;
+        return (post / 2);
+    }
+
+    post = ((post % 2) * modulus + post) / 2;
+    return post;
+}
+
+bool Congruence2::accepts(s64 rhs, u64 symbol) const {
+    s64 dot = dot_with_symbol(symbol);   
+    s64 modulus = combine_moduli(modulus_2pow, modulus_odd);
+    return ((rhs + dot) % modulus) == 0;
+}
+
+sylvan::MTBDD Congruence2::extend_post(sylvan::MTBDD current_post,
+    vector<u8> ritch_symbol_space,
+    s64 rhs,
+    u64 symbol)
+{
+    optional<s64> post = this->post(rhs, symbol);
+    if (!post.has_value()) return current_post;
+    bool is_accepting = accepts(rhs, symbol);
+    TFA_Leaf_Contents leaf_contents = {.post = post.value(), .is_accepting = is_accepting};
+    return extend_post_with_cube(*this, current_post, leaf_contents, ritch_symbol_space, symbol);
+}
+
+sylvan::MTBDD Congruence2::compute_entire_post(s64 rhs, u64 quantif_bit_mask, u64 var_cnt) {
+    return make_extended_post(*this, rhs, quantif_bit_mask, var_cnt);
+}
+
+void exp_macrostate(vector<Congruence2>& congruences, vector<Equation2> eqs, vector<Inequation2> ineqs) {
+    vector<sylvan::MTBDD> macrostate_post;
+    for (auto& congruence: congruences) {
+        sylvan::MTBDD post = congruence.compute_entire_post(s64 rhs, u64 quantif_bit_mask, u64 var_cnt)
+    }
+    
+}
