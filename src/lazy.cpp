@@ -1,8 +1,10 @@
 #include "../include/lazy.hpp"
+#include "../include/tfa_leaf.h"
 
 #include <cmath>
 #include <stdlib.h>
 
+#include <algorithm>
 #include <bitset>
 #include <chrono>
 #include <iostream>
@@ -33,11 +35,21 @@ using namespace sylvan;
 
 typedef Quantified_Atom_Conjunction Formula;
 
-std::size_t hash_array(Sized_Array<s64>& arr) {
+std::size_t hash_array(const Sized_Array<s64>& arr) {
     std::size_t hash = 0;
     for (u64 i = 0; i < arr.size; i++) {
         std::size_t coef_hash = std::hash<s64>{}(arr.items[i]);
         hash = hash + 0x9e3779b9 + (coef_hash << 6) + (coef_hash >> 2);
+    }
+    return hash;
+}
+
+std::size_t hash_chunked_array(const Chunked_Array<s64>& arr) {
+    std::size_t hash = 0;
+    u64 total_size = arr.total_size();
+    for (u64 i = 0; i < total_size; i++) {
+        std::size_t coef_hash = std::hash<s64>{}(arr.data[i]);
+        hash = hash_combine(hash, coef_hash);
     }
     return hash;
 }
@@ -1019,7 +1031,7 @@ Linear_Function linearize_congruence(const Dep_Graph& graph,
 
     // It might be the case that as we do modulo on intervals we obtained [L, H] that contains less values than the origial modulo interval
     if (y_values.high - y_values.low != modulus_values.high - modulus_values.low) {
-       return {.valid = false}; 
+       return {.valid = false};
     }
 
     shift_interval(y_values, preference, modulus);
@@ -1481,8 +1493,8 @@ Finalized_Macrostate make_trivial_macrostate(Formula_Pool& pool, bool polarity) 
     auto formula_ptr = pool.store_formula(formula);
 
     Finalized_Macrostate macrostate = {
-        .header = {.items = nullptr, .size = 0},
-        .state_data = {.items = nullptr, .size = 0},
+        .header = {nullptr, 0},
+        .state_data = {nullptr, 0},
         .is_accepting = polarity,
     };
     return macrostate;
@@ -1598,6 +1610,8 @@ void init_mtbdd_libs() {
     sylvan::sylvan_mt_set_create(mtbdd_leaf_type_set, mk_set_leaf);
     sylvan::sylvan_mt_set_destroy(mtbdd_leaf_type_set, destroy_set_leaf);
     sylvan::sylvan_mt_set_to_str(mtbdd_leaf_type_set, set_leaf_to_str);
+
+    init_tfa_leaves();
 }
 
 
@@ -2167,11 +2181,6 @@ Atom::Atom(const vector<u64>& vars, const vector<s64>& coefs) {
     this->vars = vars;
     this->coefs = coefs;
 
-    interesting_bits_mask = 0;
-    for (auto& var: vars) {
-        interesting_bits_mask |= VAR_ID_TO_BIT_MASK(var);
-    }
-
     var_set = sylvan::mtbdd_set_empty();
     sylvan::mtbdd_ref(var_set);
     for (auto var: vars) {
@@ -2194,14 +2203,12 @@ s64 Atom::dot_with_symbol(u64 symbol) const {
 }
 
 template <typename Maker>
-sylvan::MTBDD Atom::make_extended_post(Maker& maker, s64 rhs, u64 quantif_bit_mask, u64 var_cnt) {
+sylvan::MTBDD Atom::make_extended_post(Maker& maker, s64 rhs) {
     auto cache_entry = post_cache.find(rhs);
     if (cache_entry != post_cache.end()) return cache_entry->second;
 
     u64 symbol = (1ull << vars.size()) - 1; // Make lower #var.size bits 1s
     symbol = ~symbol;  // Make variable bits 0, non-variable 1
-
-    u64 dont_care_bits_mask = ~interesting_bits_mask;
 
     vector<u8> ritch_symbol(this->vars.size());
 
@@ -2266,12 +2273,12 @@ bool Inequation2::accepts(s64 rhs, u64 symbol) const {
     return post >= 0;
 }
 
-sylvan::MTBDD Inequation2::compute_entire_post(s64 rhs, u64 quantif_bit_mask, u64 var_cnt) {
-    return make_extended_post(*this, rhs, quantif_bit_mask, var_cnt);
+sylvan::MTBDD Inequation2::compute_entire_post(s64 rhs) {
+    return make_extended_post(*this, rhs);
 }
 
 optional<s64> Equation2::post(s64 rhs, u64 symbol) const {
-    s64 dot = dot_with_symbol(symbol);   
+    s64 dot = dot_with_symbol(symbol);
     s64 post = rhs - dot;
 
     s64 has_reminder = (post % 2) > 0;
@@ -2282,7 +2289,7 @@ optional<s64> Equation2::post(s64 rhs, u64 symbol) const {
 }
 
 bool Equation2::accepts(s64 rhs, u64 symbol) const {
-    s64 dot = dot_with_symbol(symbol);   
+    s64 dot = dot_with_symbol(symbol);
     s64 post = rhs + dot;
     return post == 0;
 }
@@ -2299,12 +2306,12 @@ sylvan::MTBDD Equation2::extend_post(sylvan::MTBDD current_post,
     return extend_post_with_cube(*this, current_post, leaf_contents, ritch_symbol_space, symbol);
 }
 
-sylvan::MTBDD Equation2::compute_entire_post(s64 rhs, u64 quantif_bit_mask, u64 var_cnt) {
-    return make_extended_post(*this, rhs, quantif_bit_mask, var_cnt);
+sylvan::MTBDD Equation2::compute_entire_post(s64 rhs) {
+    return make_extended_post(*this, rhs);
 }
 
 optional<s64> Congruence2::post(s64 rhs, u64 symbol) const {
-    s64 dot = dot_with_symbol(symbol);   
+    s64 dot = dot_with_symbol(symbol);
     s64 modulus = combine_moduli(modulus_2pow, modulus_odd);
     s64 post = (rhs - dot) % modulus;
     post += modulus * (post < 0);
@@ -2319,7 +2326,7 @@ optional<s64> Congruence2::post(s64 rhs, u64 symbol) const {
 }
 
 bool Congruence2::accepts(s64 rhs, u64 symbol) const {
-    s64 dot = dot_with_symbol(symbol);   
+    s64 dot = dot_with_symbol(symbol);
     s64 modulus = combine_moduli(modulus_2pow, modulus_odd);
     return ((rhs + dot) % modulus) == 0;
 }
@@ -2336,14 +2343,53 @@ sylvan::MTBDD Congruence2::extend_post(sylvan::MTBDD current_post,
     return extend_post_with_cube(*this, current_post, leaf_contents, ritch_symbol_space, symbol);
 }
 
-sylvan::MTBDD Congruence2::compute_entire_post(s64 rhs, u64 quantif_bit_mask, u64 var_cnt) {
-    return make_extended_post(*this, rhs, quantif_bit_mask, var_cnt);
+sylvan::MTBDD Congruence2::compute_entire_post(s64 rhs) {
+    return make_extended_post(*this, rhs);
 }
 
-void exp_macrostate(vector<Congruence2>& congruences, vector<Equation2> eqs, vector<Inequation2> ineqs) {
-    vector<sylvan::MTBDD> macrostate_post;
-    for (auto& congruence: congruences) {
-        sylvan::MTBDD post = congruence.compute_entire_post(s64 rhs, u64 quantif_bit_mask, u64 var_cnt)
+
+template <typename Atom>
+void extend_post_mtbdd_with_atoms(vector<sylvan::MTBDD>& post_to_extend, vector<Atom>& atoms, Conjunction_State& state, s64& state_idx) {
+    for (auto& atom: atoms) {
+        s64 rhs = state.constants[state_idx];
+        state_idx += 1;
+        sylvan::MTBDD post = atom.compute_entire_post(rhs);
+        sylvan::mtbdd_refs_push(post);
+        post_to_extend.push_back(state_idx);
     }
-    
+}
+
+void exp_macrostate(Formula2& formula, Conjunction_State& state, NFA_Construction_Ctx* ctx)
+{
+    vector<MTBDD> macrostate_post;
+    macrostate_post.reserve(formula.atom_count());
+
+    s64 state_idx = 0;
+    extend_post_mtbdd_with_atoms(macrostate_post, formula.congruences, state, state_idx);
+    extend_post_mtbdd_with_atoms(macrostate_post, formula.equations,   state, state_idx);
+    extend_post_mtbdd_with_atoms(macrostate_post, formula.inequations, state, state_idx);
+
+    MTBDD intersection_mtbdd = make_tfa_intersection_top();
+    sylvan::mtbdd_ref(intersection_mtbdd);
+    for (auto& mtbdd: macrostate_post) {
+        MTBDD new_intersection = perform_tfa_mtbdd_intersection(intersection_mtbdd, mtbdd);
+        sylvan::mtbdd_ref(new_intersection);
+        sylvan::mtbdd_deref(intersection_mtbdd);
+        intersection_mtbdd = new_intersection;
+    }
+
+    // All information is now contained in the intersection MTBDD, we can release post MTBDDs
+    sylvan::mtbdd_refs_pop(macrostate_post.size());
+
+    u64 prefix_size = formula.equations.size() + formula.congruences.size();
+    MTBDD after_projection = perform_tfa_pareto_projection(intersection_mtbdd, formula.quantif_vars, prefix_size);
+    sylvan::mtbdd_refs_push(after_projection);
+    sylvan::mtbdd_deref(intersection_mtbdd);
+
+    // Traverse
+    MTBDD result = convert_tfa_leaves_into_macrostates(after_projection, ctx);
+    sylvan::mtbdd_ref(result);
+    sylvan::mtbdd_refs_pop(1);  // deref after_projection
+
+    ctx->constructed_nfa->transitions[0] = result;
 }

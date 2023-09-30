@@ -4,8 +4,10 @@
 #include "base.hpp"
 #include "custom_leaf.hpp"
 #include "operations.hpp"
-#include "tfa_leaf.h"
+#include "block_allocator.h"
+#include "vectors.h"
 
+#include <algorithm>
 #include <bitset>
 #include <list>
 #include <cassert>
@@ -29,124 +31,6 @@ struct Decomposed_Modulus {
 
 Decomposed_Modulus decompose_modulus(s64 modulus);
 
-template <typename T>
-struct Sized_Array {
-    T* items;
-    u64 size;
-
-    struct Iterator {
-        const Sized_Array<T>* arr;
-        u64                   idx;
-
-        using value_type = T;
-        using pointer    = T*;
-        using reference  = T&;
-        using difference_type = std::ptrdiff_t;
-        using iterator_category = std::random_access_iterator_tag;
-
-        Iterator():                    arr(nullptr), idx(0) {}
-        Iterator(const Sized_Array<T>* arr, u64 start_idx): arr(arr), idx(start_idx) {}
-
-        reference  operator*() {
-            return (arr->items)[idx];
-        }
-        pointer operator->() {
-            return &(arr->items[idx]);
-        }
-        const pointer operator->() const {
-            return &(arr->items[idx]);
-        }
-        reference  operator[](int offset) {
-            return arr->items[idx + offset];
-        }
-        // const reference operator*() const {
-        //     return arr->items[idx];
-        // }
-        // const reference operator[](int offset) const {
-        //     return arr->items[idx + offset];
-        // }
-
-        Iterator& operator++() {
-            ++idx;
-            return *this;
-        }
-        Iterator operator++(int) {
-            Iterator r(*this);
-            ++idx;
-            return r;
-        }
-
-        Iterator& operator--() {
-            --idx;
-            return *this;
-        }
-        Iterator operator--(int) {
-            Iterator r(*this);
-            --idx;
-            return r;
-        }
-
-        Iterator& operator+=(int offset) {
-            idx += offset;
-            return *this;
-        }
-        Iterator& operator-=(int offset) {
-            idx -= offset;
-            return *this;
-        }
-
-        Iterator operator+(int offset) const {
-            Iterator r(*this);
-            return r += offset;
-        }
-        Iterator operator-(int offset) const {
-            Iterator r(*this);
-            return r -= offset;
-        }
-
-        difference_type operator-(Iterator const& r) const {
-            return idx - r.idx;
-        }
-
-        bool operator<(Iterator const& r)  const {
-            return idx <  r.idx;
-        }
-        bool operator<=(Iterator const& r) const {
-            return idx <= r.idx;
-        }
-        bool operator>(Iterator const& r)  const {
-            return idx >  r.idx;
-        }
-        bool operator>=(Iterator const& r) const {
-            return idx >= r.idx;
-        }
-        bool operator!=(const Iterator &r) const {
-            return idx != r.idx;
-        }
-        bool operator==(const Iterator &r) const {
-            return idx == r.idx;
-        }
-    };
-
-    Iterator begin() const {
-        return Iterator(this, 0);
-    };
-
-    Iterator end() const {
-        return Iterator(this, this->size);
-    };
-
-    bool operator==(const Sized_Array<T>& other) const {
-        if (other.size != this->size) return false;
-
-        for (u64 i = 0; i < size; i++) {
-            if (items[i] != other.items[i]) return false;
-        }
-        return true;
-    }
-};
-
-std::size_t hash_array(Sized_Array<s64>& arr);
 
 struct Congruence {
     Sized_Array<s64> coefs;
@@ -262,9 +146,9 @@ std::ostream& operator<<(std::ostream& output, const Linear_Node& lin_node);
 
 struct Quantified_Atom_Conjunction {
     // This requires certain order: Conjunction_State, conjunction state hashing
-    Sized_Array<Congruence> congruences = {.items = nullptr, .size = 0};
-    Sized_Array<Equation>   equations   = {.items = nullptr, .size = 0};
-    Sized_Array<Inequation> inequations = {.items = nullptr, .size = 0};
+    Sized_Array<Congruence> congruences = {nullptr, 0};
+    Sized_Array<Equation>   equations   = {nullptr, 0};
+    Sized_Array<Inequation> inequations = {nullptr, 0};
     vector<u64> bound_vars;
     u64         var_count;
     Dep_Graph   dep_graph;
@@ -574,12 +458,12 @@ struct Formula_Allocator {
         Atom_Type* allocated_atoms = &last_slab->items[last_slab->next_free];
         last_slab->next_free += count;
 
-        return {.items = allocated_atoms, .size = count};
+        return Sized_Array<Atom_Type>(allocated_atoms, count);
     }
 
     Sized_Array<Congruence> alloc_congruences(u64 count) {
         PRINTF_DEBUG("Allocating %lu congruence(s)\n", count);
-        if (count == 0) return {.items = nullptr, .size = 0};
+        if (count == 0) return {nullptr, 0};
 
         auto& slabs_matching_size = congruence_slabs[count - 1];
         return alloc(slabs_matching_size, count);
@@ -587,7 +471,7 @@ struct Formula_Allocator {
 
     Sized_Array<Equation> alloc_equations(u64 count) {
         PRINTF_DEBUG("Allocating %lu equation(s)\n", count);
-        if (count == 0) return {.items = nullptr, .size = 0};
+        if (count == 0) return {nullptr, 0};
 
         auto& slabs_matching_size = equation_slabs[count - 1];
         return alloc(slabs_matching_size, count);
@@ -595,7 +479,7 @@ struct Formula_Allocator {
 
     Sized_Array<Inequation> alloc_inequations(u64 count) {
         PRINTF_DEBUG("Allocating %lu equation(s)\n", count);
-        if (count == 0) return {.items = nullptr, .size = 0};
+        if (count == 0) return {nullptr, 0};
 
         auto& slabs_matching_size = inequation_slabs[count - 1];
         return alloc(slabs_matching_size, count);
@@ -618,7 +502,7 @@ struct Formula_Allocator {
         s64* coef_block_start = tmp_space.coefs.items + tmp_space.coefs.next_free;
         tmp_space.coefs.next_free += limits.var_count;
 
-        atom->coefs = {.items = coef_block_start, .size = limits.var_count};
+        atom->coefs = {coef_block_start, limits.var_count};
 
         return atom;
     }
@@ -644,9 +528,9 @@ struct Formula_Allocator {
 
     Quantified_Atom_Conjunction get_tmp_formula() {
         Quantified_Atom_Conjunction formula;
-        formula.congruences = Sized_Array<Congruence>{.items = tmp_space.congruences.items, .size = tmp_space.congruences.next_free};
-        formula.equations   = Sized_Array<Equation>{.items = tmp_space.equations.items, .size = tmp_space.equations.next_free};
-        formula.inequations = Sized_Array<Inequation>{.items = tmp_space.inequations.items, .size = tmp_space.inequations.next_free};
+        formula.congruences = Sized_Array<Congruence>(tmp_space.congruences.items, tmp_space.congruences.next_free);
+        formula.equations   = Sized_Array<Equation>(tmp_space.equations.items, tmp_space.equations.next_free);
+        formula.inequations = Sized_Array<Inequation>(tmp_space.inequations.items, tmp_space.inequations.next_free);
         return formula;
     }
 
@@ -733,13 +617,13 @@ struct Formula_Allocator {
     Sized_Array<Macrostate_Header_Elem> alloc_macrostate_headers(u64 count) {
         Macrostate_Header_Elem* headers = new Macrostate_Header_Elem[count];
         macrostate_headers.push_back(headers);
-        return {.items = headers, .size = count};
+        return {headers, count};
     }
 
     Sized_Array<s64> alloc_macrostate_data(u64 state_count) {
         s64* state_data = new s64[state_count];
         macrostate_data.push_back(state_data);
-        return {.items = state_data, .size = state_count};
+        return {state_data, state_count};
     }
 
     ~Formula_Allocator() {
@@ -854,8 +738,8 @@ void vector_remove(vector<T>& vec, T& elem) {
 }
 
 template <typename T>
-bool vector_contains(const vector<T>& vec, T& elem) {
-    auto pos = std::find(vec.begin(), vec.end(), elem);
+bool vector_contains(const vector<T>& vec, const T& elem) {
+    auto pos = std::find(vec.cbegin(), vec.cend(), elem);
     return (pos != vec.end());
 }
 
@@ -934,17 +818,25 @@ struct Atom {
 
     vector<s64> coefs;
     vector<u64> vars;
-    u64 interesting_bits_mask;
     sylvan::BDDSET var_set;
 
     Atom(const vector<u64>& vars, const vector<s64>& coefs);
+
+    Atom(const Atom& other) : coefs(other.coefs), vars(other.vars), var_set(other.var_set) {
+        sylvan::mtbdd_ref(other.var_set);
+    };
+
+    Atom(Atom&& other) : coefs(std::move(other.coefs)), vars(std::move(other.vars)), var_set(other.var_set) {
+        sylvan::mtbdd_ref(var_set);
+    };
+
     ~Atom() {
         sylvan::mtbdd_deref(var_set);
     }
     s64 dot_with_symbol(u64 symbol) const;
 
     template <typename Post_Maker>
-    sylvan::MTBDD make_extended_post(Post_Maker& maker, s64 rhs, u64 quantif_bit_mask, u64 var_cnt);
+    sylvan::MTBDD make_extended_post(Post_Maker& maker, s64 rhs);
 
     void invalidate_cache();
 };
@@ -955,7 +847,7 @@ struct Inequation2 : Atom {
     s64  post(s64 rhs, u64 symbol) const;
     bool accepts(s64 rhs, u64 symbol) const;
 
-    sylvan::MTBDD compute_entire_post(s64 rhs, u64 quantif_bit_mask, u64 var_cnt);
+    sylvan::MTBDD compute_entire_post(s64 rhs);
     sylvan::MTBDD extend_post(sylvan::MTBDD current_post, vector<u8> ritch_symbol_space, s64 rhs, u64 symbol);
 };
 
@@ -965,7 +857,7 @@ struct Equation2 : Atom {
     optional<s64> post(s64 rhs, u64 symbol) const;
     bool accepts(s64 rhs, u64 symbol) const;
 
-    sylvan::MTBDD compute_entire_post(s64 rhs, u64 quantif_bit_mask, u64 var_cnt);
+    sylvan::MTBDD compute_entire_post(s64 rhs);
     sylvan::MTBDD extend_post(sylvan::MTBDD current_post, vector<u8> ritch_symbol_space, s64 rhs, u64 symbol);
 };
 
@@ -986,7 +878,7 @@ struct Congruence2 : Atom {
     optional<s64> post(s64 rhs, u64 symbol) const;
     bool accepts(s64 rhs, u64 symbol) const;
 
-    sylvan::MTBDD compute_entire_post(s64 rhs, u64 quantif_bit_mask, u64 var_cnt);
+    sylvan::MTBDD compute_entire_post(s64 rhs);
     sylvan::MTBDD extend_post(sylvan::MTBDD current_post, vector<u8> ritch_symbol_space, s64 rhs, u64 symbol);
 
 
@@ -995,7 +887,144 @@ struct Congruence2 : Atom {
     }
 };
 
-void explore_macrostate()
+struct Formula2 {
+    vector<Congruence2> congruences;
+    vector<Equation2>   equations;
+    vector<Inequation2> inequations;
+
+    sylvan::BDDSET quantif_vars;
+
+    u64 atom_count() const {
+        return congruences.size() + equations.size() + inequations.size();
+    }
+};
+
+
+struct Macrostate2 {
+    struct Entry {
+        vector<s64>        prefix;
+        Chunked_Array<s64> suffixes;
+
+        bool operator<(const Entry& other) const {
+            return prefix < other.prefix;
+        }
+
+        bool operator==(const Entry& other) const {
+            return (prefix == other.prefix) && (suffixes == other.suffixes);
+        }
+    };
+
+    bool operator==(const Macrostate2& other) const {
+        return entries == other.entries;
+    }
+
+    vector<Entry> entries;
+    bool accepting;
+
+    u64 single_post_size;  // Number of elements in the intersection
+    State handle;
+
+
+    struct Iterator {
+        const Macrostate2* macrostate;
+        Sized_Array<s64> buffer;
+        s64  entry_idx;
+        s64  suffix_idx;
+
+        using value_type = Sized_Array<s64>;
+        using pointer    = Sized_Array<s64>*;
+        using reference  = Sized_Array<s64>&;
+        using difference_type = std::ptrdiff_t;
+        using iterator_category = std::random_access_iterator_tag;
+
+        Iterator(): macrostate(nullptr), buffer({nullptr, 0}), entry_idx(0), suffix_idx(0) {};
+        Iterator(const Macrostate2* m): macrostate(m), entry_idx(0), suffix_idx(0)
+        {
+            if (m->entries.empty()) {
+                buffer = {nullptr, 0};
+                return;
+            }
+
+            s64* raw_buffer = new s64[m->single_post_size];
+            assert(raw_buffer != nullptr);
+            buffer = {raw_buffer, m->single_post_size};
+
+            auto& entry = macrostate->entries[entry_idx];
+            std::memcpy(buffer.items, entry.prefix.data(), entry.prefix.size() * sizeof(s64));
+
+            u64 suffix_size = macrostate->single_post_size - entry.prefix.size();
+            std::memcpy(buffer.items + entry.prefix.size(), entry.suffixes.get_nth_chunk_data(entry_idx), suffix_size * sizeof(s64));
+        }
+
+        Iterator(const Macrostate2* m, s64 entry_idx): macrostate(m), entry_idx(entry_idx), suffix_idx(0) {}
+        Iterator(const Iterator& other) = delete;
+
+        reference operator*() {
+            return buffer;
+        }
+        pointer operator->() {
+            return &buffer;
+        }
+
+        Iterator& operator++() {
+            auto& entry = macrostate->entries[entry_idx];
+            suffix_idx += 1;
+            if (suffix_idx >= entry.suffixes.chunk_count) {
+                suffix_idx = 0;
+                entry_idx += 1;
+            }
+            if (entry_idx < macrostate->entries.size()) {
+                auto& entry = macrostate->entries[entry_idx];
+
+                std::memcpy(buffer.items, entry.prefix.data(), entry.prefix.size() * sizeof(s64));
+
+                u64 suffix_size = macrostate->single_post_size - entry.prefix.size();
+
+                s64* suffix_dst = buffer.items + entry.prefix.size();
+                s64* suffix_src = entry.suffixes.get_nth_chunk_data(suffix_idx);
+                std::memcpy(suffix_dst, suffix_src, suffix_size * sizeof(s64));
+            }
+            return *this;
+        }
+
+        bool operator!=(const Iterator &other) const {
+            return !(*this == other);
+        }
+
+        bool operator==(const Iterator &other) const {
+            return (entry_idx == other.entry_idx) && (suffix_idx == other.suffix_idx);
+        }
+    };
+
+    Iterator begin() {
+        return Iterator(this);
+    }
+
+    Iterator end() {
+        return Iterator(this, this->entries.size());
+    }
+};
+
+template<> struct std::hash<Macrostate2> {
+    std::size_t operator()(Macrostate2 const& state) const noexcept {
+        std::size_t hash = 0;
+        for (auto& entry: state.entries) {
+            hash = hash_combine(hash, hash_vector(entry.prefix, 0));
+            hash = hash_combine(hash, hash_chunked_array(entry.suffixes));
+        }
+        return hash;
+    }
+};
+
+struct NFA_Construction_Ctx {
+    unordered_map<Macrostate2, State> known_states;
+    vector<const Macrostate2*>        macrostates_to_explore;
+    Block_Allocator                   macrostate_block_alloc;
+    NFA*                              constructed_nfa;
+    u64 prefix_size = 0;
+};
+
+void exp_macrostate(Formula2& formula, Conjunction_State& state, NFA_Construction_Ctx* ctx);
 
 #endif
 

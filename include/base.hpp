@@ -101,6 +101,15 @@ struct NFA {
     std::set<State> get_state_post(State state);
 
     void remove_states(std::set<State>& states_to_remove);
+
+    void add_state_final(State state) {
+        this->states.insert(state);
+        this->final_states.insert(state);
+    }
+
+    void mark_state_final(State state) {
+        this->final_states.insert(state);
+    }
 };
 
 
@@ -198,10 +207,10 @@ inline std::size_t hash_combine(std::size_t hash1, std::size_t hash2) {
 }
 
 template <typename T>
-std::size_t hash_vector(std::vector<T>& arr, std::size_t seed) {
+std::size_t hash_vector(const std::vector<T>& arr, std::size_t seed) {
     std::size_t hash = seed;
-    for (u64 i = 0; i < arr.size; i++) {
-        std::size_t item_hash = std::hash<T>{}(arr.items[i]);
+    for (u64 i = 0; i < arr.size(); i++) {
+        std::size_t item_hash = std::hash<T>{}(arr[i]);
         hash = hash_combine(hash, item_hash);
     }
     return hash;

@@ -1,7 +1,11 @@
+#include <unordered_set>
 #define DOCTEST_CONFIG_IMPLEMENT
 #include "../external/doctest.h"
 #include "../include/lazy.hpp"
 #include "../include/base.hpp"
+#include "../include/pareto_set.h"
+#include "../include/vectors.h"
+#include "../include/tfa_leaf.h"
 
 #include <algorithm>
 #include <vector>
@@ -12,6 +16,9 @@ typedef Quantified_Atom_Conjunction Formula;
 using std::pair;
 using std::vector;
 using std::unordered_map;
+
+using sylvan::MTBDD;
+using sylvan::BDDSET;
 
 
 #define DEBUG_TESTS 0
@@ -39,7 +46,7 @@ struct Atom_Allocator {
 };
 
 Sized_Array<Congruence> alloc_congruences(Atom_Allocator& alloc, const vector<pair<vector<s64>, s64>>& congruence_coefs) {
-    if (congruence_coefs.empty()) return {.items = nullptr, .size = 0};
+    if (congruence_coefs.empty()) return {nullptr, 0};
     u64 var_count = congruence_coefs[0].first.size();
 
     s64* coef_block = new s64[var_count * congruence_coefs.size()];
@@ -59,7 +66,7 @@ Sized_Array<Congruence> alloc_congruences(Atom_Allocator& alloc, const vector<pa
             next_free_coef_slot += 1;
         }
 
-        Sized_Array<s64> coefs_block = {.items = congruence_coef_block, .size=var_count};
+        Sized_Array<s64> coefs_block(congruence_coef_block, var_count);
 
         // Make a congruence and push it back
         auto decomposed_modulus = decompose_modulus(modulus);
@@ -68,11 +75,11 @@ Sized_Array<Congruence> alloc_congruences(Atom_Allocator& alloc, const vector<pa
         next_free_congruence_slot += 1;
     }
 
-    return {.items = congruence_block, .size = congruence_coefs.size()};
+    return Sized_Array<Congruence>(congruence_block, congruence_coefs.size());
 };
 
 Sized_Array<Equation> alloc_equations(Atom_Allocator& alloc, const vector<vector<s64>>& equation_coefs) {
-    if (equation_coefs.empty()) return {.items = nullptr, .size = 0};
+    if (equation_coefs.empty()) return Sized_Array<Equation>(nullptr, 0);
 
     u64 var_count = equation_coefs[0].size();
 
@@ -90,18 +97,18 @@ Sized_Array<Equation> alloc_equations(Atom_Allocator& alloc, const vector<vector
             coef_block[next_free_coef_slot] = coef;
             next_free_coef_slot += 1;
         }
-        Sized_Array<s64> coefs_block = {.items = eq_coef_block, .size=var_count};
+        Sized_Array<s64> coefs_block(eq_coef_block, var_count);
 
         Equation equation = {.coefs = coefs_block};
         equation_block[next_free_equation_slot] = equation;
         next_free_equation_slot += 1;
     }
 
-    return {.items = equation_block, .size = equation_coefs.size()};
+    return Sized_Array<Equation>(equation_block, equation_coefs.size());
 };
 
 Sized_Array<Inequation> alloc_inequations(Atom_Allocator& alloc, const vector<vector<s64>>& ineq_coefs) {
-    if (ineq_coefs.empty()) return {.items = nullptr, .size = 0};
+    if (ineq_coefs.empty()) return {nullptr, 0};
 
     u64 var_count = ineq_coefs[0].size();
 
@@ -119,14 +126,14 @@ Sized_Array<Inequation> alloc_inequations(Atom_Allocator& alloc, const vector<ve
             coef_block[next_free_coef_slot] = coef;
             next_free_coef_slot += 1;
         }
-        Sized_Array<s64> coefs_block = {.items = eq_coef_block, .size=var_count};
+        Sized_Array<s64> coefs_block(eq_coef_block, var_count);
 
         Inequation ineq = {.coefs = coefs_block};
         inequation_block[next_free_inequation_slot] = ineq;
         next_free_inequation_slot += 1;
     }
 
-    return {.items = inequation_block, .size = ineq_coefs.size()};
+    return {inequation_block, ineq_coefs.size()};
 };
 
 Formula make_formula(Atom_Allocator& allocator,
@@ -870,6 +877,8 @@ TEST_CASE("Dep. analysis :: simplify (const var)") {
     vector<s64> expected_coefs = {0, 0, 0, -1};
     CHECK(actual_atom.coefs == expected_coefs);
     CHECK(state.constants[2] == -1);
+
+    delete new_graph;
 }
 
 TEST_CASE("Dep. analysis :: simplify (unbound vars)") {
@@ -911,6 +920,7 @@ TEST_CASE("Dep. analysis :: simplify (unbound vars)") {
     CHECK( new_graph->congruence_nodes[0].is_satisfied);
 
     CHECK(state.constants[3] == 0);
+    delete new_graph;
 }
 
 TEST_CASE("Infinite projection with equation") {
@@ -993,8 +1003,8 @@ TEST_CASE("Dep. analysis :: simplify (presentation formula)") {
 
     s64 simplfied_ineq_coefs1[] = {0, 1, 0,  0};
     s64 simplfied_ineq_coefs2[] = {0, 0, 0, -1};
-    Sized_Array<s64> ineq1_coefs = {.items = simplfied_ineq_coefs1, .size = 4};
-    Sized_Array<s64> ineq2_coefs = {.items = simplfied_ineq_coefs2, .size = 4};
+    Sized_Array<s64> ineq1_coefs(simplfied_ineq_coefs1, 4);
+    Sized_Array<s64> ineq2_coefs(simplfied_ineq_coefs2, 4);
     CHECK(simplified_formula.inequations.items[0].coefs == ineq1_coefs);
     CHECK(simplified_formula.inequations.items[1].coefs == ineq2_coefs);
 
@@ -1002,6 +1012,8 @@ TEST_CASE("Dep. analysis :: simplify (presentation formula)") {
 
     vector<s64> expected_state = {-304, -1};
     CHECK(stateful_formula.state.constants == expected_state);
+
+    delete new_graph;
 }
 
 TEST_CASE("Test Structured_Macrostate insertions (pareto optimality)") {
@@ -1170,11 +1182,10 @@ TEST_CASE("Test linearize_formula - `\\exists y (x - y <= 0 && m - z <= 60_000 &
     auto& equation = linearized_formula.equations.items[0];
 
     s64 expected_coef_data[] = {-1, 0, 1, 0};
-    Sized_Array<s64> expected_coefs = {.items = expected_coef_data, .size = 4};
+    Sized_Array<s64> expected_coefs(expected_coef_data, 4);
     CHECK(equation.coefs == expected_coefs);
 
     auto& modified_state = result.value().state;
-    std::cout << "modified state: " << modified_state << "\n";
     vector<s64> expected_state_data = {-299993 /*equation*/, 0, 60000, -1, -1, 299992};
     CHECK(modified_state.constants == expected_state_data);
 }
@@ -1197,6 +1208,285 @@ TEST_CASE("Test shift_interval") {
         CHECK(interval.high == -1);
         CHECK(interval.low  == -4);
     }
+}
+
+TEST_CASE("Test pareto set") {
+    SUBCASE("Pushing identical element") {
+        Pareto_Set set (1);
+        set.insert({1, 2}, 0);
+        set.insert({2, 1}, 0);
+        set.insert({1, 2}, 0);
+
+        Pareto_Set expected_set(1);
+        expected_set.insert({1, 2}, 0);
+        expected_set.insert({2, 1}, 0);
+        CHECK(set == expected_set);
+    }
+
+    SUBCASE("Pushing unoptimal element") {
+        Pareto_Set set(1);
+        set.insert({1, 3}, 0);
+        set.insert({1, 2}, 0);
+
+        Pareto_Set expected_set(1);
+        expected_set.insert({1, 3}, 0);
+        CHECK(set == expected_set);
+    }
+
+    SUBCASE("Pushing incomparable element") {
+        {
+            Pareto_Set set(0);
+            set.insert({2, 0}, 0);
+            set.insert({1, 2}, 0);
+
+            Pareto_Set expected_set(0);
+            expected_set.insert({2, 0}, 0);
+            expected_set.insert({1, 2}, 0);
+            CHECK(set == expected_set);
+        }
+    }
+
+    SUBCASE("Everything is prefix") {
+        Pareto_Set set (2);
+        set.insert({1, 1}, 0);
+        set.insert({1, 2}, 0);
+
+        Pareto_Set expected_set(2);
+        expected_set.insert({1, 1}, 0);
+        expected_set.insert({1, 2}, 0);
+        CHECK(set == expected_set);
+    }
+
+    SUBCASE("Merge pareto sets") {
+        Pareto_Set expected_result(1);
+        Pareto_Set* result = nullptr;
+        {
+            Pareto_Set left(1);
+            left.insert({1, 1}, 0);
+            left.insert({2, 1}, 0);
+
+            Pareto_Set right(1);
+            right.insert({1, 2}, 0);
+            right.insert({2, 0}, 0);
+            right.insert({3, 1}, 0);
+
+            expected_result.insert({1, 2}, 0);
+            expected_result.insert({2, 1}, 0);
+            expected_result.insert({3, 1}, 0);
+
+            result = new Pareto_Set(merge_pareto_sets(left, right));
+        }
+        CHECK(*result == expected_result);
+        delete result;
+    }
+
+    SUBCASE("Pareto set equality") {
+        Pareto_Set left(1);
+        left.insert({1, 1}, 0);
+
+        Pareto_Set right(1);
+        right.insert({2, 0}, 0);
+
+        CHECK(left != right);
+    }
+}
+
+TEST_CASE("Test mtbdd pareto union") {
+    SUBCASE("Two pareto leaves") {
+        TFA_Pareto_Leaf left_leaf  = {.elements = Pareto_Set(1)};
+        TFA_Pareto_Leaf right_leaf = {.elements = Pareto_Set(1)};
+        left_leaf.elements.insert({1, 2}, 0);
+        right_leaf.elements.insert({1, 3}, 0);
+
+        MTBDD left  = make_tfa_pareto_leaf(&left_leaf);
+        sylvan::mtbdd_refs_push(left);
+        MTBDD right = make_tfa_pareto_leaf(&right_leaf);
+        sylvan::mtbdd_refs_push(right);
+        MTBDD result = perform_tfa_pareto_union(left, right, 1);
+        sylvan::mtbdd_refs_pop(2);
+
+        CHECK(sylvan::mtbdd_isleaf(result));
+        CHECK(sylvan::mtbdd_gettype(result) == mtbdd_tfa_pareto_leaf_type_id);
+
+        auto result_value = reinterpret_cast<TFA_Pareto_Leaf*>(sylvan::mtbdd_getvalue(result));
+        Pareto_Set expected_value(1);
+        expected_value.insert({1, 3}, 0);
+        CHECK(result_value->elements == expected_value);
+    }
+
+    SUBCASE("One pareto leaf, one intersection") {
+        TFA_Pareto_Leaf left_leaf = {.elements = Pareto_Set(1)};
+        left_leaf.elements.insert({1, 2}, 0);
+        left_leaf.elements.insert({2, 0}, 0);
+
+        TFA_Leaf_Intersection_Contents right_leaf = {.post = {1, 3}, .is_accepting = true};
+
+        MTBDD left  = make_tfa_pareto_leaf(&left_leaf);
+        sylvan::mtbdd_refs_push(left);
+
+        MTBDD right = make_tfa_intersection_leaf(&right_leaf);
+        sylvan::mtbdd_refs_push(right);
+
+        MTBDD result = perform_tfa_pareto_union(left, right, 1);
+        sylvan::mtbdd_refs_pop(2);
+
+        CHECK(sylvan::mtbdd_isleaf(result));
+        CHECK(sylvan::mtbdd_gettype(result) == mtbdd_tfa_pareto_leaf_type_id);
+
+        auto result_value = reinterpret_cast<TFA_Pareto_Leaf*>(sylvan::mtbdd_getvalue(result));
+        Pareto_Set expected_value(1);
+        expected_value.insert({1, 3}, 0);
+        expected_value.insert({2, 0}, 0);
+        CHECK(result_value->elements == expected_value);
+    }
+}
+
+MTBDD make_cube(const vector<u8>& symbol, const vector<s64>& post, BDDSET& vars) {
+    TFA_Leaf_Intersection_Contents leaf_contents = {.post = post};
+    MTBDD leaf = make_tfa_intersection_leaf(&leaf_contents);
+    vector<u8> mut_symbol = symbol;
+    return sylvan::mtbdd_cube(vars, mut_symbol.data(), leaf);
+}
+
+TEST_CASE("Test mtbdd pareto projection") {
+    u32 vars_array[] = {1, 2};
+    BDDSET vars = sylvan::mtbdd_set_from_array(vars_array, 2);
+
+    MTBDD input_mtbdd;
+    {
+        MTBDD mtbdd_cubes[3] = {
+            make_cube({0, 0}, {1, 2}, vars),
+            make_cube({0, 1}, {1, 3}, vars),
+            make_cube({1, 0}, {1, 3}, vars),
+        };
+
+        input_mtbdd = perform_tfa_pareto_union(mtbdd_cubes[0], mtbdd_cubes[1], 1);
+        input_mtbdd = perform_tfa_pareto_union(input_mtbdd, mtbdd_cubes[2], 1);
+    }
+
+    u32 quantif_vars_arr[] = {2};
+    BDDSET quantif_vars = sylvan::mtbdd_set_from_array(quantif_vars_arr, 1);
+
+    MTBDD output = perform_tfa_pareto_projection(input_mtbdd, quantif_vars, 1);
+
+    MTBDD expected_output = sylvan::mtbdd_false;
+    {
+        u32 vars_array[] = {1};
+        BDDSET expected_vars = sylvan::mtbdd_set_from_array(vars_array, 1);
+
+        MTBDD cubes[2];
+        {
+            TFA_Pareto_Leaf expected_contents = {.elements = Pareto_Set(1)};
+            expected_contents.elements.insert({1, 3});
+            MTBDD expected_leaf = make_tfa_pareto_leaf(&expected_contents);
+            u8 symbol[] = {0};
+            MTBDD expected_cube = sylvan::mtbdd_cube(expected_vars, symbol, expected_leaf);
+            cubes[0] = expected_cube;
+        }
+        {
+            cubes[1] = make_cube({1}, {1, 3}, expected_vars);
+        }
+
+        expected_output = perform_tfa_pareto_union(cubes[0], cubes[1], 1);
+    }
+
+    bool are_eq = check_mtbdds_are_identical(output, output);
+    CHECK(are_eq);
+}
+
+TEST_CASE("Leaf macrostate discovery") {
+    u32 vars_array[] = {1, 2};
+    BDDSET vars = sylvan::mtbdd_set_from_array(vars_array, 2);
+
+    MTBDD input_mtbdd;
+    {
+        MTBDD mtbdd_cubes[3] = {
+            make_cube({0, 0}, {1, 3}, vars),
+            make_cube({0, 1}, {2, 2}, vars),
+            make_cube({1, 0}, {3, 1}, vars),
+        };
+
+        input_mtbdd = perform_tfa_pareto_union(mtbdd_cubes[0], mtbdd_cubes[1], 1);
+        input_mtbdd = perform_tfa_pareto_union(input_mtbdd, mtbdd_cubes[2], 1);
+    }
+
+    NFA_Construction_Ctx ctx = {};
+    convert_tfa_leaves_into_macrostates(input_mtbdd, &ctx);
+
+    std::unordered_set<Macrostate2> expected_macrostates;
+    {
+        Macrostate2::Entry e0 = {.prefix = {1}, .suffixes = Chunked_Array<s64>(ctx.macrostate_block_alloc, {3}, 1)};
+        Macrostate2 m0 = {.entries = {e0}};
+
+        Macrostate2::Entry e1 = {.prefix = {2}, .suffixes = Chunked_Array<s64>(ctx.macrostate_block_alloc, {2}, 1)};
+        Macrostate2 m1 = {.entries = {e1}};
+
+        Macrostate2::Entry e2 = {.prefix = {3}, .suffixes = Chunked_Array<s64>(ctx.macrostate_block_alloc, {1}, 1)};
+        Macrostate2 m2 = {.entries = {e2}};
+
+        expected_macrostates = {m0, m1, m2};
+    };
+
+    std::unordered_set<Macrostate2> actual_macrostates;
+    for (auto macrostate_ptr: ctx.macrostates_to_explore) {
+        CHECK(macrostate_ptr->entries.size() == 1);
+        auto& entry = macrostate_ptr->entries[0];
+        CHECK(entry.prefix.size() == 1);
+        CHECK(entry.suffixes.total_size() == 1);
+        actual_macrostates.insert(*macrostate_ptr);
+    }
+
+    CHECK(actual_macrostates == expected_macrostates);
+}
+
+
+BDDSET make_var_set(std::vector<u32>&& vars) {
+    return sylvan::mtbdd_set_from_array(vars.data(), vars.size());
+}
+
+TEST_CASE("Explore macrostate") {
+    BDDSET vars = make_var_set({});
+    Formula2 formula = {
+        .congruences = {},
+        .equations = {Equation2({1, 2}, {1, 1})},
+        .inequations = {Inequation2({1, 2}, {1, 1})},
+        .quantif_vars = vars
+    };
+    Conjunction_State state({0, 0});
+    NFA nfa;
+    NFA_Construction_Ctx ctx = {
+        .known_states = {},
+        .macrostates_to_explore = {},
+        .macrostate_block_alloc = Block_Allocator(),
+        .constructed_nfa = &nfa,
+        .prefix_size = 0,
+    };
+
+    exp_macrostate(formula, state, &ctx);
+}
+
+TEST_CASE("Test macrostate iterator") {
+    Block_Allocator alloc;
+    Macrostate2::Entry e0 = {.prefix = {1}, .suffixes = Chunked_Array<s64>(alloc, {3, 1}, 2)};
+    Macrostate2::Entry e1 = {.prefix = {1}, .suffixes = Chunked_Array<s64>(alloc, {2}, 1)};
+    Macrostate2 m2 = {.entries = {e0, e1}, .single_post_size = 2};
+
+    vector<Sized_Array<s64>> seen_elems;
+    for (auto iter = m2.begin(); iter != m2.end(); ++iter) {
+        Sized_Array<s64> arr = Sized_Array<s64>(alloc, iter->size);
+        for (s64 i = 0; i < arr.size; i++) {
+            arr.items[i] = iter->items[i];
+        }
+        seen_elems.push_back(arr);
+    }
+
+    vector<Sized_Array<s64>> expected_elems = {
+        Sized_Array<s64>(alloc, {1, 3}),
+        Sized_Array<s64>(alloc, {1, 1}),
+        Sized_Array<s64>(alloc, {1, 2}),
+    };
+
+    CHECK(seen_elems == expected_elems);
 }
 
 int main(int argc, char* argv[]) {

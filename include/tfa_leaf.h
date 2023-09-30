@@ -6,6 +6,7 @@
 #include <sylvan.h>
 #include "base.hpp"
 #include "pareto_set.h"
+#include "lazy.hpp"
 #include <vector>
 
 extern u64 mtbdd_tfa_leaf_type_id;
@@ -68,6 +69,9 @@ MTBDD perform_tfa_pareto_union(MTBDD left, MTBDD right, u64 prefix_size);
 
 TASK_DECL_3(sylvan::MTBDD, tfa_mtbdd_pareto_projection_op, sylvan::MTBDD, sylvan::MTBDD, int)
 sylvan::MTBDD perform_tfa_pareto_projection(sylvan::MTBDD bdd, sylvan::BDDSET var_to_project_away, u64 prefix_size);
+
+TASK_DECL_2(sylvan::MTBDD, tfa_make_tfa_leaves_into_macrostate, sylvan::MTBDD, uint64_t);
+sylvan::MTBDD convert_tfa_leaves_into_macrostates(sylvan::MTBDD bdd, NFA_Construction_Ctx* ctx);
 
 void init_tfa_leaves();
 

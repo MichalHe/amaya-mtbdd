@@ -1,9 +1,12 @@
 #include "../include/tfa_leaf.h"
 #include "../include/base.hpp"
 #include "../include/operations.hpp"
+#include "../include/lazy.hpp"
+#include "../include/custom_leaf.hpp"
 
 #include <inttypes.h>
 
+#include <algorithm>
 #include <string>
 #include <cstring>
 #include <utility>
@@ -46,9 +49,9 @@ void init_tfa_pareto_leaf() {
 }
 
 void init_tfa_leaves() {
-   init_tfa_leaf(); 
-   init_tfa_intersection_leaf(); 
-   init_tfa_pareto_leaf(); 
+   init_tfa_leaf();
+   init_tfa_intersection_leaf();
+   init_tfa_pareto_leaf();
 }
 
 
@@ -330,9 +333,10 @@ TASK_IMPL_3(MTBDD, tfa_mtbdd_pareto_union, MTBDD*, left_ptr, MTBDD*, right_ptr, 
     assert(mtbdd_isleaf(not_bot));
     assert(mtbdd_gettype(not_bot) == mtbdd_tfa_intersection_leaf_type_id);
 
+
     auto result = make_union_singleton_pareto_leaf(not_bot, prefix_size);
     return result;
-    
+
     return mtbdd_invalid;
 }
 
@@ -351,6 +355,8 @@ TASK_IMPL_3(MTBDD, tfa_mtbdd_pareto_projection_op, MTBDD, left_mtbdd, MTBDD, rig
 MTBDD perform_tfa_pareto_projection(MTBDD bdd, BDDSET var_to_project_away, u64 prefix_size) {
     LACE_ME;
     projection_prefix_size = prefix_size;
+    // @ToDo: If the variable set is empty the projection will not take place and we will still have
+    //        leaves with Intersections in them - needs fixing.
     MTBDD result = mtbdd_abstract(bdd, var_to_project_away, TASK(tfa_mtbdd_pareto_projection_op));
     return result;
 }
@@ -390,7 +396,7 @@ TASK_IMPL_3(MTBDD, are_mtbdds_identic_op, sylvan::MTBDD*, left_ptr, sylvan::MTBD
     u64 left_type = mtbdd_gettype(left);
     u64 right_type = mtbdd_gettype(right);
 
-    if (left_type != right_type) return mtbdd_false; 
+    if (left_type != right_type) return mtbdd_false;
 
     u64 left_contents_ptr  = mtbdd_getvalue(left);
     u64 right_contents_ptr = mtbdd_getvalue(right);
@@ -406,4 +412,110 @@ TASK_IMPL_3(MTBDD, are_mtbdds_identic_op, sylvan::MTBDD*, left_ptr, sylvan::MTBD
 bool check_mtbdds_are_identical(MTBDD left, MTBDD right) {
     LACE_ME;
     return mtbdd_applyp(sylvan::mtbdd_false, sylvan::mtbdd_false, 0, TASK(are_mtbdds_identic_op), AMAYA_ARE_MTBDDS_IDENTIC_OP);
+}
+
+
+s64 mark_macrostate_as_known(Macrostate2& macrostate, NFA_Construction_Ctx& ctx) {
+    auto [insert_position, was_inserted] = ctx.known_states.emplace(macrostate, ctx.known_states.size());
+    s64 macrostate_handle = insert_position->second;
+    if (was_inserted) {
+        const Macrostate2* inserted_macrostate = &(insert_position->first);
+        const_cast<Macrostate2*>(inserted_macrostate)->handle = macrostate_handle;
+        ctx.macrostates_to_explore.push_back(inserted_macrostate);
+    }
+    return macrostate_handle;
+}
+
+
+Transition_Destination_Set make_macrostate_known(TFA_Pareto_Leaf& leaf, NFA_Construction_Ctx& ctx) {
+    vector<Macrostate2::Entry> macrostate_entries;
+
+    for (auto& [prefix, suffix_bucket]: leaf.elements.data) {
+
+        s64 non_empty_bucket_slot_i = -1;
+        for (s64 bucket_slot_i = 0; bucket_slot_i < suffix_bucket.size(); bucket_slot_i += 1) {
+            auto& bucket = suffix_bucket[bucket_slot_i];
+            if (bucket.empty()) continue;
+            non_empty_bucket_slot_i = bucket_slot_i;
+            break;
+        }
+
+        assert (non_empty_bucket_slot_i >= 0);
+
+        // @Todo: Integrity - ensure that the remainder of bucket slots are truly empty
+        u64 non_empty_bucket_cnt = suffix_bucket.size() - non_empty_bucket_slot_i;
+        u64 bucket_size = suffix_bucket[non_empty_bucket_slot_i].suffix->size();
+        u64 chunked_array_elems = non_empty_bucket_cnt * bucket_size;
+
+        s64* serialized_data_ptr = reinterpret_cast<s64*>(ctx.macrostate_block_alloc.alloc_block(chunked_array_elems * sizeof(s64)));
+        Chunked_Array<s64> serialized_data(serialized_data_ptr, bucket_size, non_empty_bucket_cnt);
+
+        for (s64 bucket_slot_i = non_empty_bucket_slot_i; bucket_slot_i < suffix_bucket.size(); bucket_slot_i += 1) {
+            auto& bucket = suffix_bucket[bucket_slot_i];
+            memcpy(serialized_data_ptr, bucket.suffix->data(), bucket.suffix->size() * sizeof(s64));
+            serialized_data_ptr += bucket.suffix->size();
+        }
+
+        macrostate_entries.push_back({.prefix = vector<s64>(prefix), .suffixes = serialized_data});
+    }
+
+    std::sort(macrostate_entries.begin(), macrostate_entries.end());
+
+    Macrostate2 macrostate = {.entries = macrostate_entries, .accepting = leaf.is_accepting};
+
+    s64 macrostate_handle = mark_macrostate_as_known(macrostate, ctx);
+    return Transition_Destination_Set({macrostate_handle});
+}
+
+Transition_Destination_Set make_singleton_macrostate_known(TFA_Leaf_Intersection_Contents& leaf, NFA_Construction_Ctx& ctx) {
+    vector<s64> prefix;
+    prefix.reserve(ctx.prefix_size);
+    for (s64 i = 0; i < ctx.prefix_size; i++) {
+        prefix[i] = leaf.post[i];
+    }
+
+    u64 suffix_size = leaf.post.size() - ctx.prefix_size;
+    s64* suffix_data = reinterpret_cast<s64*>(ctx.macrostate_block_alloc.alloc_block(sizeof(s64) * suffix_size));
+    for (s64 i = 0; i < suffix_size; i++) {
+        suffix_data[i] = leaf.post[i+ctx.prefix_size];
+    }
+
+    Chunked_Array<s64> serialized_suffixes(suffix_data, suffix_size, 1);
+
+    vector<Macrostate2::Entry> entries = {{.prefix = prefix, .suffixes = serialized_suffixes}};
+    Macrostate2 macrostate = {.entries = entries, .accepting = leaf.is_accepting};
+
+
+    s64 macrostate_handle = mark_macrostate_as_known(macrostate, ctx);
+    return Transition_Destination_Set({macrostate_handle});
+}
+
+
+TASK_IMPL_2(MTBDD, tfa_make_tfa_leaves_into_macrostate, MTBDD, dd, uint64_t, param) {
+    if (!mtbdd_isleaf(dd)) return mtbdd_invalid;
+    if (dd == mtbdd_false) return mtbdd_false;
+
+    u64 leaf_type = mtbdd_gettype(dd);
+    auto construction_ctx = reinterpret_cast<NFA_Construction_Ctx*>(param);
+
+    if (leaf_type == mtbdd_tfa_pareto_leaf_type_id) {
+        auto leaf_contents = reinterpret_cast<TFA_Pareto_Leaf*>(mtbdd_getvalue(dd));
+        auto new_leaf_contents = make_macrostate_known(*leaf_contents, *construction_ctx);
+        return make_set_leaf(&new_leaf_contents);
+    } else {
+        assert(leaf_type == mtbdd_tfa_intersection_leaf_type_id);
+
+        auto leaf_contents = reinterpret_cast<TFA_Leaf_Intersection_Contents*>(mtbdd_getvalue(dd));
+        auto new_leaf_contents = make_singleton_macrostate_known(*leaf_contents, *construction_ctx);
+        return make_set_leaf(&new_leaf_contents);
+    }
+    return mtbdd_invalid;
+}
+
+
+sylvan::MTBDD convert_tfa_leaves_into_macrostates(sylvan::MTBDD bdd, NFA_Construction_Ctx* ctx)
+{
+    LACE_ME;
+    u64 param = reinterpret_cast<u64>(ctx);
+    return mtbdd_uapply(bdd, TASK(tfa_make_tfa_leaves_into_macrostate), param);
 }

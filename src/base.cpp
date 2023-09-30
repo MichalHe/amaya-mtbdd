@@ -518,7 +518,7 @@ NFA compute_nfa_intersection(NFA& left, NFA& right) {
 
 NFA determinize_nfa(NFA& nfa) {
     LACE_ME;
-    NFA result = {.vars = nfa.vars, .var_count = nfa.var_count};
+    NFA result(nfa.vars, nfa.var_count);
 
     std::vector<std::pair<const Macrostate, State>*> work_queue;
     Determinization_Context ctx = {.known_macrostates = {}, .work_queue = work_queue, .is_trapstate_needed=false};

@@ -43,7 +43,10 @@ extern Pad_Closure_Info2* g_pad_closure_info;
 #define AMAYA_REMOVE_STATES_OP                    (95llu) << 40u
 #define AMAYA_REPLACE_MACROSTATES_WITH_HANDLES_OP (96llu) << 40u
 
-#define AMAYA_TFA_UNION_OP_ID (97llu) << 40u
+#define AMAYA_TFA_UNION_OP_ID        (97llu)  << 40u
+#define AMAYA_TFA_PARETO_UNION_OP_ID (98llu)  << 40u
+#define AMAYA_TFA_INTERSECTION_OP_ID (99llu)  << 40u
+#define AMAYA_ARE_MTBDDS_IDENTIC_OP  (10llu) << 40u
 
 /**
  * The *abstraction* F definition.
