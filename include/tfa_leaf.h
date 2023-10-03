@@ -65,10 +65,10 @@ MTBDD perform_tfa_mtbdd_intersection(MTBDD left, MTBDD right);
 MTBDD make_tfa_intersection_top();
 
 TASK_DECL_3(sylvan::MTBDD, tfa_mtbdd_pareto_union, sylvan::MTBDD *, sylvan::MTBDD *, u64);
-MTBDD perform_tfa_pareto_union(MTBDD left, MTBDD right, u64 prefix_size);
+MTBDD perform_tfa_pareto_union(MTBDD left, MTBDD right, Formula_Structure_Info* formula_info);
 
 TASK_DECL_3(sylvan::MTBDD, tfa_mtbdd_pareto_projection_op, sylvan::MTBDD, sylvan::MTBDD, int)
-sylvan::MTBDD perform_tfa_pareto_projection(sylvan::MTBDD bdd, sylvan::BDDSET var_to_project_away, u64 prefix_size);
+sylvan::MTBDD perform_tfa_pareto_projection(sylvan::MTBDD bdd, sylvan::BDDSET var_to_project_away, Formula_Structure_Info* formula_structure);
 
 TASK_DECL_2(sylvan::MTBDD, tfa_make_tfa_leaves_into_macrostate, sylvan::MTBDD, uint64_t);
 sylvan::MTBDD convert_tfa_leaves_into_macrostates(sylvan::MTBDD bdd, NFA_Construction_Ctx* ctx);

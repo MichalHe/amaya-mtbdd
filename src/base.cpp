@@ -844,3 +844,7 @@ std::ostream& operator<<(std::ostream& output, const Transition& transition) {
     output << ")--> " << transition.to << ")";
     return output;
 }
+
+const char* bool_into_yes_no(bool it) {
+   return (it ? "Yes" : "No");
+}

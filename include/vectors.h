@@ -124,6 +124,16 @@ struct Sized_Array {
         return true;
     }
 
+    Sized_Array(Block_Allocator& alloc, const std::vector<T>& contents) : size(contents.size()) {
+        items = reinterpret_cast<T*>(alloc.alloc_block(sizeof(T) * contents.size())) ;
+
+        s64 i = 0;
+        for (auto& it: contents) {
+            items[i] = it;
+            i += 1;
+        }
+    }
+
     Sized_Array(Block_Allocator& alloc, std::initializer_list<T> contents) : size(contents.size()) {
         items = reinterpret_cast<T*>(alloc.alloc_block(sizeof(T) * contents.size())) ;
 
@@ -161,8 +171,11 @@ struct Chunked_Array {
     Chunked_Array(Block_Allocator& alloc, std::initializer_list<T> contents, u64 chunk_count):
         chunk_count(chunk_count)
     {
-        assert(contents.size() % chunk_count == 0);
-
+        if (chunk_count == 0) {
+            data = nullptr;
+            chunk_size = 0;
+            return;
+        }
         data = reinterpret_cast<s64*>(alloc.alloc_block(sizeof(T) * contents.size()));
         s64 write_idx = 0;
         for (const T& elem: contents) {
@@ -171,6 +184,23 @@ struct Chunked_Array {
         }
         chunk_size = contents.size() / chunk_count;
     };
+
+    Chunked_Array(Block_Allocator& alloc, const std::vector<T>& contents, u64 chunk_count) : chunk_count(chunk_count) {
+        if (chunk_count == 0) {
+            data = nullptr;
+            chunk_size = 0;
+            return;
+        }
+
+        data = reinterpret_cast<s64*>(alloc.alloc_block(sizeof(T) * contents.size()));
+        s64 write_idx = 0;
+        for (const T& elem: contents) {
+            data[write_idx] = elem;
+            write_idx += 1;
+        }
+        chunk_size = contents.size() / chunk_count;
+    }
+
 
     T* get_nth_chunk_data(u64 n) const {
         return this->data + n*chunk_size;

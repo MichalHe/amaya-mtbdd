@@ -1,4 +1,3 @@
-#include <unordered_set>
 #define DOCTEST_CONFIG_IMPLEMENT
 #include "../external/doctest.h"
 #include "../include/lazy.hpp"
@@ -1292,6 +1291,8 @@ TEST_CASE("Test pareto set") {
 }
 
 TEST_CASE("Test mtbdd pareto union") {
+    Formula_Structure_Info info = {.prefix_size = 1, .post_size = 2};
+
     SUBCASE("Two pareto leaves") {
         TFA_Pareto_Leaf left_leaf  = {.elements = Pareto_Set(1)};
         TFA_Pareto_Leaf right_leaf = {.elements = Pareto_Set(1)};
@@ -1302,7 +1303,7 @@ TEST_CASE("Test mtbdd pareto union") {
         sylvan::mtbdd_refs_push(left);
         MTBDD right = make_tfa_pareto_leaf(&right_leaf);
         sylvan::mtbdd_refs_push(right);
-        MTBDD result = perform_tfa_pareto_union(left, right, 1);
+        MTBDD result = perform_tfa_pareto_union(left, right, &info);
         sylvan::mtbdd_refs_pop(2);
 
         CHECK(sylvan::mtbdd_isleaf(result));
@@ -1327,7 +1328,7 @@ TEST_CASE("Test mtbdd pareto union") {
         MTBDD right = make_tfa_intersection_leaf(&right_leaf);
         sylvan::mtbdd_refs_push(right);
 
-        MTBDD result = perform_tfa_pareto_union(left, right, 1);
+        MTBDD result = perform_tfa_pareto_union(left, right, &info);
         sylvan::mtbdd_refs_pop(2);
 
         CHECK(sylvan::mtbdd_isleaf(result));
@@ -1352,6 +1353,8 @@ TEST_CASE("Test mtbdd pareto projection") {
     u32 vars_array[] = {1, 2};
     BDDSET vars = sylvan::mtbdd_set_from_array(vars_array, 2);
 
+    Formula_Structure_Info formula_structure = {.prefix_size = 1, .post_size = 2};
+
     MTBDD input_mtbdd;
     {
         MTBDD mtbdd_cubes[3] = {
@@ -1360,14 +1363,14 @@ TEST_CASE("Test mtbdd pareto projection") {
             make_cube({1, 0}, {1, 3}, vars),
         };
 
-        input_mtbdd = perform_tfa_pareto_union(mtbdd_cubes[0], mtbdd_cubes[1], 1);
-        input_mtbdd = perform_tfa_pareto_union(input_mtbdd, mtbdd_cubes[2], 1);
+        input_mtbdd = perform_tfa_pareto_union(mtbdd_cubes[0], mtbdd_cubes[1], &formula_structure);
+        input_mtbdd = perform_tfa_pareto_union(input_mtbdd, mtbdd_cubes[2], &formula_structure);
     }
 
     u32 quantif_vars_arr[] = {2};
     BDDSET quantif_vars = sylvan::mtbdd_set_from_array(quantif_vars_arr, 1);
 
-    MTBDD output = perform_tfa_pareto_projection(input_mtbdd, quantif_vars, 1);
+    MTBDD output = perform_tfa_pareto_projection(input_mtbdd, quantif_vars, &formula_structure);
 
     MTBDD expected_output = sylvan::mtbdd_false;
     {
@@ -1387,18 +1390,39 @@ TEST_CASE("Test mtbdd pareto projection") {
             cubes[1] = make_cube({1}, {1, 3}, expected_vars);
         }
 
-        expected_output = perform_tfa_pareto_union(cubes[0], cubes[1], 1);
+        expected_output = perform_tfa_pareto_union(cubes[0], cubes[1], &formula_structure);
     }
 
     bool are_eq = check_mtbdds_are_identical(output, output);
     CHECK(are_eq);
 }
 
+struct Macrostate_Init {
+    vector<s64> prefix;
+    vector<s64> suffix_data;
+    Macrostate_Init(const vector<s64>& prefix, const vector<s64>& suffix_data):
+        prefix(prefix), suffix_data(suffix_data) {}
+};
+
+Macrostate2 make_macrostate(Block_Allocator& alloc, const vector<Macrostate_Init>& inits, Formula_Structure_Info* info, bool accepting = false) {
+    u64 suffix_size = info->post_size - info->prefix_size;
+    vector<Macrostate2::Entry> entries;
+    for (auto& init: inits) {
+        u64 chunk_count = init.suffix_data.empty() ? 0 : init.suffix_data.size() / suffix_size;
+        auto suffixes = Chunked_Array<s64>(alloc, init.suffix_data, chunk_count);
+        Macrostate2::Entry entry = {.prefix = init.prefix, .suffixes = suffixes};
+        entries.push_back(entry);
+    }
+
+    return {.entries = entries, .accepting = accepting, .formula_structure = info};
+}
+
 TEST_CASE("Leaf macrostate discovery") {
     u32 vars_array[] = {1, 2};
     BDDSET vars = sylvan::mtbdd_set_from_array(vars_array, 2);
 
-    MTBDD input_mtbdd;
+    MTBDD input_mtbdd = sylvan::mtbdd_false;
+    Formula_Structure_Info info = {.prefix_size = 1, .post_size = 2};
     {
         MTBDD mtbdd_cubes[3] = {
             make_cube({0, 0}, {1, 3}, vars),
@@ -1406,23 +1430,19 @@ TEST_CASE("Leaf macrostate discovery") {
             make_cube({1, 0}, {3, 1}, vars),
         };
 
-        input_mtbdd = perform_tfa_pareto_union(mtbdd_cubes[0], mtbdd_cubes[1], 1);
-        input_mtbdd = perform_tfa_pareto_union(input_mtbdd, mtbdd_cubes[2], 1);
+
+        input_mtbdd = perform_tfa_pareto_union(mtbdd_cubes[0], mtbdd_cubes[1], &info);
+        input_mtbdd = perform_tfa_pareto_union(input_mtbdd, mtbdd_cubes[2], &info);
     }
 
-    NFA_Construction_Ctx ctx = {};
+    NFA_Construction_Ctx ctx = {.known_states = {}, .macrostates_to_explore = {}, .structure_info = info};
     convert_tfa_leaves_into_macrostates(input_mtbdd, &ctx);
 
     std::unordered_set<Macrostate2> expected_macrostates;
     {
-        Macrostate2::Entry e0 = {.prefix = {1}, .suffixes = Chunked_Array<s64>(ctx.macrostate_block_alloc, {3}, 1)};
-        Macrostate2 m0 = {.entries = {e0}};
-
-        Macrostate2::Entry e1 = {.prefix = {2}, .suffixes = Chunked_Array<s64>(ctx.macrostate_block_alloc, {2}, 1)};
-        Macrostate2 m1 = {.entries = {e1}};
-
-        Macrostate2::Entry e2 = {.prefix = {3}, .suffixes = Chunked_Array<s64>(ctx.macrostate_block_alloc, {1}, 1)};
-        Macrostate2 m2 = {.entries = {e2}};
+        Macrostate2 m0 = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({1}, {3})}, &info);
+        Macrostate2 m1 = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({2}, {2})}, &info);
+        Macrostate2 m2 = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({3}, {1})}, &info);
 
         expected_macrostates = {m0, m1, m2};
     };
@@ -1444,32 +1464,14 @@ BDDSET make_var_set(std::vector<u32>&& vars) {
     return sylvan::mtbdd_set_from_array(vars.data(), vars.size());
 }
 
-TEST_CASE("Explore macrostate") {
-    BDDSET vars = make_var_set({});
-    Formula2 formula = {
-        .congruences = {},
-        .equations = {Equation2({1, 2}, {1, 1})},
-        .inequations = {Inequation2({1, 2}, {1, 1})},
-        .quantif_vars = vars
-    };
-    Conjunction_State state({0, 0});
-    NFA nfa;
-    NFA_Construction_Ctx ctx = {
-        .known_states = {},
-        .macrostates_to_explore = {},
-        .macrostate_block_alloc = Block_Allocator(),
-        .constructed_nfa = &nfa,
-        .prefix_size = 0,
-    };
-
-    exp_macrostate(formula, state, &ctx);
-}
-
 TEST_CASE("Test macrostate iterator") {
     Block_Allocator alloc;
     Macrostate2::Entry e0 = {.prefix = {1}, .suffixes = Chunked_Array<s64>(alloc, {3, 1}, 2)};
     Macrostate2::Entry e1 = {.prefix = {1}, .suffixes = Chunked_Array<s64>(alloc, {2}, 1)};
-    Macrostate2 m2 = {.entries = {e0, e1}, .single_post_size = 2};
+
+    Formula_Structure_Info formula_info = {.prefix_size = 1, .post_size = 2};
+
+    Macrostate2 m2 = {.entries = {e0, e1}, .formula_structure = &formula_info};
 
     vector<Sized_Array<s64>> seen_elems;
     for (auto iter = m2.begin(); iter != m2.end(); ++iter) {
@@ -1487,6 +1489,264 @@ TEST_CASE("Test macrostate iterator") {
     };
 
     CHECK(seen_elems == expected_elems);
+}
+TEST_CASE("Explore macrostate") {
+    SUBCASE("no projection") {
+        BDDSET vars = make_var_set({});
+        Formula2 formula = {
+            .congruences = {},
+            .equations = {Equation2({1, 2}, {1, 1})},
+            .inequations = {Inequation2({1, 2}, {1, -1})},
+            .quantif_vars = vars
+        };
+        NFA nfa;
+        NFA_Construction_Ctx ctx = {
+            .known_states = {},
+            .macrostates_to_explore = {},
+            .macrostate_block_alloc = Block_Allocator(),
+            .constructed_nfa = &nfa,
+            .structure_info = {.prefix_size = 1, .post_size = 2}
+        };
+
+        Macrostate2 m2 = make_macrostate(ctx.macrostate_block_alloc,
+                                         {Macrostate_Init({1}, {1}), Macrostate_Init({2}, {2})},
+                                         &ctx.structure_info);
+
+        exp_macrostate(formula, &m2, &ctx);
+
+        CHECK(ctx.macrostates_to_explore.size() == 3);
+
+        unordered_set<Macrostate2> expected_macrostates;
+        {
+            Macrostate2 m0 = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({1}, {1})}, &ctx.structure_info, true);
+            Macrostate2 m1 = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({0}, {1})}, &ctx.structure_info, true);
+            Macrostate2 m2 = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({0}, {0})}, &ctx.structure_info, true);
+            expected_macrostates.insert(m0);
+            expected_macrostates.insert(m1);
+            expected_macrostates.insert(m2);
+        }
+
+        unordered_set<Macrostate2> actual_macrostates;
+        for (auto& m: ctx.macrostates_to_explore) {
+            actual_macrostates.insert(*m);
+        }
+
+        CHECK(expected_macrostates == actual_macrostates);
+    }
+
+    SUBCASE("with projection") {
+        BDDSET vars = make_var_set({2});
+        Formula2 formula = {
+            .congruences = {},
+            .equations = {Equation2({1, 2}, {1, 1})},
+            .inequations = {Inequation2({1, 2}, {1, -1})},
+            .quantif_vars = vars
+        };
+        NFA nfa;
+        NFA_Construction_Ctx ctx = {
+            .known_states = {},
+            .macrostates_to_explore = {},
+            .macrostate_block_alloc = Block_Allocator(),
+            .constructed_nfa = &nfa,
+            .structure_info = {.prefix_size = 1, .post_size = 2}
+        };
+
+        Macrostate2 m = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({1}, {1}), Macrostate_Init({2}, {2})}, &ctx.structure_info);
+
+        exp_macrostate(formula, &m, &ctx);
+
+        CHECK(ctx.macrostates_to_explore.size() == 2);
+        unordered_set<Macrostate2> actual_macrostates;
+        for (auto& m: ctx.macrostates_to_explore) {
+            actual_macrostates.insert(*m);
+        }
+
+        unordered_set<Macrostate2> expected_macrostates;
+        {
+            Macrostate2 m0 = make_macrostate(ctx.macrostate_block_alloc,
+                                             {Macrostate_Init({0}, {1}), Macrostate_Init({1}, {1})},
+                                             &ctx.structure_info,
+                                             true);
+            Macrostate2 m1 = make_macrostate(ctx.macrostate_block_alloc,
+                                             {Macrostate_Init({0}, {1})},
+                                             &ctx.structure_info,
+                                             true);
+            expected_macrostates.insert(m0);
+            expected_macrostates.insert(m1);
+        }
+
+        CHECK(actual_macrostates == expected_macrostates);
+    }
+}
+
+TEST_CASE("Construct NFA for atom") {
+    SUBCASE("(<= (- (* 2 x) y) 0") {
+        BDDSET vars = make_var_set({1, 2});
+        // States:
+        // 0 -> 0
+        // 1 -> 0,F
+        // 2 -> -1
+        // 3 -> -1,F
+        // 4 -> -2
+        // 5 -> -2,F
+        NFA expected_result(vars, 2, {0, 1, 2, 3, 4, 5}, {1, 3, 5}, {0});
+        vector<Transition> expected_transitions = {
+            {.from = 0, .to = 1, .symbol = {0, 0}},
+            {.from = 0, .to = 0, .symbol = {0, 1}},
+            {.from = 0, .to = 3, .symbol = {1, 0}},
+            {.from = 0, .to = 3, .symbol = {1, 1}},
+
+            {.from = 1, .to = 1, .symbol = {0, 0}},
+            {.from = 1, .to = 0, .symbol = {0, 1}},
+            {.from = 1, .to = 3, .symbol = {1, 0}},
+            {.from = 1, .to = 3, .symbol = {1, 1}},
+
+            {.from = 2, .to = 2, .symbol = {0, 0}},
+            {.from = 2, .to = 0, .symbol = {0, 1}},
+            {.from = 2, .to = 5, .symbol = {1, 0}},
+            {.from = 2, .to = 3, .symbol = {1, 1}},
+
+            {.from = 3, .to = 2, .symbol = {0, 0}},
+            {.from = 3, .to = 0, .symbol = {0, 1}},
+            {.from = 3, .to = 5, .symbol = {1, 0}},
+            {.from = 3, .to = 3, .symbol = {1, 1}},
+
+            {.from = 4, .to = 2, .symbol = {0, 0}},
+            {.from = 4, .to = 2, .symbol = {0, 1}},
+            {.from = 4, .to = 5, .symbol = {1, 0}},
+            {.from = 4, .to = 4, .symbol = {1, 1}},
+
+            {.from = 5, .to = 2, .symbol = {0, 0}},
+            {.from = 5, .to = 2, .symbol = {0, 1}},
+            {.from = 5, .to = 5, .symbol = {1, 0}},
+            {.from = 5, .to = 4, .symbol = {1, 1}},
+        };
+        for (auto& t: expected_transitions) expected_result.add_transition(t.from, t.to, t.symbol.data());
+
+        Formula2 formula = {
+            .congruences = {},
+            .equations = {},
+            .inequations = {Inequation2({1, 2}, {2, -1})},
+            .quantif_vars = sylvan::mtbdd_set_empty()
+        };
+
+        Block_Allocator alloc;
+        Formula_Structure_Info info = formula.describe();
+        Macrostate2 initial_macrostate = make_macrostate(alloc, {Macrostate_Init({}, {0})}, &info);
+        NFA actual_nfa = build_nfa_for_conjunction(formula, initial_macrostate);
+
+        assert_dfas_are_isomorphic(expected_result, actual_nfa);
+    }
+
+    SUBCASE("Eq (= (- (* 2 x) y) 0)") {
+        BDDSET vars = make_var_set({1, 2});
+        Formula2 formula = {
+            .congruences = {},
+            .equations = {Equation2({1, 2}, {2, -1})},
+            .inequations = {},
+            .quantif_vars = sylvan::mtbdd_set_empty()
+        };
+        Block_Allocator alloc;
+        Formula_Structure_Info info = formula.describe();
+
+        Macrostate2 init_macrostate = make_macrostate(alloc, {Macrostate_Init({0}, {})}, &info);
+
+        auto actual_nfa = build_nfa_for_conjunction(formula, init_macrostate);
+
+        NFA expected_nfa(
+            vars, 2,
+            {
+                0,  // {0}
+                1,  // {0, F}
+                2,  // {-1}
+                3,  // {-1, F}
+                4,  // Trap
+            },
+            {1, 3},
+            {0}
+        );
+
+        vector<Transition> symbolic_transitions {
+            // {0}
+            {.from = 0, .to = 1, .symbol = {0, 0}},
+            {.from = 0, .to = 4, .symbol = {0, 1}},
+            {.from = 0, .to = 2, .symbol = {1, 0}},
+            {.from = 0, .to = 4, .symbol = {1, 1}},
+            // {0, F}
+            {.from = 1, .to = 1, .symbol = {0, 0}},
+            {.from = 1, .to = 4, .symbol = {0, 1}},
+            {.from = 1, .to = 2, .symbol = {1, 0}},
+            {.from = 1, .to = 4, .symbol = {1, 1}},
+            // {-1}
+            {.from = 2, .to = 4, .symbol = {0, 0}},
+            {.from = 2, .to = 0, .symbol = {0, 1}},
+            {.from = 2, .to = 4, .symbol = {1, 0}},
+            {.from = 2, .to = 3, .symbol = {1, 1}},
+            // {-1, F}
+            {.from = 3, .to = 4, .symbol = {0, 0}},
+            {.from = 3, .to = 0, .symbol = {0, 1}},
+            {.from = 3, .to = 4, .symbol = {1, 0}},
+            {.from = 3, .to = 3, .symbol = {1, 1}},
+            // Trap
+            {.from = 4, .to = 4, .symbol = {2, 2}},
+        };
+
+        for (auto it: symbolic_transitions) expected_nfa.add_transition(it.from, it.to, it.symbol.data());
+
+        assert_dfas_are_isomorphic(expected_nfa, actual_nfa);
+    }
+
+    SUBCASE("Co `x + 3y = 1 (mod 3)`") {
+        BDDSET vars = make_var_set({1, 2});
+        Formula2 formula = {
+            .congruences = {Congruence2({1, 2}, {1, -3}, 0, 3)},
+            .equations = {},
+            .inequations = {},
+            .quantif_vars = sylvan::mtbdd_set_empty()
+        };
+        Block_Allocator alloc;
+        Formula_Structure_Info info = formula.describe();
+
+        Macrostate2 init_macrostate = make_macrostate(alloc, {Macrostate_Init({1}, {})}, &info);
+
+        auto actual_nfa = build_nfa_for_conjunction(formula, init_macrostate);
+
+        NFA expected_nfa(
+            vars, 2,
+            {
+                0,  // {1}
+                1,  // {2}
+                2,  // {2, F}
+                3,  // {0}
+                4,  // {0, F}
+            },
+            {2, 4},
+            {0}
+        );
+
+        vector<Transition> symbolic_transitions {
+            // {1}
+            {.from = 0, .to = 1, .symbol = {0, 2}},
+            {.from = 0, .to = 3, .symbol = {1, 2}},
+            // {2}
+            {.from = 1, .to = 0, .symbol = {0, 2}},
+            {.from = 1, .to = 2, .symbol = {1, 2}},
+            // {2, F}
+            {.from = 2, .to = 0, .symbol = {0, 2}},
+            {.from = 2, .to = 2, .symbol = {1, 2}},
+            // {0}
+            {.from = 3, .to = 4, .symbol = {0, 2}},
+            {.from = 3, .to = 0, .symbol = {1, 2}},
+            // {0, F}
+            {.from = 4, .to = 4, .symbol = {0, 2}},
+            {.from = 4, .to = 0, .symbol = {1, 2}},
+        };
+
+        for (auto it: symbolic_transitions) expected_nfa.add_transition(it.from, it.to, it.symbol.data());
+        std::cout << actual_nfa.states << std::endl;
+
+        assert_dfas_are_isomorphic(expected_nfa, actual_nfa);
+    }
 }
 
 int main(int argc, char* argv[]) {

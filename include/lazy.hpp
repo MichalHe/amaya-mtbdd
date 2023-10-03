@@ -887,6 +887,12 @@ struct Congruence2 : Atom {
     }
 };
 
+struct Formula_Structure_Info {
+    u64 prefix_size;
+    u64 post_size;
+};
+
+
 struct Formula2 {
     vector<Congruence2> congruences;
     vector<Equation2>   equations;
@@ -897,8 +903,50 @@ struct Formula2 {
     u64 atom_count() const {
         return congruences.size() + equations.size() + inequations.size();
     }
-};
 
+    Formula_Structure_Info describe() const {
+        return {
+            .prefix_size = congruences.size() + equations.size(),
+            .post_size = congruences.size() + equations.size() + inequations.size()
+        };
+    }
+
+    sylvan::BDDSET get_all_vars() {
+        using sylvan::BDDSET;
+
+        BDDSET vars = sylvan::mtbdd_set_empty();
+        sylvan::mtbdd_ref(vars);
+
+        for (auto& congruence: congruences) {
+            for (auto var: congruence.vars) {
+                BDDSET new_set = sylvan::mtbdd_set_add(vars, var);
+                sylvan::mtbdd_ref(new_set);
+                sylvan::mtbdd_deref(vars);
+                vars = new_set;
+            }
+        }
+
+        for (auto& atom: inequations) {
+            for (auto var: atom.vars) {
+                BDDSET new_set = sylvan::mtbdd_set_add(vars, var);
+                sylvan::mtbdd_ref(new_set);
+                sylvan::mtbdd_deref(vars);
+                vars = new_set;
+            }
+        }
+
+        for (auto& atom: equations) {
+            for (auto var: atom.vars) {
+                BDDSET new_set = sylvan::mtbdd_set_add(vars, var);
+                sylvan::mtbdd_ref(new_set);
+                sylvan::mtbdd_deref(vars);
+                vars = new_set;
+            }
+        }
+
+        return vars;
+    }
+};
 
 struct Macrostate2 {
     struct Entry {
@@ -914,16 +962,11 @@ struct Macrostate2 {
         }
     };
 
-    bool operator==(const Macrostate2& other) const {
-        return entries == other.entries;
-    }
-
     vector<Entry> entries;
     bool accepting;
 
-    u64 single_post_size;  // Number of elements in the intersection
+    Formula_Structure_Info* formula_structure = nullptr;
     State handle;
-
 
     struct Iterator {
         const Macrostate2* macrostate;
@@ -945,19 +988,22 @@ struct Macrostate2 {
                 return;
             }
 
-            s64* raw_buffer = new s64[m->single_post_size];
+            u64 post_size = m->formula_structure->post_size;
+
+            s64* raw_buffer = new s64[post_size];
             assert(raw_buffer != nullptr);
-            buffer = {raw_buffer, m->single_post_size};
+            buffer = {raw_buffer, post_size};
 
             auto& entry = macrostate->entries[entry_idx];
             std::memcpy(buffer.items, entry.prefix.data(), entry.prefix.size() * sizeof(s64));
 
-            u64 suffix_size = macrostate->single_post_size - entry.prefix.size();
+            u64 suffix_size = post_size - entry.prefix.size();
             std::memcpy(buffer.items + entry.prefix.size(), entry.suffixes.get_nth_chunk_data(entry_idx), suffix_size * sizeof(s64));
         }
 
         Iterator(const Macrostate2* m, s64 entry_idx): macrostate(m), entry_idx(entry_idx), suffix_idx(0) {}
         Iterator(const Iterator& other) = delete;
+        Iterator(Iterator&& other) = delete;
 
         reference operator*() {
             return buffer;
@@ -978,7 +1024,7 @@ struct Macrostate2 {
 
                 std::memcpy(buffer.items, entry.prefix.data(), entry.prefix.size() * sizeof(s64));
 
-                u64 suffix_size = macrostate->single_post_size - entry.prefix.size();
+                u64 suffix_size = macrostate->formula_structure->post_size - entry.prefix.size();
 
                 s64* suffix_dst = buffer.items + entry.prefix.size();
                 s64* suffix_src = entry.suffixes.get_nth_chunk_data(suffix_idx);
@@ -996,13 +1042,20 @@ struct Macrostate2 {
         }
     };
 
-    Iterator begin() {
+    Iterator begin() const {
         return Iterator(this);
     }
 
-    Iterator end() {
+    Iterator end() const {
         return Iterator(this, this->entries.size());
     }
+
+    friend std::ostream& operator<<(std::ostream& os, const Macrostate2& m);
+    bool operator==(const Macrostate2& other) const {
+        bool are_eq = (entries == other.entries && accepting == other.accepting);
+        return are_eq;
+    }
+
 };
 
 template<> struct std::hash<Macrostate2> {
@@ -1012,6 +1065,7 @@ template<> struct std::hash<Macrostate2> {
             hash = hash_combine(hash, hash_vector(entry.prefix, 0));
             hash = hash_combine(hash, hash_chunked_array(entry.suffixes));
         }
+        hash += (state.accepting ? 33 : 1);
         return hash;
     }
 };
@@ -1021,10 +1075,13 @@ struct NFA_Construction_Ctx {
     vector<const Macrostate2*>        macrostates_to_explore;
     Block_Allocator                   macrostate_block_alloc;
     NFA*                              constructed_nfa;
-    u64 prefix_size = 0;
+    Formula_Structure_Info            structure_info;
+    State                             trapstate_handle = 0;
+    bool                              trapstate_needed = false;
 };
 
-void exp_macrostate(Formula2& formula, Conjunction_State& state, NFA_Construction_Ctx* ctx);
+void exp_macrostate(Formula2& formula, const Macrostate2* state, NFA_Construction_Ctx* ctx);
+NFA build_nfa_for_conjunction(Formula2& formula, Macrostate2& initial_macrostate);
 
 #endif
 

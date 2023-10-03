@@ -216,5 +216,7 @@ std::size_t hash_vector(const std::vector<T>& arr, std::size_t seed) {
     return hash;
 }
 
+const char* bool_into_yes_no(bool it);
+
 
 #endif

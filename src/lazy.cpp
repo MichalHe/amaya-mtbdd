@@ -12,6 +12,7 @@
 #include <cstring>
 #include <string>
 #include <sstream>
+#include <sylvan_mtbdd.h>
 #include <vector>
 #include <map>
 #include <unordered_map>
@@ -2262,7 +2263,7 @@ sylvan::MTBDD Inequation2::extend_post(
 s64 Inequation2::post(s64 rhs, u64 symbol) const {
     const s64 dot = dot_with_symbol(symbol);
     s64 post = rhs - dot;
-    s64 has_reminder = (post % 2) > 0;
+    s64 has_reminder = (post % 2) != 0;
     post = (post / 2) - (post < 0) * has_reminder;
     return post;
 }
@@ -2281,7 +2282,7 @@ optional<s64> Equation2::post(s64 rhs, u64 symbol) const {
     s64 dot = dot_with_symbol(symbol);
     s64 post = rhs - dot;
 
-    s64 has_reminder = (post % 2) > 0;
+    s64 has_reminder = (post % 2) != 0;
     if (has_reminder) return std::nullopt;
 
     post /= 2;
@@ -2337,7 +2338,9 @@ sylvan::MTBDD Congruence2::extend_post(sylvan::MTBDD current_post,
     u64 symbol)
 {
     optional<s64> post = this->post(rhs, symbol);
-    if (!post.has_value()) return current_post;
+    if (!post.has_value()) {
+        return current_post;
+    };
     bool is_accepting = accepts(rhs, symbol);
     TFA_Leaf_Contents leaf_contents = {.post = post.value(), .is_accepting = is_accepting};
     return extend_post_with_cube(*this, current_post, leaf_contents, ritch_symbol_space, symbol);
@@ -2347,49 +2350,148 @@ sylvan::MTBDD Congruence2::compute_entire_post(s64 rhs) {
     return make_extended_post(*this, rhs);
 }
 
-
 template <typename Atom>
-void extend_post_mtbdd_with_atoms(vector<sylvan::MTBDD>& post_to_extend, vector<Atom>& atoms, Conjunction_State& state, s64& state_idx) {
+void extend_post_mtbdd_with_atoms(vector<sylvan::MTBDD>& post_to_extend, vector<Atom>& atoms, Sized_Array<s64>& state, s64& state_idx) {
     for (auto& atom: atoms) {
-        s64 rhs = state.constants[state_idx];
+        s64 rhs = state.items[state_idx];
         state_idx += 1;
         sylvan::MTBDD post = atom.compute_entire_post(rhs);
         sylvan::mtbdd_refs_push(post);
-        post_to_extend.push_back(state_idx);
+        post_to_extend.push_back(post);
     }
 }
 
-void exp_macrostate(Formula2& formula, Conjunction_State& state, NFA_Construction_Ctx* ctx)
+void exp_macrostate(Formula2& formula, const Macrostate2* macrostate, NFA_Construction_Ctx* ctx)
 {
     vector<MTBDD> macrostate_post;
     macrostate_post.reserve(formula.atom_count());
 
-    s64 state_idx = 0;
-    extend_post_mtbdd_with_atoms(macrostate_post, formula.congruences, state, state_idx);
-    extend_post_mtbdd_with_atoms(macrostate_post, formula.equations,   state, state_idx);
-    extend_post_mtbdd_with_atoms(macrostate_post, formula.inequations, state, state_idx);
+    MTBDD exploration_result = sylvan::mtbdd_false;
+    sylvan::mtbdd_ref(exploration_result);
 
-    MTBDD intersection_mtbdd = make_tfa_intersection_top();
-    sylvan::mtbdd_ref(intersection_mtbdd);
-    for (auto& mtbdd: macrostate_post) {
-        MTBDD new_intersection = perform_tfa_mtbdd_intersection(intersection_mtbdd, mtbdd);
-        sylvan::mtbdd_ref(new_intersection);
+    for (auto& macrostate_elem: *macrostate) {
+        s64 state_idx = 0;
+        extend_post_mtbdd_with_atoms(macrostate_post, formula.congruences, macrostate_elem, state_idx);
+        extend_post_mtbdd_with_atoms(macrostate_post, formula.equations,   macrostate_elem, state_idx);
+        extend_post_mtbdd_with_atoms(macrostate_post, formula.inequations, macrostate_elem, state_idx);
+
+        MTBDD intersection_mtbdd = make_tfa_intersection_top();
+        sylvan::mtbdd_ref(intersection_mtbdd);
+        for (auto& mtbdd: macrostate_post) {
+            MTBDD new_intersection = perform_tfa_mtbdd_intersection(intersection_mtbdd, mtbdd);
+            sylvan::mtbdd_ref(new_intersection);
+            sylvan::mtbdd_deref(intersection_mtbdd);
+            intersection_mtbdd = new_intersection;
+        }
+
+        // All information is now contained in the intersection MTBDD, we can release post MTBDDs
+        sylvan::mtbdd_refs_pop(macrostate_post.size());
+
+        MTBDD after_projection = perform_tfa_pareto_projection(intersection_mtbdd, formula.quantif_vars, &ctx->structure_info);
+        sylvan::mtbdd_refs_push(after_projection);
         sylvan::mtbdd_deref(intersection_mtbdd);
-        intersection_mtbdd = new_intersection;
+
+        MTBDD new_exploration_result = perform_tfa_pareto_union(exploration_result, after_projection, &ctx->structure_info);
+        sylvan::mtbdd_fprintdot(stdout, new_exploration_result);
+
+        sylvan::mtbdd_ref(new_exploration_result);
+        sylvan::mtbdd_deref(exploration_result);
+        exploration_result = new_exploration_result;
+        macrostate_post.clear();
     }
 
-    // All information is now contained in the intersection MTBDD, we can release post MTBDDs
-    sylvan::mtbdd_refs_pop(macrostate_post.size());
+    MTBDD result = convert_tfa_leaves_into_macrostates(exploration_result, ctx);
 
-    u64 prefix_size = formula.equations.size() + formula.congruences.size();
-    MTBDD after_projection = perform_tfa_pareto_projection(intersection_mtbdd, formula.quantif_vars, prefix_size);
-    sylvan::mtbdd_refs_push(after_projection);
-    sylvan::mtbdd_deref(intersection_mtbdd);
-
-    // Traverse
-    MTBDD result = convert_tfa_leaves_into_macrostates(after_projection, ctx);
     sylvan::mtbdd_ref(result);
-    sylvan::mtbdd_refs_pop(1);  // deref after_projection
+    sylvan::mtbdd_deref(exploration_result);
 
-    ctx->constructed_nfa->transitions[0] = result;
+    ctx->constructed_nfa->transitions[macrostate->handle] = result;
+}
+
+void show_known_states(std::unordered_map<Macrostate2, s64>& states) {
+    std::cout << "Known states\n";
+    for (auto& [state, handle]: states) {
+        std::cout << handle << " :: " << state << std::endl;
+    }
+}
+
+const Macrostate2* inject_initial_macrostate(Macrostate2& initial_macrostate, NFA_Construction_Ctx* ctx) {
+    auto [pos, was_inserted] = ctx->known_states.emplace(initial_macrostate, ctx->known_states.size());
+    auto result_ptr = &pos->first;
+    const_cast<Macrostate2*>(result_ptr)->handle = pos->second;
+
+    ctx->constructed_nfa->initial_states.insert(pos->second);
+    ctx->macrostates_to_explore.push_back(result_ptr);
+
+    return result_ptr;
+}
+
+void inject_trapstate(NFA_Construction_Ctx* ctx) {
+    Macrostate2 trap = {
+        .entries = {},
+        .accepting = false,
+        .formula_structure = &ctx->structure_info
+    };
+    auto [pos, was_inserted] = ctx->known_states.emplace(trap, ctx->known_states.size());
+    auto result_ptr = &pos->first;
+    ctx->trapstate_handle = pos->second;
+    ctx->trapstate_needed = false;
+
+    const_cast<Macrostate2*>(result_ptr)->handle = pos->second;
+}
+
+NFA build_nfa_for_conjunction(Formula2& formula, Macrostate2& initial_macrostate) {
+    sylvan::BDDSET vars = formula.get_all_vars();
+    u64 var_count = sylvan::mtbdd_set_count(vars);
+
+    NFA constructed_nfa = NFA(formula.get_all_vars(), var_count);
+    NFA_Construction_Ctx ctx = {
+        .known_states = {},
+        .macrostates_to_explore = {},
+        .macrostate_block_alloc = Block_Allocator(),
+        .constructed_nfa = &constructed_nfa,
+        .structure_info = {
+            .prefix_size = formula.congruences.size() + formula.equations.size(),
+            .post_size = formula.atom_count()
+        }
+    };
+
+    inject_trapstate(&ctx);
+    inject_initial_macrostate(initial_macrostate, &ctx);
+
+    while (!ctx.macrostates_to_explore.empty()) {
+        auto macrostate = ctx.macrostates_to_explore.back();
+        constructed_nfa.states.insert(macrostate->handle);
+        if (macrostate->accepting) {
+            constructed_nfa.mark_state_final(macrostate->handle);
+        }
+        ctx.macrostates_to_explore.pop_back();
+        exp_macrostate(formula, macrostate, &ctx);
+    }
+
+    if (ctx.trapstate_needed) {
+        constructed_nfa.states.insert(ctx.trapstate_handle);
+        u8* symbol = new u8[constructed_nfa.var_count];
+        for (s64 i = 0; i < constructed_nfa.var_count; i++) {
+            symbol[i] = 2;
+        }
+        constructed_nfa.add_transition(ctx.trapstate_handle, ctx.trapstate_handle, symbol);
+        delete[] symbol;
+    }
+
+    show_known_states(ctx.known_states);
+
+    return constructed_nfa;
+}
+
+std::ostream& operator<<(std::ostream& output, const Macrostate2& macrostate) {
+    bool written_elem = false;
+    output << "Macrostate" << (macrostate.accepting ? "+" : "-") <<"{";
+    for (auto& elem: macrostate) {
+        if (written_elem) output << ",";
+        output << elem;
+        written_elem = true;
+    }
+    output << "}";
+    return output;
 }

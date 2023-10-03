@@ -21,6 +21,15 @@ u64 mtbdd_tfa_leaf_type_id;
 u64 mtbdd_tfa_intersection_leaf_type_id;
 u64 mtbdd_tfa_pareto_leaf_type_id;
 
+void debug_show_tfa_types(std::ostream& os) {
+    os << "Type IDs in use: \n";
+    os << "Simple post       :: " << mtbdd_tfa_leaf_type_id << std::endl;
+    os << "Intersection post :: " << mtbdd_tfa_intersection_leaf_type_id << std::endl;
+    os << "Pareto            :: " << mtbdd_tfa_pareto_leaf_type_id << std::endl;
+}
+
+
+
 void init_tfa_leaf() {
     mtbdd_tfa_leaf_type_id = sylvan::sylvan_mt_create_type();
     sylvan::sylvan_mt_set_hash(mtbdd_tfa_leaf_type_id, tfa_leaf_hash);
@@ -197,26 +206,26 @@ TASK_IMPL_3(MTBDD, tfa_mtbdd_intersection, MTBDD *, left_op_ptr, MTBDD *, right_
     MTBDD left_mtbdd = *left_op_ptr, right_mtbdd = *right_op_ptr;
 
     // If left or right are false, then there is no post since we are doing an intersection intersection
-    if (left_mtbdd == mtbdd_false)  return sylvan::mtbdd_false;
+    if (left_mtbdd == mtbdd_false || right_mtbdd == mtbdd_false) return sylvan::mtbdd_false;
+    if (!mtbdd_isleaf(left_mtbdd) || !mtbdd_isleaf(right_mtbdd)) return sylvan::mtbdd_invalid;
 
-    if (mtbdd_isleaf(left_mtbdd) && mtbdd_isleaf(right_mtbdd)) {
-        auto left_raw_val = sylvan::mtbdd_getvalue(left_mtbdd);
-        auto left_contents = reinterpret_cast<TFA_Leaf_Intersection_Contents*>(left_raw_val);
+    u64 left_type  = mtbdd_gettype(left_mtbdd);
+    u64 right_type = mtbdd_gettype(right_mtbdd);
 
-        auto right_raw_val = sylvan::mtbdd_getvalue(left_mtbdd);
-        auto right_contents = reinterpret_cast<TFA_Leaf_Contents*>(left_raw_val);
+    auto left_raw_val = sylvan::mtbdd_getvalue(left_mtbdd);
+    auto left_contents = reinterpret_cast<TFA_Leaf_Intersection_Contents*>(left_raw_val);
 
-        TFA_Leaf_Intersection_Contents result = {
-           .post = left_contents->post,
-           .is_accepting = left_contents->is_accepting || right_contents->is_accepting,
-        };
-        result.post.push_back(right_contents->post);
+    auto right_raw_val = sylvan::mtbdd_getvalue(right_mtbdd);
+    auto right_contents = reinterpret_cast<TFA_Leaf_Contents*>(right_raw_val);
 
-        MTBDD result_leaf = make_tfa_intersection_leaf(&result);
-        return result_leaf;
-    }
+    TFA_Leaf_Intersection_Contents result = {
+       .post = left_contents->post,
+       .is_accepting = left_contents->is_accepting || right_contents->is_accepting,
+    };
+    result.post.push_back(right_contents->post);
 
-    return sylvan::mtbdd_invalid;
+    MTBDD result_leaf = make_tfa_intersection_leaf(&result);
+    return result_leaf;
 }
 
 MTBDD perform_tfa_mtbdd_intersection(MTBDD left, MTBDD right) {
@@ -256,7 +265,7 @@ u64 tfa_pareto_leaf_hash(const u64 contents_ptr, const u64 seed) {
 
 MTBDD make_union_singleton_pareto_leaf(MTBDD not_bot, u64 prefix_size) {
     auto right_contents = reinterpret_cast<TFA_Leaf_Intersection_Contents*>(mtbdd_getvalue(not_bot));
-    TFA_Pareto_Leaf new_leaf_contents = {.elements = Pareto_Set(prefix_size)};
+    TFA_Pareto_Leaf new_leaf_contents = {.elements = Pareto_Set(prefix_size), .is_accepting = right_contents->is_accepting};
     new_leaf_contents.elements.insert(right_contents->post, 0);
     return make_tfa_pareto_leaf(&new_leaf_contents);
 }
@@ -272,9 +281,16 @@ MTBDD make_union_with_singleton(MTBDD pareto_leaf, MTBDD singleton) {
     return make_tfa_pareto_leaf(&leaf);
 }
 
-TASK_IMPL_3(MTBDD, tfa_mtbdd_pareto_union, MTBDD*, left_ptr, MTBDD*, right_ptr, u64, prefix_size) {
+TASK_IMPL_3(
+    MTBDD,
+    tfa_mtbdd_pareto_union,
+    MTBDD*, left_ptr,
+    MTBDD*, right_ptr,
+    u64, formula_struct_raw)
+{
     MTBDD left = *left_ptr;
     MTBDD right = *right_ptr;
+    auto formula_structure = reinterpret_cast<Formula_Structure_Info*>(formula_struct_raw);
 
     if (!sylvan::mtbdd_isleaf(left) || !sylvan::mtbdd_isleaf(right)) return mtbdd_invalid;
 
@@ -296,7 +312,7 @@ TASK_IMPL_3(MTBDD, tfa_mtbdd_pareto_union, MTBDD*, left_ptr, MTBDD*, right_ptr, 
             auto left_contents  = reinterpret_cast<TFA_Leaf_Intersection_Contents*>(sylvan::mtbdd_getvalue(left));
             auto right_contents = reinterpret_cast<TFA_Leaf_Intersection_Contents*>(sylvan::mtbdd_getvalue(right));
             TFA_Pareto_Leaf new_leaf = {
-                .elements = Pareto_Set(prefix_size),
+                .elements = Pareto_Set(formula_structure->prefix_size),
                 .is_accepting = left_contents->is_accepting || right_contents->is_accepting
             };
             new_leaf.elements.insert(left_contents->post, 0);
@@ -331,30 +347,35 @@ TASK_IMPL_3(MTBDD, tfa_mtbdd_pareto_union, MTBDD*, left_ptr, MTBDD*, right_ptr, 
     if (not_bot_type == mtbdd_tfa_pareto_leaf_type_id) return not_bot;
 
     assert(mtbdd_isleaf(not_bot));
+    if (not_bot_type != mtbdd_tfa_intersection_leaf_type_id) {
+        debug_show_tfa_types(std::cout);
+        std::cout << mtbdd_leaf_type_set << std::endl;
+        std::cout << not_bot_type << " vs " << mtbdd_tfa_intersection_leaf_type_id << std::endl;
+    }
     assert(mtbdd_gettype(not_bot) == mtbdd_tfa_intersection_leaf_type_id);
 
-
-    auto result = make_union_singleton_pareto_leaf(not_bot, prefix_size);
+    auto result = make_union_singleton_pareto_leaf(not_bot, formula_structure->prefix_size);
     return result;
 
     return mtbdd_invalid;
 }
 
-MTBDD perform_tfa_pareto_union(MTBDD left, MTBDD right, u64 prefix_size) {
+MTBDD perform_tfa_pareto_union(MTBDD left, MTBDD right, Formula_Structure_Info* structure_info) {
     LACE_ME;
-    return mtbdd_applyp(left, right, prefix_size, TASK(tfa_mtbdd_pareto_union), AMAYA_TFA_PARETO_UNION_OP_ID);
+    u64 param = reinterpret_cast<u64>(structure_info);
+    return mtbdd_applyp(left, right, param, TASK(tfa_mtbdd_pareto_union), AMAYA_TFA_PARETO_UNION_OP_ID);
 }
 
-u64 projection_prefix_size = 0;
+Formula_Structure_Info* formula_struct = nullptr;
 
 TASK_IMPL_3(MTBDD, tfa_mtbdd_pareto_projection_op, MTBDD, left_mtbdd, MTBDD, right_mtbdd, int, k) {
-    MTBDD u = perform_tfa_pareto_union(left_mtbdd, right_mtbdd, projection_prefix_size);
+    MTBDD u = perform_tfa_pareto_union(left_mtbdd, right_mtbdd, formula_struct);
     return u;
 }
 
-MTBDD perform_tfa_pareto_projection(MTBDD bdd, BDDSET var_to_project_away, u64 prefix_size) {
+MTBDD perform_tfa_pareto_projection(MTBDD bdd, BDDSET var_to_project_away, Formula_Structure_Info* formula_structure) {
     LACE_ME;
-    projection_prefix_size = prefix_size;
+    formula_struct = formula_structure;
     // @ToDo: If the variable set is empty the projection will not take place and we will still have
     //        leaves with Intersections in them - needs fixing.
     MTBDD result = mtbdd_abstract(bdd, var_to_project_away, TASK(tfa_mtbdd_pareto_projection_op));
@@ -440,7 +461,11 @@ Transition_Destination_Set make_macrostate_known(TFA_Pareto_Leaf& leaf, NFA_Cons
             break;
         }
 
-        assert (non_empty_bucket_slot_i >= 0);
+        if (non_empty_bucket_slot_i < 0) { // There are no suffixes stored
+            Chunked_Array<s64> serialized_data(nullptr, 0, 0);
+            macrostate_entries.push_back({.prefix = vector<s64>(prefix), .suffixes = serialized_data});
+            continue;
+        }
 
         // @Todo: Integrity - ensure that the remainder of bucket slots are truly empty
         u64 non_empty_bucket_cnt = suffix_bucket.size() - non_empty_bucket_slot_i;
@@ -461,30 +486,39 @@ Transition_Destination_Set make_macrostate_known(TFA_Pareto_Leaf& leaf, NFA_Cons
 
     std::sort(macrostate_entries.begin(), macrostate_entries.end());
 
-    Macrostate2 macrostate = {.entries = macrostate_entries, .accepting = leaf.is_accepting};
+    Macrostate2 macrostate = {
+        .entries = macrostate_entries,
+        .accepting = leaf.is_accepting,
+        .formula_structure = &ctx.structure_info,
+    };
 
     s64 macrostate_handle = mark_macrostate_as_known(macrostate, ctx);
+
     return Transition_Destination_Set({macrostate_handle});
 }
 
 Transition_Destination_Set make_singleton_macrostate_known(TFA_Leaf_Intersection_Contents& leaf, NFA_Construction_Ctx& ctx) {
     vector<s64> prefix;
-    prefix.reserve(ctx.prefix_size);
-    for (s64 i = 0; i < ctx.prefix_size; i++) {
+    u64 prefix_size = ctx.structure_info.prefix_size;
+
+    prefix.reserve(prefix_size);
+    for (s64 i = 0; i < prefix_size; i++) {
         prefix[i] = leaf.post[i];
     }
 
-    u64 suffix_size = leaf.post.size() - ctx.prefix_size;
-    s64* suffix_data = reinterpret_cast<s64*>(ctx.macrostate_block_alloc.alloc_block(sizeof(s64) * suffix_size));
-    for (s64 i = 0; i < suffix_size; i++) {
-        suffix_data[i] = leaf.post[i+ctx.prefix_size];
+    u64 suffix_size = ctx.structure_info.post_size - prefix_size;
+    s64* suffix_data = nullptr;
+    if (suffix_size != 0) {
+        suffix_data = reinterpret_cast<s64*>(ctx.macrostate_block_alloc.alloc_block(sizeof(s64) * suffix_size));
+        for (s64 i = 0; i < suffix_size; i++) {
+            suffix_data[i] = leaf.post[i+prefix_size];
+        }
     }
 
-    Chunked_Array<s64> serialized_suffixes(suffix_data, suffix_size, 1);
+    Chunked_Array<s64> serialized_suffixes(suffix_data, suffix_size, suffix_size != 0);
 
     vector<Macrostate2::Entry> entries = {{.prefix = prefix, .suffixes = serialized_suffixes}};
     Macrostate2 macrostate = {.entries = entries, .accepting = leaf.is_accepting};
-
 
     s64 macrostate_handle = mark_macrostate_as_known(macrostate, ctx);
     return Transition_Destination_Set({macrostate_handle});
@@ -493,10 +527,15 @@ Transition_Destination_Set make_singleton_macrostate_known(TFA_Leaf_Intersection
 
 TASK_IMPL_2(MTBDD, tfa_make_tfa_leaves_into_macrostate, MTBDD, dd, uint64_t, param) {
     if (!mtbdd_isleaf(dd)) return mtbdd_invalid;
-    if (dd == mtbdd_false) return mtbdd_false;
+    auto construction_ctx = reinterpret_cast<NFA_Construction_Ctx*>(param);
+
+    if (dd == mtbdd_false) {
+        construction_ctx->trapstate_needed = true;
+        Transition_Destination_Set tds({construction_ctx->trapstate_handle});
+        return make_set_leaf(&tds);
+    }
 
     u64 leaf_type = mtbdd_gettype(dd);
-    auto construction_ctx = reinterpret_cast<NFA_Construction_Ctx*>(param);
 
     if (leaf_type == mtbdd_tfa_pareto_leaf_type_id) {
         auto leaf_contents = reinterpret_cast<TFA_Pareto_Leaf*>(mtbdd_getvalue(dd));

@@ -2,8 +2,8 @@
 #include <algorithm>
 
 enum class Pareto_Cmp_Result : u8 {
-    REMOVE_LOWER = 0x01,  
-    REMOVE_UPPER = 0x02,  
+    REMOVE_LOWER = 0x01,
+    REMOVE_UPPER = 0x02,
     INCOMPARABLE = 0x03,
 };
 
@@ -11,12 +11,12 @@ Pareto_Cmp_Result cmp_pareto_optimal(const std::vector<s64>& upper, const std::v
     bool lower_is_covered = true;
     bool upper_is_covered = true;
     for (s64 elem_i = 0; elem_i < upper.size(); elem_i++) {
-        s64 upper_elem = upper[elem_i]; 
-        s64 lower_elem = lower[elem_i]; 
+        s64 upper_elem = upper[elem_i];
+        s64 lower_elem = lower[elem_i];
         if (lower_elem > upper_elem) {
            lower_is_covered = false;
         } else if (lower_elem < upper_elem) {
-           upper_is_covered = false; 
+           upper_is_covered = false;
         }
     }
 
@@ -54,12 +54,16 @@ bool Pareto_Set::insert(const std::vector<s64>& elem, u64 hash) {
    Prefix prefix(prefix_size);
    for (s64 i = 0; i < prefix_size; i++) prefix[i] = elem[i];
 
-   Suffix* suffix = new Suffix(elem.size() - prefix_size);
-   for (s64 i = prefix_size; i < elem.size(); i++) (*suffix)[i - prefix_size] = elem[i];
-  
-   auto& bucket = data[prefix];
-   bool was_inserted = insert_into_bucket(bucket, suffix);
-   if (!was_inserted) delete suffix;
+   const auto& [pos, was_inserted] = data.emplace(prefix, Pareto_Set::Bucket{});
+   u64 suffix_size = elem.size() - prefix_size;
+   if (suffix_size > 0) {
+        auto& bucket = pos->second;
+        Suffix* suffix = new Suffix(elem.size() - prefix_size);
+        for (s64 i = prefix_size; i < elem.size(); i++) (*suffix)[i - prefix_size] = elem[i];
+
+        bool was_inserted = insert_into_bucket(bucket, suffix);
+        if (!was_inserted) delete suffix;
+   }
 
    return was_inserted;
 }
@@ -90,7 +94,7 @@ bool Pareto_Set::insert_into_bucket(Bucket& bucket, Suffix* suffix) {
    }
    if (should_be_inserted) {
        if (dest_bucket == -1) {
-           bucket.emplace_back(suffix); 
+           bucket.emplace_back(suffix);
        } else {
            bucket[dest_bucket].suffix = suffix;
        }
@@ -114,7 +118,7 @@ u64 Pareto_Set::hash(u64 seed) const {
             hash = hash_combine(hash, hash_vector(*bucket.suffix, 0));
         }
     }
-  
+
     return hash;
 }
 
