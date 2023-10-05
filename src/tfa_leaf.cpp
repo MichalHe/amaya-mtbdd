@@ -147,14 +147,18 @@ int tfa_intersection_leaf_equals(u64 a_ptr, u64 b_ptr) {
     return leaf_equals<TFA_Leaf_Intersection_Contents>(a_ptr, b_ptr);
 }
 
-u64 tfa_intersection_leaf_hash(const u64 contents_ptr, const u64 seed) {
+u64 tfa_intersection_leaf_hash(const u64 contents_ptr, u64 seed) {
     auto contents = reinterpret_cast<TFA_Leaf_Intersection_Contents*>(contents_ptr);
 
-    u64 hash = hash_vector(contents->post, seed);
-    hash *= (contents->is_accepting * 33);
+    u64 hash = seed;
+    for(auto post: contents->post) {
+        post = ((post >> 16) ^ post) * 0x45d9f3b;
+        post = ((post >> 16) ^ post) * 0x45d9f3b;
+        post = (post >> 16) ^ post;
+        hash ^= post + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+    }
 
-    contents->hash = hash;
-    contents->hash_valid = true;
+    hash ^= contents->is_accepting + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 
     return hash;
 }
@@ -220,7 +224,7 @@ TASK_IMPL_3(MTBDD, tfa_mtbdd_intersection, MTBDD *, left_op_ptr, MTBDD *, right_
 
     TFA_Leaf_Intersection_Contents result = {
        .post = left_contents->post,
-       .is_accepting = left_contents->is_accepting || right_contents->is_accepting,
+       .is_accepting = left_contents->is_accepting && right_contents->is_accepting,
     };
     result.post.push_back(right_contents->post);
 
@@ -234,7 +238,7 @@ MTBDD perform_tfa_mtbdd_intersection(MTBDD left, MTBDD right) {
 }
 
 MTBDD make_tfa_intersection_top() {
-    TFA_Leaf_Intersection_Contents c = {.post = {}, .is_accepting = false};
+    TFA_Leaf_Intersection_Contents c = {.post = {}, .is_accepting = true};
     return make_tfa_intersection_leaf(&c);
 }
 
@@ -449,7 +453,7 @@ s64 mark_macrostate_as_known(Macrostate2& macrostate, NFA_Construction_Ctx& ctx)
 
 
 Transition_Destination_Set make_macrostate_known(TFA_Pareto_Leaf& leaf, NFA_Construction_Ctx& ctx) {
-    vector<Macrostate2::Entry> macrostate_entries;
+    vector<Macrostate_Data::Factored_States> factored_states;
 
     for (auto& [prefix, suffix_bucket]: leaf.elements.data) {
 
@@ -463,7 +467,7 @@ Transition_Destination_Set make_macrostate_known(TFA_Pareto_Leaf& leaf, NFA_Cons
 
         if (non_empty_bucket_slot_i < 0) { // There are no suffixes stored
             Chunked_Array<s64> serialized_data(nullptr, 0, 0);
-            macrostate_entries.push_back({.prefix = vector<s64>(prefix), .suffixes = serialized_data});
+            factored_states.push_back({.prefix = vector<s64>(prefix), .suffixes = serialized_data});
             continue;
         }
 
@@ -481,13 +485,14 @@ Transition_Destination_Set make_macrostate_known(TFA_Pareto_Leaf& leaf, NFA_Cons
             serialized_data_ptr += bucket.suffix->size();
         }
 
-        macrostate_entries.push_back({.prefix = vector<s64>(prefix), .suffixes = serialized_data});
+        factored_states.push_back({.prefix = vector<s64>(prefix), .suffixes = serialized_data});
     }
 
-    std::sort(macrostate_entries.begin(), macrostate_entries.end());
+    std::sort(factored_states.begin(), factored_states.end());
 
+    Macrostate_Data macrostate_fragment = {.formula = ctx.formula, .states = factored_states};
     Macrostate2 macrostate = {
-        .entries = macrostate_entries,
+        .states = {macrostate_fragment},
         .accepting = leaf.is_accepting,
         .formula_structure = &ctx.structure_info,
     };
@@ -517,8 +522,10 @@ Transition_Destination_Set make_singleton_macrostate_known(TFA_Leaf_Intersection
 
     Chunked_Array<s64> serialized_suffixes(suffix_data, suffix_size, suffix_size != 0);
 
-    vector<Macrostate2::Entry> entries = {{.prefix = prefix, .suffixes = serialized_suffixes}};
-    Macrostate2 macrostate = {.entries = entries, .accepting = leaf.is_accepting};
+    Macrostate_Data::Factored_States states = {.prefix = prefix, .suffixes = serialized_suffixes};
+    vector<Macrostate_Data::Factored_States> factored_states = {states};
+    Macrostate_Data macrostate_fragment = {.formula = ctx.formula, .states = factored_states};
+    Macrostate2 macrostate = {.states = {macrostate_fragment}, .accepting = leaf.is_accepting};
 
     s64 macrostate_handle = mark_macrostate_as_known(macrostate, ctx);
     return Transition_Destination_Set({macrostate_handle});

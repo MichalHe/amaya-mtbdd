@@ -312,7 +312,8 @@ std::ostream& operator<<(std::ostream& output, const Finalized_Macrostate& macro
         const Macrostate_Header_Elem& header = macrostate.header.items[formula_idx];
 
         if (formula_idx > 0) output << ", ";
-        output << "`" << *header.formula << "`: [";
+        // output << "`" << *header.formula << "`: [";
+        output << "[";
 
         for (s64 state_idx = 0; state_idx < header.state_cnt; state_idx++) {
             if (state_idx > 0) output << ", ";
@@ -1601,7 +1602,7 @@ void init_mtbdd_libs() {
     lace_init(n_workers, dequeue_size);
     const size_t stack_size = 1LL << 20;
     lace_startup(0, NULL, NULL);
-    sylvan::sylvan_set_limits(500LL*1024*1024, 3, 5);
+    sylvan::sylvan_set_limits(512*1024ll*1024ll, 10, 10);
     sylvan::sylvan_init_package();
     sylvan::sylvan_init_mtbdd();
 
@@ -2000,7 +2001,7 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
     PRINT_DEBUG("Initial states: " << nfa.initial_states);
     PRINT_DEBUG("Final states: " << nfa.final_states);
     for (auto& [macrostate, handle]: constr_state.known_macrostates) {
-        PRINT_DEBUG(handle << " :: " << macrostate);
+        PRINT_DEBUG(handle << "::" << macrostate);
     }
 
     if (!formula->bound_vars.empty()) {
@@ -2214,12 +2215,12 @@ sylvan::MTBDD Atom::make_extended_post(Maker& maker, s64 rhs) {
     vector<u8> ritch_symbol(this->vars.size());
 
     sylvan::MTBDD post = sylvan::mtbdd_false;
-    sylvan::mtbdd_ref(post);
 
     for (; symbol != 0; symbol += 1) {
         post = maker.extend_post(post, ritch_symbol, rhs, symbol);
     }
 
+    sylvan::mtbdd_ref(post);
     post_cache.insert({rhs, post});
     return post;
 }
@@ -2242,8 +2243,8 @@ sylvan::MTBDD extend_post_with_cube(
     auto leaf = make_tfa_leaf(&content);
     auto cube = sylvan::mtbdd_cube(atom.var_set, ritch_symbol_space.data(), leaf);
     sylvan::MTBDD new_post = perform_tfa_mtbdd_union(post, cube);
-    sylvan::mtbdd_ref(new_post);
-    sylvan::mtbdd_deref(post);
+    // sylvan::mtbdd_ref(new_post);
+    // sylvan::mtbdd_deref(post);
     return new_post;
 }
 
@@ -2356,7 +2357,7 @@ void extend_post_mtbdd_with_atoms(vector<sylvan::MTBDD>& post_to_extend, vector<
         s64 rhs = state.items[state_idx];
         state_idx += 1;
         sylvan::MTBDD post = atom.compute_entire_post(rhs);
-        sylvan::mtbdd_refs_push(post);
+        // sylvan::mtbdd_refs_push(post);
         post_to_extend.push_back(post);
     }
 }
@@ -2369,40 +2370,59 @@ void exp_macrostate(Formula2& formula, const Macrostate2* macrostate, NFA_Constr
     MTBDD exploration_result = sylvan::mtbdd_false;
     sylvan::mtbdd_ref(exploration_result);
 
-    for (auto& macrostate_elem: *macrostate) {
-        s64 state_idx = 0;
-        extend_post_mtbdd_with_atoms(macrostate_post, formula.congruences, macrostate_elem, state_idx);
-        extend_post_mtbdd_with_atoms(macrostate_post, formula.equations,   macrostate_elem, state_idx);
-        extend_post_mtbdd_with_atoms(macrostate_post, formula.inequations, macrostate_elem, state_idx);
+    std::vector<s64> cache_query;
+    cache_query.reserve(10);
 
-        MTBDD intersection_mtbdd = make_tfa_intersection_top();
-        sylvan::mtbdd_ref(intersection_mtbdd);
-        for (auto& mtbdd: macrostate_post) {
+    for (auto& macrostate_elem: *macrostate) {
+        cache_query.clear();
+
+        s64 state_idx = 0;
+
+        extend_post_mtbdd_with_atoms(macrostate_post, formula.congruences, macrostate_elem.state, state_idx);
+        extend_post_mtbdd_with_atoms(macrostate_post, formula.equations,   macrostate_elem.state, state_idx);
+        extend_post_mtbdd_with_atoms(macrostate_post, formula.inequations, macrostate_elem.state, state_idx);
+
+        MTBDD intersection_mtbdd = ctx->intersection_top;
+
+        bool missed_cache = false;
+        for (s64 i = 0; i < macrostate_elem.state.size; i++) {
+            cache_query.push_back(macrostate_elem.state.items[i]);
+
+            if (!missed_cache) {
+                auto cache_pos = ctx->cache.find(cache_query);
+                if (cache_pos != ctx->cache.end()) {
+                    intersection_mtbdd = cache_pos->second;
+                    continue;
+                } else {
+                    missed_cache = true;
+                }
+            }
+
+            MTBDD mtbdd = macrostate_post[i];
             MTBDD new_intersection = perform_tfa_mtbdd_intersection(intersection_mtbdd, mtbdd);
             sylvan::mtbdd_ref(new_intersection);
-            sylvan::mtbdd_deref(intersection_mtbdd);
+            ctx->cache[cache_query] = new_intersection;
             intersection_mtbdd = new_intersection;
         }
 
         // All information is now contained in the intersection MTBDD, we can release post MTBDDs
-        sylvan::mtbdd_refs_pop(macrostate_post.size());
+        // sylvan::mtbdd_refs_pop(macrostate_post.size());
 
         MTBDD after_projection = perform_tfa_pareto_projection(intersection_mtbdd, formula.quantif_vars, &ctx->structure_info);
-        sylvan::mtbdd_refs_push(after_projection);
-        sylvan::mtbdd_deref(intersection_mtbdd);
+        sylvan::mtbdd_ref(after_projection);
 
         MTBDD new_exploration_result = perform_tfa_pareto_union(exploration_result, after_projection, &ctx->structure_info);
-        sylvan::mtbdd_fprintdot(stdout, new_exploration_result);
-
         sylvan::mtbdd_ref(new_exploration_result);
+        sylvan::mtbdd_deref(after_projection);
+
         sylvan::mtbdd_deref(exploration_result);
         exploration_result = new_exploration_result;
         macrostate_post.clear();
     }
 
     MTBDD result = convert_tfa_leaves_into_macrostates(exploration_result, ctx);
-
     sylvan::mtbdd_ref(result);
+
     sylvan::mtbdd_deref(exploration_result);
 
     ctx->constructed_nfa->transitions[macrostate->handle] = result;
@@ -2428,7 +2448,7 @@ const Macrostate2* inject_initial_macrostate(Macrostate2& initial_macrostate, NF
 
 void inject_trapstate(NFA_Construction_Ctx* ctx) {
     Macrostate2 trap = {
-        .entries = {},
+        .states = {},
         .accepting = false,
         .formula_structure = &ctx->structure_info
     };
@@ -2453,8 +2473,13 @@ NFA build_nfa_for_conjunction(Formula2& formula, Macrostate2& initial_macrostate
         .structure_info = {
             .prefix_size = formula.congruences.size() + formula.equations.size(),
             .post_size = formula.atom_count()
-        }
+        },
+        .formula = &formula,
+        .cache = {},
+        .intersection_top = make_tfa_intersection_top()
     };
+
+    sylvan::mtbdd_ref(ctx.intersection_top);
 
     inject_trapstate(&ctx);
     inject_initial_macrostate(initial_macrostate, &ctx);
@@ -2479,7 +2504,7 @@ NFA build_nfa_for_conjunction(Formula2& formula, Macrostate2& initial_macrostate
         delete[] symbol;
     }
 
-    show_known_states(ctx.known_states);
+    sylvan::mtbdd_deref(ctx.intersection_top);
 
     return constructed_nfa;
 }
@@ -2489,9 +2514,18 @@ std::ostream& operator<<(std::ostream& output, const Macrostate2& macrostate) {
     output << "Macrostate" << (macrostate.accepting ? "+" : "-") <<"{";
     for (auto& elem: macrostate) {
         if (written_elem) output << ",";
-        output << elem;
+        // output << elem.formula
+        //        << ": " << elem.state;
+        output << elem.state;
         written_elem = true;
     }
     output << "}";
     return output;
+}
+
+Atom::~Atom() {
+    sylvan::mtbdd_deref(var_set);
+    for (auto& [rhs, cached_post]: post_cache) {
+        if (cached_post != mtbdd_false) sylvan::mtbdd_deref(cached_post);
+    }
 }

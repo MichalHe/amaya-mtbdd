@@ -14,12 +14,24 @@ struct Pareto_Set {
 
     struct Bucket_Entry {
         Suffix* suffix = nullptr;
-        Bucket_Entry(Suffix* suffix) : suffix(suffix) {};
-        Bucket_Entry(const Bucket_Entry& other) = delete;
-        Bucket_Entry(Bucket_Entry&& other) : suffix(other.suffix) {
-          other.suffix = nullptr;
+        Bucket_Entry(Suffix* suffix) : suffix(suffix) {
+            // suffix = new Suffix(*suffix);
         };
+
+        Bucket_Entry(const Bucket_Entry& other) = delete;
+        Bucket_Entry& operator=(const Bucket_Entry& other) = delete;
+
+
+        Bucket_Entry(Bucket_Entry&& other) : suffix(other.suffix) {
+            other.suffix = nullptr;
+        };
+
         Bucket_Entry& operator=(Bucket_Entry&& other) {
+            if (this != &other) {
+                delete suffix;
+                suffix = other.suffix;
+                other.suffix = nullptr;
+            }
             return *this;
         };
 
@@ -27,13 +39,16 @@ struct Pareto_Set {
             if (suffix == nullptr) return other.suffix == nullptr;
             return *suffix == *other.suffix;
         }
+
         ~Bucket_Entry() {
             delete suffix;
             suffix = nullptr;
         }
+
         bool empty() const {
             return suffix == nullptr;
         }
+
         void empty_out() {
             delete this->suffix;
             this->suffix = nullptr;
@@ -42,9 +57,9 @@ struct Pareto_Set {
 
     Pareto_Set(const Pareto_Set& other) {
         for (auto& [other_prefix, other_suffix_buckets]: other.data) {
-            auto& dest_bucket = data[other_prefix]; 
+            auto& dest_bucket = data[other_prefix];
             for (auto& suffix: other_suffix_buckets) {
-                if (suffix.empty()) continue; 
+                if (suffix.empty()) continue;
                 Suffix* suffix_copy = new std::vector<s64>(*suffix.suffix);
                 dest_bucket.emplace_back(suffix_copy);
             }
@@ -56,7 +71,7 @@ struct Pareto_Set {
         this->data = std::move(pareto_set.data);
     };
     Pareto_Set(u64 prefix_size): prefix_size(prefix_size) {};
-  
+
     typedef std::vector<Bucket_Entry> Bucket;
 
     std::unordered_map<Prefix, Bucket> data = {};

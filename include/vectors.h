@@ -342,13 +342,13 @@ std::ostream& operator<<(std::ostream& os, const Sized_Array<T>& arr) {
         return os;
     }
     auto iter = arr.begin();
-    os << "Arr[" << *iter;
+    os << "(" << *iter;
     ++iter;
 
     for (; iter != arr.end(); ++iter) {
         os << "," << *iter;
     }
-    os << "]";
+    os << ")";
     return os;
 }
 

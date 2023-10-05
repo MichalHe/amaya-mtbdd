@@ -7,6 +7,10 @@ enum class Pareto_Cmp_Result : u8 {
     INCOMPARABLE = 0x03,
 };
 
+void swap(Pareto_Set::Bucket_Entry& lhs, Pareto_Set::Bucket_Entry& rhs) {
+    std::swap(lhs.suffix, rhs.suffix);
+}
+
 Pareto_Cmp_Result cmp_pareto_optimal(const std::vector<s64>& upper, const std::vector<s64>& lower) {
     bool lower_is_covered = true;
     bool upper_is_covered = true;
@@ -92,6 +96,7 @@ bool Pareto_Set::insert_into_bucket(Bucket& bucket, Suffix* suffix) {
             continue;
       }
    }
+
    if (should_be_inserted) {
        if (dest_bucket == -1) {
            bucket.emplace_back(suffix);
@@ -100,6 +105,7 @@ bool Pareto_Set::insert_into_bucket(Bucket& bucket, Suffix* suffix) {
        }
        sort_bucket(bucket);
    }
+
    return should_be_inserted;
 }
 
@@ -115,6 +121,7 @@ u64 Pareto_Set::hash(u64 seed) const {
     for (auto& [prefix, suffix_buckets]: data) {
         hash = hash_combine(hash, hash_vector(prefix, 0));
         for (auto& bucket: suffix_buckets) {
+            if (bucket.suffix == nullptr) continue;
             hash = hash_combine(hash, hash_vector(*bucket.suffix, 0));
         }
     }

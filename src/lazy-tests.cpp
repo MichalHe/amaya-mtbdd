@@ -1404,17 +1404,20 @@ struct Macrostate_Init {
         prefix(prefix), suffix_data(suffix_data) {}
 };
 
-Macrostate2 make_macrostate(Block_Allocator& alloc, const vector<Macrostate_Init>& inits, Formula_Structure_Info* info, bool accepting = false) {
-    u64 suffix_size = info->post_size - info->prefix_size;
-    vector<Macrostate2::Entry> entries;
+Macrostate2 make_macrostate(Block_Allocator& alloc, const vector<Macrostate_Init>& inits, Formula2* formula, bool accepting = false) {
+    auto formula_info = formula->describe();
+    u64 suffix_size = formula_info.post_size - formula_info.prefix_size;
+    Macrostate_Data states;
     for (auto& init: inits) {
         u64 chunk_count = init.suffix_data.empty() ? 0 : init.suffix_data.size() / suffix_size;
         auto suffixes = Chunked_Array<s64>(alloc, init.suffix_data, chunk_count);
-        Macrostate2::Entry entry = {.prefix = init.prefix, .suffixes = suffixes};
-        entries.push_back(entry);
+        Macrostate_Data::Factored_States entry = {.prefix = init.prefix, .suffixes = suffixes};
+        states.states.push_back(entry);
     }
+    states.formula = formula;
+    vector<Macrostate_Data> data = {states};
 
-    return {.entries = entries, .accepting = accepting, .formula_structure = info};
+    return {.states = data, .accepting = accepting};
 }
 
 TEST_CASE("Leaf macrostate discovery") {
@@ -1422,7 +1425,14 @@ TEST_CASE("Leaf macrostate discovery") {
     BDDSET vars = sylvan::mtbdd_set_from_array(vars_array, 2);
 
     MTBDD input_mtbdd = sylvan::mtbdd_false;
-    Formula_Structure_Info info = {.prefix_size = 1, .post_size = 2};
+    Formula2 formula = {
+        .congruences = {},
+        .equations = {Equation2({1, 2}, {1, 1})},
+        .inequations = {Inequation2({1, 2}, {1, -1})},
+        .quantif_vars = sylvan::mtbdd_set_empty()
+    };
+    Formula_Structure_Info info = formula.describe();
+
     {
         MTBDD mtbdd_cubes[3] = {
             make_cube({0, 0}, {1, 3}, vars),
@@ -1435,26 +1445,28 @@ TEST_CASE("Leaf macrostate discovery") {
         input_mtbdd = perform_tfa_pareto_union(input_mtbdd, mtbdd_cubes[2], &info);
     }
 
-    NFA_Construction_Ctx ctx = {.known_states = {}, .macrostates_to_explore = {}, .structure_info = info};
+    NFA_Construction_Ctx ctx = {.known_states = {}, .macrostates_to_explore = {}, .structure_info = formula.describe(), .formula = &formula};
     convert_tfa_leaves_into_macrostates(input_mtbdd, &ctx);
 
     std::unordered_set<Macrostate2> expected_macrostates;
     {
-        Macrostate2 m0 = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({1}, {3})}, &info);
-        Macrostate2 m1 = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({2}, {2})}, &info);
-        Macrostate2 m2 = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({3}, {1})}, &info);
+        Macrostate2 m0 = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({1}, {3})}, &formula);
+        Macrostate2 m1 = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({2}, {2})}, &formula);
+        Macrostate2 m2 = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({3}, {1})}, &formula);
 
         expected_macrostates = {m0, m1, m2};
     };
 
     std::unordered_set<Macrostate2> actual_macrostates;
     for (auto macrostate_ptr: ctx.macrostates_to_explore) {
-        CHECK(macrostate_ptr->entries.size() == 1);
-        auto& entry = macrostate_ptr->entries[0];
-        CHECK(entry.prefix.size() == 1);
-        CHECK(entry.suffixes.total_size() == 1);
+        CHECK(macrostate_ptr->states.size() == 1);
+        auto& formula_states = macrostate_ptr->states[0].states;
+        CHECK(formula_states.size() == 1);
+        CHECK(formula_states[0].prefix.size() == 1);
+        CHECK(formula_states[0].suffixes.total_size() == 1);
         actual_macrostates.insert(*macrostate_ptr);
     }
+
 
     CHECK(actual_macrostates == expected_macrostates);
 }
@@ -1466,18 +1478,21 @@ BDDSET make_var_set(std::vector<u32>&& vars) {
 
 TEST_CASE("Test macrostate iterator") {
     Block_Allocator alloc;
-    Macrostate2::Entry e0 = {.prefix = {1}, .suffixes = Chunked_Array<s64>(alloc, {3, 1}, 2)};
-    Macrostate2::Entry e1 = {.prefix = {1}, .suffixes = Chunked_Array<s64>(alloc, {2}, 1)};
 
-    Formula_Structure_Info formula_info = {.prefix_size = 1, .post_size = 2};
+    Formula2 formula = {
+        .congruences = {},
+        .equations = {Equation2({1, 2}, {1, 1})},
+        .inequations = {Inequation2({1, 2}, {1, -1})},
+        .quantif_vars = sylvan::mtbdd_set_empty()
+    };
 
-    Macrostate2 m2 = {.entries = {e0, e1}, .formula_structure = &formula_info};
+    Macrostate2 m2 = make_macrostate(alloc, {Macrostate_Init({1}, {3, 1}), Macrostate_Init({1}, {2})}, &formula);
 
     vector<Sized_Array<s64>> seen_elems;
     for (auto iter = m2.begin(); iter != m2.end(); ++iter) {
-        Sized_Array<s64> arr = Sized_Array<s64>(alloc, iter->size);
+        Sized_Array<s64> arr = Sized_Array<s64>(alloc, iter->state.size);
         for (s64 i = 0; i < arr.size; i++) {
-            arr.items[i] = iter->items[i];
+            arr.items[i] = iter->state.items[i];
         }
         seen_elems.push_back(arr);
     }
@@ -1505,12 +1520,14 @@ TEST_CASE("Explore macrostate") {
             .macrostates_to_explore = {},
             .macrostate_block_alloc = Block_Allocator(),
             .constructed_nfa = &nfa,
-            .structure_info = {.prefix_size = 1, .post_size = 2}
+            .structure_info = {.prefix_size = 1, .post_size = 2},
+            .formula = &formula,
+            .intersection_top = make_tfa_intersection_top(),
         };
 
         Macrostate2 m2 = make_macrostate(ctx.macrostate_block_alloc,
                                          {Macrostate_Init({1}, {1}), Macrostate_Init({2}, {2})},
-                                         &ctx.structure_info);
+                                         &formula);
 
         exp_macrostate(formula, &m2, &ctx);
 
@@ -1518,9 +1535,10 @@ TEST_CASE("Explore macrostate") {
 
         unordered_set<Macrostate2> expected_macrostates;
         {
-            Macrostate2 m0 = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({1}, {1})}, &ctx.structure_info, true);
-            Macrostate2 m1 = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({0}, {1})}, &ctx.structure_info, true);
-            Macrostate2 m2 = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({0}, {0})}, &ctx.structure_info, true);
+            // All macrostates must be rejecting because the equation x + y = 1 accepts no 1-bit solution
+            Macrostate2 m0 = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({1}, {1})}, &formula, false);
+            Macrostate2 m1 = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({0}, {1})}, &formula, false);
+            Macrostate2 m2 = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({0}, {0})}, &formula, false);
             expected_macrostates.insert(m0);
             expected_macrostates.insert(m1);
             expected_macrostates.insert(m2);
@@ -1529,6 +1547,16 @@ TEST_CASE("Explore macrostate") {
         unordered_set<Macrostate2> actual_macrostates;
         for (auto& m: ctx.macrostates_to_explore) {
             actual_macrostates.insert(*m);
+        }
+
+        std::cout << "Expected:\n";
+        for (auto& m: expected_macrostates) {
+            std::cout << m << std::endl;
+        }
+
+        std::cout << "Actual:\n";
+        for (auto& m: actual_macrostates) {
+            std::cout << m << std::endl;
         }
 
         CHECK(expected_macrostates == actual_macrostates);
@@ -1548,10 +1576,12 @@ TEST_CASE("Explore macrostate") {
             .macrostates_to_explore = {},
             .macrostate_block_alloc = Block_Allocator(),
             .constructed_nfa = &nfa,
-            .structure_info = {.prefix_size = 1, .post_size = 2}
+            .structure_info = {.prefix_size = 1, .post_size = 2},
+            .formula = &formula,
+            .intersection_top = make_tfa_intersection_top(),
         };
 
-        Macrostate2 m = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({1}, {1}), Macrostate_Init({2}, {2})}, &ctx.structure_info);
+        Macrostate2 m = make_macrostate(ctx.macrostate_block_alloc, {Macrostate_Init({1}, {1}), Macrostate_Init({2}, {2})}, &formula);
 
         exp_macrostate(formula, &m, &ctx);
 
@@ -1565,12 +1595,12 @@ TEST_CASE("Explore macrostate") {
         {
             Macrostate2 m0 = make_macrostate(ctx.macrostate_block_alloc,
                                              {Macrostate_Init({0}, {1}), Macrostate_Init({1}, {1})},
-                                             &ctx.structure_info,
-                                             true);
+                                             &formula,
+                                             false);
             Macrostate2 m1 = make_macrostate(ctx.macrostate_block_alloc,
                                              {Macrostate_Init({0}, {1})},
-                                             &ctx.structure_info,
-                                             true);
+                                             &formula,
+                                             false);
             expected_macrostates.insert(m0);
             expected_macrostates.insert(m1);
         }
@@ -1632,7 +1662,7 @@ TEST_CASE("Construct NFA for atom") {
 
         Block_Allocator alloc;
         Formula_Structure_Info info = formula.describe();
-        Macrostate2 initial_macrostate = make_macrostate(alloc, {Macrostate_Init({}, {0})}, &info);
+        Macrostate2 initial_macrostate = make_macrostate(alloc, {Macrostate_Init({}, {0})}, &formula);
         NFA actual_nfa = build_nfa_for_conjunction(formula, initial_macrostate);
 
         assert_dfas_are_isomorphic(expected_result, actual_nfa);
@@ -1649,7 +1679,7 @@ TEST_CASE("Construct NFA for atom") {
         Block_Allocator alloc;
         Formula_Structure_Info info = formula.describe();
 
-        Macrostate2 init_macrostate = make_macrostate(alloc, {Macrostate_Init({0}, {})}, &info);
+        Macrostate2 init_macrostate = make_macrostate(alloc, {Macrostate_Init({0}, {})}, &formula);
 
         auto actual_nfa = build_nfa_for_conjunction(formula, init_macrostate);
 
@@ -1705,9 +1735,8 @@ TEST_CASE("Construct NFA for atom") {
             .quantif_vars = sylvan::mtbdd_set_empty()
         };
         Block_Allocator alloc;
-        Formula_Structure_Info info = formula.describe();
 
-        Macrostate2 init_macrostate = make_macrostate(alloc, {Macrostate_Init({1}, {})}, &info);
+        Macrostate2 init_macrostate = make_macrostate(alloc, {Macrostate_Init({1}, {})}, &formula);
 
         auto actual_nfa = build_nfa_for_conjunction(formula, init_macrostate);
 
@@ -1743,10 +1772,75 @@ TEST_CASE("Construct NFA for atom") {
         };
 
         for (auto it: symbolic_transitions) expected_nfa.add_transition(it.from, it.to, it.symbol.data());
-        std::cout << actual_nfa.states << std::endl;
 
         assert_dfas_are_isomorphic(expected_nfa, actual_nfa);
     }
+}
+
+// Relation(-1.Var(id=11) <= 0),
+// Relation(-1.Var(id=2) +1.Var(id=12) <= -449582),
+// Relation(-1.Var(id=11) <= -39),
+// Relation(+1.Var(id=11) <= 218),
+// Relation(-1.Var(id=11) +5.Var(id=12) <= 0),
+// Relation(+1.Var(id=11) -5.Var(id=12) <= 4)
+TEST_CASE("Symbol vs eager approach") {
+    return;
+    {
+        BDDSET vars = make_var_set({1, 2, 3});
+        Formula2 formula = {
+            .congruences = {},
+            .equations = {},
+            .inequations = {
+                Inequation2({1}, {-1}),
+                Inequation2({1}, {1}),
+                Inequation2({1, 3}, {-1, 9}),
+                Inequation2({1, 3}, {1, -9}),
+                Inequation2({2, 3}, {-1, 1}),
+            },
+            .quantif_vars = make_var_set({1, 3})
+        };
+        Block_Allocator alloc;
+
+        Macrostate2 init_macrostate = make_macrostate(
+            alloc, {Macrostate_Init({}, {-39, 218, 0, 100, -44982})}, &formula);
+
+        auto start = std::chrono::system_clock::now();
+        auto actual_nfa = build_nfa_for_conjunction(formula, init_macrostate);
+        actual_nfa.perform_pad_closure();
+        actual_nfa = determinize_nfa(actual_nfa);
+        auto result = minimize_hopcroft(actual_nfa);
+        std::cout << actual_nfa.states.size() << std::endl;
+        std::cout << "Result result! " << result.states.size() << std::endl;
+        auto end = std::chrono::system_clock::now();
+        std::chrono::duration<double> elapsed_seconds = end - start;
+        std::cout << "New implementation took: " << elapsed_seconds.count() << std::endl;
+    }
+
+    {
+        Atom_Allocator allocator;
+        vector<vector<s64>> ineqs = {
+           {-1,  0,  0},
+           { 1,  0,  0},
+           {-1,  0,  9},
+           { 1,  0, -9},
+           { 0, -1,  1},
+        };
+        Formula formula = make_formula(allocator, {}, {}, ineqs, {0, 2});
+        Formula_Pool pool = Formula_Pool(&formula);
+        auto formula_id = pool.store_formula(formula);
+        Conjunction_State init_state({-39, 218, 0, 100, -44982});
+
+        sylvan::BDDSET vars = make_var_set({1, 2, 3});
+
+        auto start = std::chrono::system_clock::now();
+        auto actual_nfa = build_nfa_with_formula_entailement(formula_id, init_state, vars, pool);
+        std::cout << actual_nfa.states.size() << std::endl;
+        std::cout << "Minimal: " << minimize_hopcroft(actual_nfa).states.size() << std::endl;
+        auto end = std::chrono::system_clock::now();
+        std::chrono::duration<double> elapsed_seconds = end - start;
+        std::cout << "Old implementation took: " << elapsed_seconds.count() << std::endl;
+    }
+
 }
 
 int main(int argc, char* argv[]) {

@@ -830,9 +830,7 @@ struct Atom {
         sylvan::mtbdd_ref(var_set);
     };
 
-    ~Atom() {
-        sylvan::mtbdd_deref(var_set);
-    }
+    ~Atom();
     s64 dot_with_symbol(u64 symbol) const;
 
     template <typename Post_Maker>
@@ -948,31 +946,24 @@ struct Formula2 {
     }
 };
 
-struct Macrostate2 {
-    struct Entry {
-        vector<s64>        prefix;
+
+struct Macrostate_Data {
+    struct Factored_States { // States sharing the same prefix
+        vector<s64> prefix;
         Chunked_Array<s64> suffixes;
 
-        bool operator<(const Entry& other) const {
-            return prefix < other.prefix;
-        }
-
-        bool operator==(const Entry& other) const {
-            return (prefix == other.prefix) && (suffixes == other.suffixes);
-        }
+        bool operator==(const Factored_States& other) const { return prefix == other.prefix && suffixes == other.suffixes; }
+        bool operator<(const Factored_States& other) const { return prefix < other.prefix; }
     };
 
-    vector<Entry> entries;
-    bool accepting;
-
-    Formula_Structure_Info* formula_structure = nullptr;
-    State handle;
+    const Formula2* formula;
+    vector<Factored_States> states;
 
     struct Iterator {
-        const Macrostate2* macrostate;
+        const Macrostate_Data* data;
         Sized_Array<s64> buffer;
-        s64  entry_idx;
-        s64  suffix_idx;
+        s64 prefix_idx;
+        s64 suffix_idx;
 
         using value_type = Sized_Array<s64>;
         using pointer    = Sized_Array<s64>*;
@@ -980,30 +971,57 @@ struct Macrostate2 {
         using difference_type = std::ptrdiff_t;
         using iterator_category = std::random_access_iterator_tag;
 
-        Iterator(): macrostate(nullptr), buffer({nullptr, 0}), entry_idx(0), suffix_idx(0) {};
-        Iterator(const Macrostate2* m): macrostate(m), entry_idx(0), suffix_idx(0)
-        {
-            if (m->entries.empty()) {
+        Iterator(): data(nullptr), buffer({nullptr, 0}), prefix_idx(0), suffix_idx(0) {};
+        Iterator(const Macrostate_Data* m): data(m), prefix_idx(0), suffix_idx(0) {
+            if (m->states.empty()) {
                 buffer = {nullptr, 0};
                 return;
             }
 
-            u64 post_size = m->formula_structure->post_size;
+            Formula_Structure_Info formula_structure = m->formula->describe();
+            u64 post_size = formula_structure.post_size;
 
             s64* raw_buffer = new s64[post_size];
             assert(raw_buffer != nullptr);
             buffer = {raw_buffer, post_size};
-
-            auto& entry = macrostate->entries[entry_idx];
-            std::memcpy(buffer.items, entry.prefix.data(), entry.prefix.size() * sizeof(s64));
-
-            u64 suffix_size = post_size - entry.prefix.size();
-            std::memcpy(buffer.items + entry.prefix.size(), entry.suffixes.get_nth_chunk_data(entry_idx), suffix_size * sizeof(s64));
+            fill_buffer_with_data();
         }
 
-        Iterator(const Macrostate2* m, s64 entry_idx): macrostate(m), entry_idx(entry_idx), suffix_idx(0) {}
-        Iterator(const Iterator& other) = delete;
-        Iterator(Iterator&& other) = delete;
+        void fill_buffer_with_data() {
+            auto& entry = data->states[prefix_idx];
+            std::memcpy(buffer.items, entry.prefix.data(), entry.prefix.size() * sizeof(s64));
+
+            u64 suffix_size = data->formula->inequations.size();
+            std::memcpy(buffer.items + entry.prefix.size(), entry.suffixes.get_nth_chunk_data(suffix_idx), suffix_size * sizeof(s64));
+        }
+
+        Iterator(const Macrostate_Data* m, u64 prefix_idx, u64 suffix_idx):
+            data(m),
+            prefix_idx(prefix_idx),
+            suffix_idx(suffix_idx) {};
+
+        Iterator(const Iterator& other) :
+            data(other.data),
+            buffer(other.buffer),
+            prefix_idx(other.prefix_idx),
+            suffix_idx(other.suffix_idx)
+        {
+            if (buffer.items != nullptr) {
+                buffer.items = new s64[buffer.size];
+                memcpy(buffer.items, other.buffer.items, other.buffer.size * sizeof(s64));
+            }
+        };
+
+        Iterator(Iterator&& other) :
+            data(other.data),
+            buffer(other.buffer),
+            prefix_idx(other.prefix_idx),
+            suffix_idx(other.suffix_idx)
+        {
+            other.buffer.items = nullptr;
+        };
+
+        Iterator& operator=(const Iterator& other) = default;
 
         reference operator*() {
             return buffer;
@@ -1013,22 +1031,109 @@ struct Macrostate2 {
         }
 
         Iterator& operator++() {
-            auto& entry = macrostate->entries[entry_idx];
+            auto& entry = data->states[prefix_idx];
             suffix_idx += 1;
+
             if (suffix_idx >= entry.suffixes.chunk_count) {
                 suffix_idx = 0;
-                entry_idx += 1;
+                prefix_idx += 1;
             }
-            if (entry_idx < macrostate->entries.size()) {
-                auto& entry = macrostate->entries[entry_idx];
 
-                std::memcpy(buffer.items, entry.prefix.data(), entry.prefix.size() * sizeof(s64));
+            if (prefix_idx < data->states.size()) {
+                fill_buffer_with_data();
+            }
+            return *this;
+        }
 
-                u64 suffix_size = macrostate->formula_structure->post_size - entry.prefix.size();
+        bool operator==(const Iterator& other) const {
+            return data == other.data && prefix_idx == other.prefix_idx && suffix_idx == other.suffix_idx;
+        }
 
-                s64* suffix_dst = buffer.items + entry.prefix.size();
-                s64* suffix_src = entry.suffixes.get_nth_chunk_data(suffix_idx);
-                std::memcpy(suffix_dst, suffix_src, suffix_size * sizeof(s64));
+        bool operator!=(const Iterator& other) {
+            return !(*this == other);
+        }
+
+        ~Iterator() {
+            delete buffer.items;
+        }
+    };
+
+    Iterator begin() const {
+        return Iterator(this);
+    }
+
+    Iterator end() const {
+        return Iterator(this, this->states.size(), 0);
+    }
+
+    bool operator==(const Macrostate_Data& other) const {
+        return (formula == other.formula) && (states == other.states);
+    }
+};
+
+struct Formula_State_Pair {
+    const Formula2* formula;
+    Sized_Array<s64> state;
+};
+
+struct Macrostate2 {
+    vector<Macrostate_Data> states;
+    bool accepting;
+
+    Formula_Structure_Info* formula_structure = nullptr;
+    State handle;
+
+    struct Iterator {
+        const Macrostate2* macrostate;
+        vector<Macrostate_Data>::const_iterator current_states_block;
+        Macrostate_Data::Iterator macrostate_data_iter;
+
+        Formula_State_Pair out;
+
+        using value_type = Formula_State_Pair;
+        using pointer    = Formula_State_Pair*;
+        using reference  = Formula_State_Pair&;
+        using difference_type = std::ptrdiff_t;
+        using iterator_category = std::random_access_iterator_tag;
+
+        Iterator(): macrostate(nullptr) {};
+
+        Iterator(const Macrostate2* m, const vector<Macrostate_Data>::const_iterator& start_at): macrostate(m), current_states_block(start_at) {};
+
+        Iterator(const Macrostate2* m):
+            macrostate(m),
+            current_states_block(m->states.begin()),
+            macrostate_data_iter(m->states.empty() ? Macrostate_Data::Iterator() :
+                                                     m->states.begin()->begin())
+        {
+            if (m->states.empty()) {
+                Sized_Array<s64> out_arr = {nullptr, 0};
+                out = {nullptr, out_arr};
+                return;
+            }
+            out = {
+                .formula = current_states_block->formula,
+                .state = *macrostate_data_iter,
+            };
+        }
+
+        Iterator(const Iterator& other) = delete;
+        Iterator(Iterator&& other) = delete;
+
+        reference operator*() { return out; }
+        pointer operator->() { return &out; }
+
+        Iterator& operator++() {
+            ++macrostate_data_iter;
+            if (macrostate_data_iter == current_states_block->end()) {
+                ++current_states_block;
+                if (current_states_block != macrostate->states.end()) {
+                    macrostate_data_iter = current_states_block->begin();
+                    out.formula = current_states_block->formula;
+                    out.state = *macrostate_data_iter;
+                }
+            } else {
+                out.state = *macrostate_data_iter;
             }
             return *this;
         }
@@ -1038,7 +1143,14 @@ struct Macrostate2 {
         }
 
         bool operator==(const Iterator &other) const {
-            return (entry_idx == other.entry_idx) && (suffix_idx == other.suffix_idx);
+            bool same_block = (current_states_block == other.current_states_block);
+            if (!same_block) return false;
+
+            if (current_states_block == macrostate->states.end()) {
+                return true; // Both terminated
+            }
+
+            return (macrostate_data_iter == other.macrostate_data_iter);
         }
     };
 
@@ -1047,25 +1159,29 @@ struct Macrostate2 {
     }
 
     Iterator end() const {
-        return Iterator(this, this->entries.size());
+        return Iterator(this, this->states.end());
     }
 
     friend std::ostream& operator<<(std::ostream& os, const Macrostate2& m);
     bool operator==(const Macrostate2& other) const {
-        bool are_eq = (entries == other.entries && accepting == other.accepting);
+        bool are_eq = (states == other.states && accepting == other.accepting);
         return are_eq;
     }
 
 };
 
 template<> struct std::hash<Macrostate2> {
-    std::size_t operator()(Macrostate2 const& state) const noexcept {
+    std::size_t operator()(Macrostate2 const& macrostate) const noexcept {
         std::size_t hash = 0;
-        for (auto& entry: state.entries) {
-            hash = hash_combine(hash, hash_vector(entry.prefix, 0));
-            hash = hash_combine(hash, hash_chunked_array(entry.suffixes));
+        for (auto& entry: macrostate.states) {
+            size_t formula_hash = std::hash<const Formula2*>{}(entry.formula);
+            hash = hash_combine(hash, formula_hash);
+            for (auto& factored_state: entry.states) {
+                hash = hash_combine(hash, hash_vector(factored_state.prefix, 0));
+                hash = hash_combine(hash, hash_chunked_array(factored_state.suffixes));
+            }
         }
-        hash += (state.accepting ? 33 : 1);
+        hash += (macrostate.accepting ? 33 : 0);
         return hash;
     }
 };
@@ -1076,8 +1192,11 @@ struct NFA_Construction_Ctx {
     Block_Allocator                   macrostate_block_alloc;
     NFA*                              constructed_nfa;
     Formula_Structure_Info            structure_info;
+    Formula2*                         formula = nullptr;
     State                             trapstate_handle = 0;
     bool                              trapstate_needed = false;
+    unordered_map<vector<s64>, sylvan::MTBDD> cache;
+    sylvan::MTBDD                     intersection_top;
 };
 
 void exp_macrostate(Formula2& formula, const Macrostate2* state, NFA_Construction_Ctx* ctx);
