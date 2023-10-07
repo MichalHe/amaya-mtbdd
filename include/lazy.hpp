@@ -30,6 +30,7 @@ struct Decomposed_Modulus {
 };
 
 Decomposed_Modulus decompose_modulus(s64 modulus);
+s64 combine_moduli(s64 mod_2pow, s64 mod_odd);
 
 
 struct Congruence {
@@ -79,17 +80,12 @@ constexpr Preferred_Var_Value_Type operator|(Preferred_Var_Value_Type left, Pref
 
 struct Conjunction_State;
 
-enum class Linear_Node_Type : u8 {
-    EQ   = 0x01,
-    INEQ = 0x02,
-};
-
 struct Linear_Node {
-    Linear_Node_Type type;
     vector<s64>      coefs; // Cannot share coefs with original atom as it might be modified in-place during simplification
     vector<u64>      vars;
-    bool             is_satisfied;
+    bool             is_satisfied = false;
 };
+
 
 struct Congruence_Node {
     vector<s64> coefs;
@@ -100,35 +96,50 @@ struct Congruence_Node {
 };
 
 struct Hard_Bound {
-    bool is_present;
-    u64  atom_i;
+    s32 atom_i;                  // Index of an inequation that represents a hard bound
 };
 
 struct Var_Node {
-    vector<u64> affected_free_vars; // Free vars affected via congruence
-    Hard_Bound  hard_upper_bound;
-    Hard_Bound  hard_lower_bound;
-    vector<u64> upper_bounds;
-    vector<u64> lower_bounds;
-    vector<u64> congruences;
+    const static s32 TOMBSTONE = -1;
 
-    bool is_hard_lower_bound(u64 atom_i) {
-        return (hard_lower_bound.is_present && hard_lower_bound.atom_i == atom_i);
+    vector<s32> upper_bounds;     // Indices of the inequations in which the value of this var should be the smallest
+    vector<s32> lower_bounds;     // Indices of the inequations in which the value of this var should be the greatest
+    vector<s32> equations;        // Indices of equations that contain this var
+    vector<s32> congruences;      // Indices of congruences containing this var
+
+    Hard_Bound  hard_upper_bound = {.atom_i = TOMBSTONE};
+    Hard_Bound  hard_lower_bound = {.atom_i = TOMBSTONE};
+
+    bool is_hard_lower_bound(s32 atom_i) const {
+        return (hard_lower_bound.atom_i == atom_i);
     }
 
-    bool is_hard_upper_bound(u64 atom_i) {
-        return (hard_upper_bound.is_present && hard_upper_bound.atom_i == atom_i);
+    bool has_hard_lower_bound() const {
+        return hard_lower_bound.atom_i != TOMBSTONE;
     }
 
+    bool is_hard_upper_bound(s32 atom_i) {
+        return (hard_upper_bound.atom_i == atom_i);
+    }
+
+    bool has_hard_upper_bound() const {
+        return hard_upper_bound.atom_i != TOMBSTONE;
+    }
 };
 
 struct Dep_Graph {
     vector<u64>                 potential_vars;
     vector<u64>                 quantified_vars;
     vector<u64>                 vars_not_removed_in_simplification;
-    vector<Var_Node>            var_nodes;
-    vector<Linear_Node>         linear_nodes; // First nodes are equations then inequations
-    vector<Congruence_Node>     congruence_nodes;
+
+    vector<Var_Node>         var_nodes;    // Every variable has a node associated with it
+
+    vector<Linear_Node>      equations;    // First nodes are equations then inequations
+    vector<Linear_Node>      inequations;
+    vector<Congruence_Node>  congruences;
+
+    bool dirty = false;
+    bool is_false = false;
 };
 
 struct Quantified_Atom_Conjunction;
@@ -136,13 +147,8 @@ struct Formula_Allocator;
 
 Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj);
 void write_dep_graph_dot(std::ostream& output, Dep_Graph& graph);
-void identify_potential_variables(Dep_Graph& graph);
-Conjunction_State simplify_graph_using_value(Dep_Graph& graph, Conjunction_State& state, u64 var, s64 val);
-void simplify_graph_with_unbound_var(Dep_Graph& graph, u64 var);
-Dep_Graph* simplify_graph(const Dep_Graph& graph, Conjunction_State& state);
 std::ostream& operator<<(std::ostream& output, const Congruence_Node& congruence_node);
 std::ostream& operator<<(std::ostream& output, const Linear_Node& lin_node);
-
 
 struct Quantified_Atom_Conjunction {
     // This requires certain order: Conjunction_State, conjunction state hashing
@@ -165,7 +171,6 @@ struct Quantified_Atom_Conjunction {
         bound_vars(bound_vars), var_count(var_count)
     {
         this->dep_graph = build_dep_graph(*this);
-        identify_potential_variables(this->dep_graph);
     };
 
     bool operator==(const Quantified_Atom_Conjunction& other) const;
@@ -217,14 +222,55 @@ struct Conjunction_State {
 
     Conjunction_State(const Conjunction_State& other): constants(other.constants) {}
 
-    void post(unordered_set<Conjunction_State>& known_states, vector<Conjunction_State>& dest);
     bool operator==(const Conjunction_State& other) const;
     bool operator<(const Conjunction_State& other) const;
+};
 
-    s64 get_lin_atom_val(u64 offset, u64 atom_idx) const {
-        return constants[offset + atom_idx];
+struct Formula_Structure {
+    s32 eq_cnt;
+    s32 ineq_cnt;
+    s32 congruence_cnt;
+};
+
+struct Ritch_Conjunction_State {
+    vector<s64> data;
+
+    Formula_Structure formula_structure;
+
+    s64 get_congruence_val(u64 congruence_idx) const {
+        return data[congruence_idx];
+    }
+
+    void set_congruence_val(u64 congruence_idx, s64 val) {
+        data[congruence_idx] = val;
+    }
+
+    s64 get_eq_val(u64 eq_idx) const {
+        return data[formula_structure.congruence_cnt + eq_idx];
+    }
+
+    void set_eq_val(u64 eq_idx, s64 val) {
+        data[formula_structure.congruence_cnt + eq_idx] = val;
+    }
+
+    s64 get_ineq_val(u64 ineq_idx) const {
+        return data[formula_structure.congruence_cnt + formula_structure.eq_cnt + ineq_idx];
+    }
+
+    void set_ineq_val(u64 ineq_idx, s64 val) {
+        data[formula_structure.congruence_cnt + formula_structure.eq_cnt + ineq_idx] = val;
+    }
+
+    void add_eq_rhs(u64 eq_val) {
+        data.push_back(0);
+        u64 prefix = formula_structure.eq_cnt + formula_structure.congruence_cnt;
+        for (s64 i = data.size() - 1; i >= prefix; i--) {
+            data[i] = data[i-1];
+        }
+        data[prefix] = eq_val;
     }
 };
+
 
 template <>
 struct std::hash<Conjunction_State> {
@@ -717,10 +763,7 @@ struct New_Atoms_Info {
 
 Stateful_Formula convert_graph_into_persistent_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state);
 Stateful_Formula convert_graph_into_persistent_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state, const New_Atoms_Info& delta_info);
-Stateful_Formula convert_graph_into_tmp_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state);
-Stateful_Formula convert_graph_into_tmp_formula(Dep_Graph& graph, Formula_Allocator& allocator, Conjunction_State& state, const New_Atoms_Info& delta_info);
 
-std::pair<const Quantified_Atom_Conjunction*, Conjunction_State> simplify_stateful_formula(const Quantified_Atom_Conjunction* formula, Conjunction_State& state, Formula_Pool& pool);
 Stateful_Formula_Ptr try_inf_projection_on_equations(const Dep_Graph& graph, Formula_Pool& pool, Conjunction_State state);
 
 enum class Bound_Type : unsigned {
@@ -759,57 +802,9 @@ Sized_Array<T> make_sized_array(const vector<T>& items) {
 }
 
 // ----- MODULO LINEARIZATION -----
-enum class Var_Preference_Type : u8 {
-    NONE = 0x00,
-    C_INCREASING = 0x01,
-    C_DECREASING = 0x02,  // The number of soutions to free variables grows as the value of y decreases
-};
 
-struct Var_Preference {  // Captures the notion of C-{increasing/decreasing}
-    Var_Preference_Type type;
-    s64 c;
-};
-
-struct Interval {
-     s64 low, high;
-};
-
-struct Linear_Function { // y = a*x + b
-    s64 a, b;
-    bool valid = true;
-};
-
-struct Captured_Modulus {
-    u64 leading_var;      // y in (y mod K)
-    u64 subordinate_var;  // Variable representing modulus
-
-    bool is_mod_captured() {
-        return leading_var != subordinate_var;
-    }
-};
-
-struct Linearization_Info {
-    u64              congruence_idx;
-    Linear_Function  resulting_fn;
-    Captured_Modulus captured_mod;
-};
-
-// Compute m when given y in : n*y + {+- 1}* m ~ K  (mod MODULUS). The result is in [0, ... MODULUS]
-s64 eval_mod_congruence_at_point(const Congruence_Node& congruence, s64 K, Captured_Modulus& mod, s64 point);
-
-// Compute y when given m in : n*y + {+- 1}* m ~ K  (mod MODULUS). The result is in [0, ... MODULUS]
-s64 get_point_for_mod_congruence_to_obtain_value(const Congruence_Node& congruence, s64 K, Captured_Modulus& mod, s64 value);
-
-void shift_interval(Interval& interval, Var_Preference preference, s64 modulus);
-
-Linear_Function linearize_congruence(const Dep_Graph& graph, Conjunction_State& state, u64 congruence_idx, Captured_Modulus& captured_mod, Var_Preference& preference);
-
-std::optional<Stateful_Formula> linearize_formula(Formula_Allocator& allocator,
-                                                  const Quantified_Atom_Conjunction* formula_to_linearize,
-                                                  Conjunction_State& state);
 
 bool do_any_hard_bounds_imply_contradiction(const Dep_Graph& graph, const Conjunction_State& state);
-
 
 u64 perfect_bit_hash(u64 symbol, const vector<u64>& interestring_vars);
 
@@ -1202,5 +1197,6 @@ struct NFA_Construction_Ctx {
 void exp_macrostate(Formula2& formula, const Macrostate2* state, NFA_Construction_Ctx* ctx);
 NFA build_nfa_for_conjunction(Formula2& formula, Macrostate2& initial_macrostate);
 
+Formula_Structure describe_formula(const Quantified_Atom_Conjunction* formula);
 #endif
 

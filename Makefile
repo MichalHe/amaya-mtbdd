@@ -10,7 +10,7 @@ CFLAGS=$(COMMON_FLAGS) $(SHARED_LIB_FLAGS)
 
 .PHONY := clean
 
-lazy-tests: build/lazy-tests.o build/lazy.o build/base.o build/custom_leaf.o build/operations.o build/sylvan-extra.o build/pareto_set.o build/tfa_leaf.o
+lazy-tests: build/lazy-tests.o build/lazy.o build/base.o build/custom_leaf.o build/operations.o build/sylvan-extra.o build/pareto_set.o build/tfa_leaf.o build/rewrites.o
 	$(CXX) -o $@ $^ $(CXXLIBS)
 
 build/lazy-tests.o: src/lazy-tests.cpp
@@ -18,7 +18,7 @@ build/lazy-tests.o: src/lazy-tests.cpp
 
 shared-lib: build build/amaya-mtbdd.so
 
-build/lazy.o: src/lazy.cpp include/lazy.hpp include/base.hpp include/pareto_set.h include/tfa_leaf.h include/vectors.h
+build/lazy.o: src/lazy.cpp include/lazy.hpp include/base.hpp include/pareto_set.h include/tfa_leaf.h include/vectors.h include/rewrites.h
 	$(CXX) -c $(CXXFLAGS) src/lazy.cpp -o build/lazy.o
 
 build/amaya-mtbdd.so: build/wrapper.o build/operations.o build/custom_leaf.o build/base.o build/lazy.o build/sylvan-extra.o build/tfa_leaf.o build/pareto_set.o
@@ -41,6 +41,9 @@ build/vectors.o: src/vectors.cpp include/vectors.h
 
 build/pareto_set.o: include/base.hpp include/pareto_set.h src/pareto_set.cpp
 	$(CXX) -c $(CXXFLAGS) src/pareto_set.cpp -o $@
+
+build/rewrites.o: include/base.hpp include/rewrites.h include/lazy.hpp src/rewrites.cpp
+	$(CXX) -c $(CXXFLAGS) src/rewrites.cpp -o $@
 
 build/tfa_leaf.o: include/base.hpp include/tfa_leaf.h include/operations.hpp include/pareto_set.h src/tfa_leaf.cpp
 	$(CXX) -c $(CXXFLAGS) src/tfa_leaf.cpp -o $@

@@ -5,6 +5,7 @@
 #include "../include/pareto_set.h"
 #include "../include/vectors.h"
 #include "../include/tfa_leaf.h"
+#include "../include/rewrites.h"
 
 #include <algorithm>
 #include <vector>
@@ -813,115 +814,460 @@ TEST_CASE("Minimization - Wiki automaton") {
     assert_dfas_are_isomorphic(expected_result, result);
 }
 
-TEST_CASE("Dep. analysis :: potential var identifiction") {
-    // m = vars[0] > x(1) > y(2) > z(3)
-    Atom_Allocator allocator;
-    Formula formula = make_formula(
-        allocator,
-        {{{1, 0, -1, 0}, 10}}, // m - y ~ 0
-        {},
-        {
-            {0, 1, -1, 0},  // x <= y
-            {1, 0, 0, -1},  // m <= z
-            {-1, 0, 0, 0},  // m >= 0
-            {1, 0, 0, 0}    // m <= 0
-        },
-        {0, 2}
-    );
 
-    auto graph = build_dep_graph(formula);
-    identify_potential_variables(graph);
+TEST_CASE("substitute vars with known vars") {
+    SUBCASE("Value known due to inequations") {
+        // Input :: -x <= -1 && x <= 1 && x - y <=1
+        // Output:: -y <=0
+        vector<Var_Node> var_nodes = {
+            // x0 = x
+            {
+                .upper_bounds = {1, 2},
+                .lower_bounds = {0},
+                .equations = {},
+                .congruences = {},
+                .hard_upper_bound = {.atom_i = 1},
+                .hard_lower_bound = {.atom_i = 0},
+            },
+            // x1 = y
+            {.upper_bounds = {}, .lower_bounds = {2}, .equations = {}, .congruences = {}},
+        };
+        Dep_Graph dep_graph = {
+            .quantified_vars = {},
+            .var_nodes = var_nodes,
+            .equations = {},
+            .inequations = {
+                {.coefs = {-1,  0}, .vars = {0}},
+                {.coefs = { 1,  0}, .vars = {0}},
+                {.coefs = { 1, -1}, .vars = {0, 1}},
+            },
+            .congruences = {},
+        };
+        Formula_Structure structure = {
+            .eq_cnt = 0,
+            .ineq_cnt = 3,
+            .congruence_cnt = 0,
+        };
+        Ritch_Conjunction_State state = {.data = {-1, 1, 1}, .formula_structure = structure};
 
-    // m (=x0) has potential because it is squeezed between its hard bounds
-    // y (=x2) has potential because it can be infinitely large
-    vector<u64> expected_potent_vars = {0, 2};
-    CHECK(graph.potential_vars == expected_potent_vars);
+        Dep_Graph* new_graph = &dep_graph;
+        bool was_any_substitution_performed = substitute_vars_with_known_value(&new_graph, &state);
+        CHECK(was_any_substitution_performed);
+
+        CHECK( new_graph->inequations[0].is_satisfied);
+        CHECK( new_graph->inequations[1].is_satisfied);
+        CHECK(!new_graph->inequations[2].is_satisfied);
+
+        if (new_graph != &dep_graph) delete new_graph;
+
+        CHECK(state.get_ineq_val(2) == 0);
+    }
+
+    SUBCASE("Value known due to equations") {
+        // Input :: (Eq0) x = 1 && (Ineq0) x - y <=1
+        // Output:: -y <=0
+        vector<Var_Node> var_nodes = {
+            // x0 = x
+            {
+                .upper_bounds = {0},
+                .lower_bounds = {},
+                .equations = {0},
+                .congruences = {},
+            },
+            // x1 = y
+            {.upper_bounds = {}, .lower_bounds = {0}, .equations = {}, .congruences = {}},
+        };
+        Dep_Graph dep_graph = {
+            .quantified_vars = {},
+            .var_nodes = var_nodes,
+            .equations = {
+                {.coefs = { 1,  0}, .vars = {0}},
+            },
+            .inequations = {
+                {.coefs = { 1, -1}, .vars = {0, 1}},
+            },
+            .congruences = {},
+        };
+        Formula_Structure structure = {
+            .eq_cnt = 1,
+            .ineq_cnt = 1,
+            .congruence_cnt = 0,
+        };
+        Ritch_Conjunction_State state = {.data = {1, 1}, .formula_structure = structure};
+
+        Dep_Graph* new_graph = &dep_graph;
+        bool was_any_substitution_performed = substitute_vars_with_known_value(&new_graph, &state);
+        CHECK(was_any_substitution_performed);
+
+        CHECK( new_graph->equations[0].is_satisfied);
+        CHECK(!new_graph->inequations[1].is_satisfied);
+
+        if (new_graph != &dep_graph) delete new_graph;
+    }
 }
 
-TEST_CASE("Dep. analysis :: simplify (const var)") {
-    // m(0) > x(1) > y(2) > z(3)
-    Atom_Allocator alloc;
-    Formula formula = make_formula(
-        alloc,
-        {{{1, 0, -1, 0}, 10}},  // m - y ~ 0
-        {},
-        {
-            {0, 1, -1, 0},  // x <= y
-            {1, 0, 0, -1},  // m <= z
-            {-1, 0, 0, 0},  // -m <= -1 (equivalent to m >= 1)
-            {1, 0, 0,  0},  // m  <= 1
-        },
-        {0, 2}
-    );
+TEST_CASE("Instantiate quantif with unbound var") {
+    SUBCASE("instantiation possible") {
+        // Input :: (Ineq0) x - 2y <= 1 &&
+        //          (Ineq1) -y <= 1 &&
+        //          (Ineq2) z - x <= 0
+        // Output:: z - x <= 0
+        // Vars x0 = x, x1 = y, x2 = z
+        vector<Var_Node> var_nodes = {
+            // x0 = x
+            {.upper_bounds = {0}, .lower_bounds = {2}, .equations = {}, .congruences = {}},
+            // x1 = y
+            {.upper_bounds = {}, .lower_bounds = {0, 1}, .equations = {}, .congruences = {}, .hard_lower_bound = {.atom_i = 1}},
+            // x2 = z
+            {.upper_bounds = {2}, .lower_bounds = {}, .equations = {}, .congruences = {}},
+        };
+        Dep_Graph dep_graph = {
+            .quantified_vars = {1},
+            .var_nodes = var_nodes,
+            .equations = {},
+            .inequations = {
+                {.coefs = { 1, -2, 0}, .vars = {0, 1}},
+                {.coefs = { 0, -1, 0}, .vars = {1}},
+                {.coefs = {-1,  0, 1}, .vars = {0, 1}},
+            },
+            .congruences = {},
+        };
+        Formula_Structure structure = {
+            .eq_cnt = 0,
+            .ineq_cnt = 3,
+            .congruence_cnt = 0,
+        };
+        Ritch_Conjunction_State state = {.data = {1, 1, 0}, .formula_structure = structure};
 
-    auto graph = build_dep_graph(formula);
-    identify_potential_variables(graph);
+        Dep_Graph* new_graph = &dep_graph;
+        bool was_any_quantif_instantiated = instantiate_quantifs_with_inf(&new_graph, &state);
+        CHECK(was_any_quantif_instantiated);
 
-    Conjunction_State state({0, 0, 0, -1, 1});
-    Dep_Graph* new_graph = simplify_graph(graph, state);
+        CHECK( new_graph->inequations[0].is_satisfied);
+        CHECK( new_graph->inequations[1].is_satisfied);
+        CHECK(!new_graph->inequations[2].is_satisfied);
 
-    CHECK(new_graph != nullptr);
+        CHECK(state.get_ineq_val(2) == 0);
 
-    // The graph should be simplified to
-    // 0. x <= y, m ~ y, m <= z, m >= 1, m <= 1
-    // 1. x <= y, 1 ~ y, 1 <= z
-    // 2. 1 <= z
-    CHECK( new_graph->linear_nodes[0].is_satisfied);
-    CHECK(!new_graph->linear_nodes[1].is_satisfied);
-    CHECK( new_graph->linear_nodes[2].is_satisfied);
-    CHECK( new_graph->linear_nodes[3].is_satisfied);
-    CHECK( new_graph->congruence_nodes[0].is_satisfied);
+        if (new_graph != &dep_graph) delete new_graph;
+    }
+    SUBCASE("instantiation not possible due to equation") {
+        // Input :: (Ineq0) x - 2y <= 1 &&
+        //          (Ineq1) -y <= 1 &&
+        //          (Eq0)   z - y = 0
+        // Output:: z - x <= 0
+        // Vars x0 = x, x1 = y, x2 = z
+        vector<Var_Node> var_nodes = {
+            // x0 = x
+            {.upper_bounds = {0}, .lower_bounds = {}, .equations = {}, .congruences = {}},
+            // x1 = y
+            {.upper_bounds = {}, .lower_bounds = {0, 1}, .equations = {0}, .congruences = {}, .hard_lower_bound = {.atom_i = 1}},
+            // x2 = z
+            {.upper_bounds = {}, .lower_bounds = {}, .equations = {0}, .congruences = {}},
+        };
+        Dep_Graph dep_graph = {
+            .quantified_vars = {1},
+            .var_nodes = var_nodes,
+            .equations = {
+                {.coefs = { 0, -1, 1}, .vars = {1, 2}},
+            },
+            .inequations = {
+                {.coefs = { 1, -2, 0}, .vars = {0, 1}},
+                {.coefs = { 0, -1, 0}, .vars = {1}},
+            },
+            .congruences = {},
+        };
+        Formula_Structure structure = {
+            .eq_cnt = 1,
+            .ineq_cnt = 2,
+            .congruence_cnt = 0,
+        };
+        Ritch_Conjunction_State state = {.data = {0, 1, 1}, .formula_structure = structure};
 
-    auto& actual_atom = new_graph->linear_nodes[1];
-    vector<s64> expected_coefs = {0, 0, 0, -1};
-    CHECK(actual_atom.coefs == expected_coefs);
-    CHECK(state.constants[2] == -1);
-
-    delete new_graph;
+        Dep_Graph* new_graph = &dep_graph;
+        bool was_any_quantif_instantiated = instantiate_quantifs_with_inf(&new_graph, &state);
+        CHECK(!was_any_quantif_instantiated);
+        CHECK(new_graph == &dep_graph);
+    }
 }
 
-TEST_CASE("Dep. analysis :: simplify (unbound vars)") {
-    // vars = {[0]=x1, x2 < x3 < x4}
-    Atom_Allocator alloc;
-    Formula formula = make_formula(
-        alloc,
-        {{{1, 0, 0, -1}, 13}},
-        {},
-        {
-            {-1, 0, 0, 0},  // 0  <= x1
-            {0, -1, 0, 0},  // 23 <= x2
-            {-1, 5, 0, 0},  // 5*x2 - x1 <= 0
-            {0, 0, -1, 1},  // x4 <= x3
-            {0, 0, 0, -1},  // x4 >= 0
-            {0, 0, 0,  1}   // x4 <= 12
-        },
-        {0, 1, 3}// x1 ~ x4
-    );
+TEST_CASE("Instantiate quantifier with c monotonicity") {
+    SUBCASE("instantiation possible, no congruence") {
+        // Input  :: (Ineq0) x - 2y <= 1 &&
+        //           (Ineq1)      y <= 1 &&
+        // Output :: x <= 3
+        // Vars x0 = x, x1 = y
+        vector<Var_Node> var_nodes = {
+            // x0 = x
+            {.upper_bounds = {0}, .lower_bounds = {}, .equations = {}, .congruences = {}},
+            // x1 = y
+            {.upper_bounds = {1}, .lower_bounds = {0}, .equations = {}, .congruences = {}, .hard_upper_bound = {.atom_i = 1}},
+        };
+        Dep_Graph dep_graph = {
+            .quantified_vars = {1},
+            .var_nodes = var_nodes,
+            .equations = {},
+            .inequations = {
+                {.coefs = { 1, -2, 0}, .vars = {0, 1}},
+                {.coefs = { 0,  1, 0}, .vars = {1}},
+            },
+            .congruences = {},
+        };
+        Formula_Structure structure = {
+            .eq_cnt = 0,
+            .ineq_cnt = 2,
+            .congruence_cnt = 0,
+        };
+        Ritch_Conjunction_State state = {.data = {1, 1}, .formula_structure = structure};
 
-    auto graph = build_dep_graph(formula);
-    identify_potential_variables(graph);
+        Dep_Graph* new_graph = &dep_graph;
+        bool was_any_quantif_instantiated = instantiate_quantifs_with_c_monotonicity(&new_graph, &state);
 
-    Conjunction_State state({0, -23, 0, 0, 0, 12, 0});
+        CHECK(was_any_quantif_instantiated);
+        CHECK(state.get_eq_val(0) == 3);
+        CHECK(new_graph->inequations[0].vars == vector<u64>{0});
 
-    Dep_Graph* new_graph = simplify_graph(graph, state);
-    CHECK(new_graph != nullptr);
+        if (new_graph != &dep_graph) delete new_graph;
+    }
+    SUBCASE("instantiation possible, with congruence") {
+        // Input  :: (Ineq0) x - 2y <= 1 &&
+        //           (Ineq1)      y <= 1 &&
+        //           (Congr0)     y  ~ 2 (mod 3)&&
+        // Output :: x <= -1
+        // Vars x0 = x, x1 = y
+        vector<Var_Node> var_nodes = {
+            // x0 = x
+            {.upper_bounds = {0}, .lower_bounds = {}, .equations = {}, .congruences = {}},
+            // x1 = y
+            {.upper_bounds = {1}, .lower_bounds = {0}, .equations = {}, .congruences = {0}, .hard_upper_bound = {.atom_i = 1}},
+        };
+        Dep_Graph dep_graph = {
+            .quantified_vars = {1},
+            .var_nodes = var_nodes,
+            .equations = {},
+            .inequations = {
+                {.coefs = { 1, -2, 0}, .vars = {0, 1}},
+                {.coefs = { 0,  1, 0}, .vars = {1}},
+            },
+            .congruences = {
+                {.coefs = {0, 1, 0}, .vars = {1}, .modulus_2pow = 0, .modulus_odd = 3},
+            },
+        };
+        Formula_Structure structure = {
+            .eq_cnt = 0,
+            .ineq_cnt = 2,
+            .congruence_cnt = 1,
+        };
+        Ritch_Conjunction_State state = {.data = {2, 1, 1}, .formula_structure = structure};
 
-    // 0)  0 <= x1, 23 <= x2, 5x2 <= x1, x4 <= x3, x4 >= 0, x4 <= 12, x1 ~ x4
-    // 1)  23 <= x2, x4 <= x3, x4 >= 0, x4 <= 12
-    // 2)  x4 <= x3, x4 >= 0, x4 <= 12
-    // 3)  0 <= x3
-    CHECK( new_graph->linear_nodes[0].is_satisfied);
-    CHECK( new_graph->linear_nodes[1].is_satisfied);
-    CHECK( new_graph->linear_nodes[2].is_satisfied);
-    CHECK(!new_graph->linear_nodes[3].is_satisfied);
-    CHECK( new_graph->linear_nodes[4].is_satisfied);
-    CHECK( new_graph->linear_nodes[5].is_satisfied);
-    CHECK( new_graph->congruence_nodes[0].is_satisfied);
+        Dep_Graph* new_graph = &dep_graph;
+        bool was_any_quantif_instantiated = instantiate_quantifs_with_c_monotonicity(&new_graph, &state);
+        CHECK(was_any_quantif_instantiated);
 
-    CHECK(state.constants[3] == 0);
-    delete new_graph;
+        CHECK(!new_graph->inequations[0].is_satisfied);
+        CHECK( new_graph->inequations[1].is_satisfied);
+        CHECK( new_graph->congruences[0].is_satisfied);
+
+        CHECK(state.get_ineq_val(0) == -1);
+
+        if (new_graph != &dep_graph) delete new_graph;
+    }
+    SUBCASE("instantiation not possible due to equation") {
+        // Input  :: (Ineq0) x - 2y <= 1 &&
+        //           (Ineq1)     1y <= 1 &&
+        //           (Eq0)   z + 1y  = 1 &&
+        // Output :: Nothing is changed
+        // Vars x0 = x, x1 = y, x2 = z
+        vector<Var_Node> var_nodes = {
+            // x0 = x
+            {.upper_bounds = {0}, .lower_bounds = {}, .equations = {}, .congruences = {}},
+            // x1 = y
+            {.upper_bounds = {1}, .lower_bounds = {0}, .equations = {0}, .congruences = {}, .hard_upper_bound = {.atom_i = 1}},
+            // x2 = z
+            {.upper_bounds = {}, .lower_bounds = {}, .equations = {0}, .congruences = {}},
+        };
+        Dep_Graph dep_graph = {
+            .quantified_vars = {1},
+            .var_nodes = var_nodes,
+            .equations = {
+                {.coefs = { 0,  1, 1}, .vars = {1, 2}},
+            },
+            .inequations = {
+                {.coefs = { 1, -2, 0}, .vars = {0, 1}},
+                {.coefs = { 0,  1, 0}, .vars = {1}},
+            },
+            .congruences = {},
+        };
+        Formula_Structure structure = {
+            .eq_cnt = 1,
+            .ineq_cnt = 2,
+            .congruence_cnt = 0,
+        };
+        Ritch_Conjunction_State state = {.data = {1, 1, 1}, .formula_structure = structure};
+
+        Dep_Graph* new_graph = &dep_graph;
+        bool was_any_quantif_instantiated = instantiate_quantifs_with_c_monotonicity(&new_graph, &state);
+
+        CHECK(!was_any_quantif_instantiated);
+        if (new_graph != &dep_graph) delete new_graph;
+    }
 }
 
+TEST_CASE("congruence linearization - `y - m ~ 0 && 1 <= m <= 4 && y <= -1` (real formula)") {
+    // Input  :: (Ineq0) -m <= -1 &&
+    //           (Ineq1)  m <=  4 &&
+    //           (Ineq2)  y <= -1 &&
+    //           (Ineq3)  x - y <= 0 &&
+    //           (Congr0) y - m ~ 5
+
+    // Output :: (Ineq0) -m <= -1 &&
+    //           (Ineq1)  m <=  4 &&
+    //           (Ineq2)  y <= -1 &&
+    //           (Ineq3)  x - y <= 0 &&
+    //           (Eq0)    y = m + 5
+    // Vars x0 = m, x1 = x, x2 = y
+    vector<Var_Node> var_nodes = {
+        // x0 = m
+        {
+            .upper_bounds = {1},
+            .lower_bounds = {0},
+            .equations = {},
+            .congruences = {0},
+            .hard_upper_bound = {.atom_i = 1}, .hard_lower_bound = {.atom_i = 0}
+        },
+        // x2 = x
+        {.upper_bounds = {3}, .lower_bounds = {}, .equations = {}, .congruences = {}},
+        // x1 = y
+        {
+            .upper_bounds = {2},
+            .lower_bounds = {3},
+            .equations = {},
+            .congruences = {0},
+            .hard_upper_bound = {.atom_i = 2}
+        },
+    };
+    Dep_Graph dep_graph = {
+        .quantified_vars = {1},
+        .var_nodes = var_nodes,
+        .equations = {},
+        .inequations = {
+            {.coefs = {-1,  0, 0}, .vars = {0}},
+            {.coefs = { 1,  0, 0}, .vars = {0}},
+            {.coefs = { 0,  0, 1}, .vars = {2}},
+            {.coefs = { 0,  1,-1}, .vars = {1, 2}},
+        },
+        .congruences = {
+            {.coefs = {-1,  0, 1}, .vars = {0, 2}, .modulus_2pow = 0, .modulus_odd = 5},
+        },
+    };
+    Formula_Structure structure = {.eq_cnt = 0, .ineq_cnt = 4, .congruence_cnt = 1};
+    Ritch_Conjunction_State state = {.data = {0, -1, 4, -1, 0}, .formula_structure = structure};
+
+    auto new_graph = &dep_graph;
+    auto was_modulus_linearized = linearize_moduli(&new_graph, &state);
+
+    CHECK(was_modulus_linearized);
+    CHECK(new_graph->equations.size() == 1);
+
+    auto& eq = new_graph->equations[0];
+    CHECK(eq.vars == vector<u64>{0, 2});
+    CHECK(eq.coefs == vector<s64>{-1, 0, 1});
+    CHECK(state.get_eq_val(0) == -5);
+    CHECK(new_graph->congruences[0].is_satisfied);
+
+    if (new_graph != &dep_graph) delete new_graph;
+}
+
+TEST_CASE("Max simplification") {
+    SUBCASE("Multiple unbound vars") {
+        Atom_Allocator alloc;
+        Formula formula = make_formula(
+            alloc,
+            {{{1, 0, 0, -1}, 13}}, // x0 ~ x3
+            {},
+            {
+                {-1, 0, 0, 0},  // 0  <= x0
+                {0, -1, 0, 0},  // 23 <= x1
+                {-1, 5, 0, 0},  // 5*x1 - x0 <= 0
+                {0, 0, -1, 1},  // x3 <= x2
+                {0, 0, 0, -1},  // x3 >= 0
+                {0, 0, 0,  1}   // x3 <= 12
+            },
+            {0, 1, 3} // Quantified vars
+        );
+
+        auto graph = build_dep_graph(formula);
+
+        Ritch_Conjunction_State state = {.data = {0, 0, -23, 0, 0, 0, 12}, .formula_structure = describe_formula(&formula)};
+
+        Dep_Graph* resulting_graph = &graph;
+        bool anything_rewritten = perform_max_simplification_on_graph(&resulting_graph, &state);
+        CHECK(anything_rewritten);
+
+        // 0)  0 <= x0, 23 <= x1, 5x1 <= x0, x3 <= x2, x3 >= 0, x3 <= 12, x0 ~ x3
+        // 1)  23 <= x1, x3 <= x2, x3 >= 0, x3 <= 12
+        // 2)  x3 <= x2, x3 >= 0, x3 <= 12
+        // 3)  0 <= x2
+        CHECK( resulting_graph->inequations[0].is_satisfied);
+        CHECK( resulting_graph->inequations[1].is_satisfied);
+        CHECK( resulting_graph->inequations[2].is_satisfied);
+        CHECK(!resulting_graph->inequations[3].is_satisfied);
+        CHECK( resulting_graph->inequations[4].is_satisfied);
+        CHECK( resulting_graph->inequations[5].is_satisfied);
+        CHECK( resulting_graph->congruences[0].is_satisfied);
+
+        CHECK(state.get_ineq_val(3) == 0);
+
+        if (anything_rewritten) delete resulting_graph;
+    }
+
+    SUBCASE("Presentation formula") {
+        Atom_Allocator allocator;
+        // m(0) < x < y < z
+        const u64 modulus = 299993;
+        Formula formula = make_formula(
+            allocator,
+            {{{1, 0, -1, 0}, modulus}},// m - y ~ 303
+            {},
+            {
+                {0, 1, -1, 0},   // x - y <= -1
+                {1, 0, 0, -1},   // m - z <= -1
+                {0, 0, 1,  0},   // y <= -1
+                {-1, 0, 0, 0},   // -m <= 0
+                {1, 0, 0,  0},   // m  <= 0
+            },
+            {0, 2}
+        );
+
+        Dep_Graph graph = build_dep_graph(formula);
+        Ritch_Conjunction_State state = {.data = {303, -1, -1, -1, 0, 0}, .formula_structure = describe_formula(&formula)};
+
+        Dep_Graph* res_graph = &graph;
+        bool any_rewrite_happen = perform_max_simplification_on_graph(&res_graph, &state);
+        CHECK(any_rewrite_happen);
+
+        // 0)  x - y <= -1, m - z <= -1, y <= -1, -m <= 0, m <= 0, m - y ~ 303
+        //     |- Instantiate m=0
+        // 0)  x - y <= -1, -z <= -1, y <= -1, -y ~ 303
+        //     |- Instantiate y=-303
+        // 0)  x <= -304, -z <= -1
+        CHECK(!res_graph->inequations[0].is_satisfied);
+        CHECK(!res_graph->inequations[1].is_satisfied);
+        CHECK( res_graph->inequations[2].is_satisfied);
+        CHECK( res_graph->inequations[3].is_satisfied);
+        CHECK( res_graph->inequations[4].is_satisfied);
+        CHECK( res_graph->congruences[0].is_satisfied);
+
+        std::cout << state.data << std::endl;
+        CHECK(state.get_ineq_val(0) == -304);
+        CHECK(state.get_ineq_val(1) == -1);
+
+        if (any_rewrite_happen) delete res_graph;
+    }
+}
+
+
+#if 0
 TEST_CASE("Infinite projection with equation") {
     Atom_Allocator allocator;
 
@@ -952,68 +1298,7 @@ TEST_CASE("Infinite projection with equation") {
     CHECK(result.formula->is_top());
 }
 
-TEST_CASE("Dep. analysis :: simplify (presentation formula)") {
-    Atom_Allocator allocator;
-    // m(0) < x < y < z
-    const u64 modulus = 299993;
-    Formula formula = make_formula(
-        allocator,
-        {{{1, 0, -1, 0}, modulus}},// m - y ~ 303
-        {},
-        {
-            {0, 1, -1, 0},   // x - y <= -1
-            {1, 0, 0, -1},   // m - z <= -1
-            {0, 0, 1,  0},    // y <= -1
-            {-1, 0, 0, 0},   // -m <= 0
-            {1, 0, 0,  0},   // m <= 12
-        },
-        {0, 2}
-    );
-
-    auto graph = build_dep_graph(formula);
-    identify_potential_variables(graph);
-
-    Conjunction_State state({303, -1, -1, -1, 0, 0});
-
-    Dep_Graph* new_graph = simplify_graph(graph, state);
-    CHECK(new_graph != nullptr);
-    // 0)  x - y <= -1, m - z <= -1, y <= -1, -m <= 0, m <= M, m - y ~ 303
-    // 0)  x - y <= -1, -z <= -1, y <= -1, -y ~ 303   (instantiate y=-303)
-    // 0)  x <= -304, -z <= -1
-    CHECK(!new_graph->linear_nodes[0].is_satisfied);
-    CHECK(!new_graph->linear_nodes[1].is_satisfied);
-    CHECK( new_graph->linear_nodes[2].is_satisfied);
-    CHECK( new_graph->linear_nodes[3].is_satisfied);
-    CHECK( new_graph->linear_nodes[4].is_satisfied);
-    CHECK( new_graph->congruence_nodes[0].is_satisfied);
-
-    CHECK(state.constants[1] == -304);
-    CHECK(state.constants[2] == -1);
-
-    Formula_Allocator formula_allocator (&formula);
-
-    auto stateful_formula = convert_graph_into_persistent_formula(*new_graph, formula_allocator, state);
-    auto& simplified_formula = stateful_formula.formula;
-
-    CHECK(simplified_formula.inequations.size == 2);
-    CHECK(simplified_formula.equations.size   == 0);
-    CHECK(simplified_formula.congruences.size == 0);
-    CHECK(stateful_formula.state.constants.size() == 2);
-
-    s64 simplfied_ineq_coefs1[] = {0, 1, 0,  0};
-    s64 simplfied_ineq_coefs2[] = {0, 0, 0, -1};
-    Sized_Array<s64> ineq1_coefs(simplfied_ineq_coefs1, 4);
-    Sized_Array<s64> ineq2_coefs(simplfied_ineq_coefs2, 4);
-    CHECK(simplified_formula.inequations.items[0].coefs == ineq1_coefs);
-    CHECK(simplified_formula.inequations.items[1].coefs == ineq2_coefs);
-
-    CHECK(simplified_formula.dep_graph.vars_not_removed_in_simplification.empty());
-
-    vector<s64> expected_state = {-304, -1};
-    CHECK(stateful_formula.state.constants == expected_state);
-
-    delete new_graph;
-}
+#endif
 
 TEST_CASE("Test Structured_Macrostate insertions (pareto optimality)") {
     Atom_Allocator alloc;
@@ -1068,8 +1353,8 @@ TEST_CASE("Test evaluate_mod_congruence_at_point") {
 
         Formula_Allocator formula_allocator (&formula1);
 
-        CHECK(formula1.dep_graph.congruence_nodes.size() == 1);
-        Congruence_Node& node = formula1.dep_graph.congruence_nodes[0];
+        CHECK(formula1.dep_graph.congruences.size() == 1);
+        Congruence_Node& node = formula1.dep_graph.congruences[0];
 
         Captured_Modulus mod = {.leading_var = 0, .subordinate_var = 1};
         s64 value = eval_mod_congruence_at_point(node, 0, mod, 0);
@@ -1088,8 +1373,8 @@ TEST_CASE("Test evaluate_mod_congruence_at_point") {
 
         Formula_Allocator formula_allocator (&formula1);
 
-        CHECK(formula1.dep_graph.congruence_nodes.size() == 1);
-        Congruence_Node& node = formula1.dep_graph.congruence_nodes[0];
+        CHECK(formula1.dep_graph.congruences.size() == 1);
+        Congruence_Node& node = formula1.dep_graph.congruences[0];
 
         Captured_Modulus mod = {.leading_var = 0, .subordinate_var = 1};
         s64 value = eval_mod_congruence_at_point(node, 0, mod, 0);
@@ -1110,8 +1395,8 @@ TEST_CASE("Test get_point_for_mod_congruence_to_obtain_value") {
 
         Formula_Allocator formula_allocator (&formula1);
 
-        CHECK(formula1.dep_graph.congruence_nodes.size() == 1);
-        Congruence_Node& node = formula1.dep_graph.congruence_nodes[0];
+        CHECK(formula1.dep_graph.congruences.size() == 1);
+        Congruence_Node& node = formula1.dep_graph.congruences[0];
 
         Captured_Modulus mod = {.leading_var = 0, .subordinate_var = 1};
         s64 value = get_point_for_mod_congruence_to_obtain_value(node, 0, mod, 0);
@@ -1128,8 +1413,8 @@ TEST_CASE("Test get_point_for_mod_congruence_to_obtain_value") {
         Formula formula1 = make_formula(alloc, {{{1, -1}, 5}}, {}, {}, {});
         Formula_Allocator formula_allocator (&formula1);
 
-        CHECK(formula1.dep_graph.congruence_nodes.size() == 1);
-        Congruence_Node& node = formula1.dep_graph.congruence_nodes[0];
+        CHECK(formula1.dep_graph.congruences.size() == 1);
+        Congruence_Node& node = formula1.dep_graph.congruences[0];
 
         Captured_Modulus mod = {.leading_var = 0, .subordinate_var = 1};
         s64 value = get_point_for_mod_congruence_to_obtain_value(node, 0, mod, 1);
@@ -1140,21 +1425,10 @@ TEST_CASE("Test get_point_for_mod_congruence_to_obtain_value") {
     }
 }
 
-TEST_CASE("Test linearize_congruence - `y - m ~ 0 && 1 <= m <= 4` (real formula)") {
-    Atom_Allocator alloc;
-    Formula formula1 = make_formula(alloc, {{{1, -1}, 5}}, {}, {{0, -1}, {0, 1}}, {});
-    Conjunction_State state ({0, 1, 4});
 
-    Captured_Modulus captured_mod = {.leading_var = 0, .subordinate_var = 1};
-    Var_Preference preference = {.type = Var_Preference_Type::C_INCREASING, .c = -1};
+TEST_CASE("Test linearize real (benchmark) formula") {
+    //  \\exists y (x - y <= 0 && m - z <= 60_000 && y <= -1 && y - m ~ 0 (mod 299_993) && 1 <= m <= 299_992)`
 
-    Linear_Function fn = linearize_congruence(formula1.dep_graph, state, 0, captured_mod, preference);
-    CHECK(fn.a == 1);
-    CHECK(fn.b == 5);
-    CHECK(fn.valid);
-}
-
-TEST_CASE("Test linearize_formula - `\\exists y (x - y <= 0 && m - z <= 60_000 && y <= -1 && y - m ~ 0 (mod 299_993) && 1 <= m <= 299_992)` (real formula)") {
     Atom_Allocator alloc;
     // Vars: m -> x0, x -> x1, y -> x2, z -> x3
     Formula formula = make_formula(alloc,
@@ -1169,24 +1443,25 @@ TEST_CASE("Test linearize_formula - `\\exists y (x - y <= 0 && m - z <= 60_000 &
                                    },
                                    {});
     Formula_Allocator allocator(&formula);
-    Conjunction_State state ({0 /*congruence*/, 0, 60000, -1, -1, 299992});
+    Ritch_Conjunction_State state = {
+        .data = {0 /*congruence*/, 0, 60000, -1, -1, 299992},
+        .formula_structure = describe_formula(&formula)
+    };
 
-    auto result = linearize_formula(allocator, &formula, state);
-    CHECK(result.has_value());
-    auto linearized_formula = result.value().formula;
-    CHECK(linearized_formula.congruences.size == 0);
-    CHECK(linearized_formula.equations.size == 1);
-    CHECK(linearized_formula.inequations.size == formula.inequations.size);
+    Dep_Graph* dep_graph = &formula.dep_graph;
 
-    auto& equation = linearized_formula.equations.items[0];
+    bool was_linearized = linearize_moduli(&dep_graph, &state);
+    CHECK(was_linearized);
 
-    s64 expected_coef_data[] = {-1, 0, 1, 0};
-    Sized_Array<s64> expected_coefs(expected_coef_data, 4);
-    CHECK(equation.coefs == expected_coefs);
+    CHECK(dep_graph->congruences.size() <= 1);
+    if (dep_graph->congruences.size() == 1) {
+        CHECK(dep_graph->congruences[0].is_satisfied);
+    }
 
-    auto& modified_state = result.value().state;
-    vector<s64> expected_state_data = {-299993 /*equation*/, 0, 60000, -1, -1, 299992};
-    CHECK(modified_state.constants == expected_state_data);
+    CHECK(dep_graph->equations.size() == 1);
+    auto& equation = dep_graph->equations[0];
+    CHECK(equation.coefs == vector<s64>{-1, 0, 1, 0});
+    CHECK(state.data == vector<s64>{0, -299993, 0, 60000, -1, -1, 299992});
 }
 
 TEST_CASE("Test shift_interval") {
@@ -1784,7 +2059,6 @@ TEST_CASE("Construct NFA for atom") {
 // Relation(-1.Var(id=11) +5.Var(id=12) <= 0),
 // Relation(+1.Var(id=11) -5.Var(id=12) <= 4)
 TEST_CASE("Symbol vs eager approach") {
-    return;
     {
         BDDSET vars = make_var_set({1, 2, 3});
         Formula2 formula = {

@@ -218,5 +218,16 @@ std::size_t hash_vector(const std::vector<T>& arr, std::size_t seed) {
 
 const char* bool_into_yes_no(bool it);
 
+inline
+s64 div_bound_by_coef(s64 bound, s64 coef) {
+    s64 d = bound / coef;
+    s64 m = bound % coef; // Needed to tell -3x <= -3 apart from -3x <= -2 so we can make corrections
+    // Negative modulo means:
+    // 1) lower_bound)  (coef < 0 && bound < 0): e.g. -2x <= -3  ->  x >= 3/2   == x >= 1, therefore we must make a correction or
+    // 2) upper_bound)  (coef > 0 && bound < 0): e.g.  2x <= -3  ->  x <= -3/2  == x <= -1, therefore we must make a correction
+    d += (m < 0);
+    return d;
+}
+
 
 #endif
