@@ -3,6 +3,7 @@
 #include "../include/rewrites.h"
 
 #include <cmath>
+#include <optional>
 #include <stdlib.h>
 
 #include <algorithm>
@@ -783,14 +784,9 @@ void add_var_coef_term(std::stringstream& dest, u64 var, s64 coef) {
     }
 }
 
-void insert_pareto_optimal(std::list<Conjunction_State>& queue, const u64 ineq_offset, Conjunction_State& state) {
+optional<list<Conjunction_State>::iterator> find_pareto_optimal_position(std::list<Conjunction_State>& queue, const u64 ineq_offset, Conjunction_State& state) {
     bool should_be_inserted    = true;
     bool insert_position_found = false;
-
-    /*
-     * @Optimize: The bucket is kept in a sorted order, so once we arrive at a state that is lexicographically
-     *            larger, we don't have to iterate further.
-     */
 
     auto bucket_iter = queue.begin();
     list<Conjunction_State>::iterator insert_position;
@@ -812,7 +808,9 @@ void insert_pareto_optimal(std::list<Conjunction_State>& queue, const u64 ineq_o
             }
         }
 
-        // The current successor should be inserted after all <= states were exhaused (insertion sort)
+        // We use the insert_position to track a correct place to put the element in so that the bucket
+        // is kept in sorted order. This does not affect the time complexity of the pareto optimality
+        // but we have a canonical representation of the macrostate.
         if (!is_other_smaller_than_inserted && !insert_position_found) {
             // @Note: The usage of the insert_position iterator should not get invalidated future list erasures, because
             //        the iterator points to a state that is lexicographically larger than the inserted state. As the state
@@ -826,22 +824,22 @@ void insert_pareto_optimal(std::list<Conjunction_State>& queue, const u64 ineq_o
             ++bucket_iter;
             continue;
         }
-        else {
-            if (is_larger) {
-                queue.erase(bucket_iter++);
-            } else {
-                // Either the inserted atom is smaller (is_smaller = true), or they are the same (is_smaller = is_larger = false)
-                should_be_inserted = false;
-                break;
-            }
+        else if (is_larger) {
+            queue.erase(bucket_iter++);
         }
-
+        else {
+            // Either the inserted atom is smaller (is_smaller = true), or they are the same (is_smaller = is_larger = false)
+            should_be_inserted = false;
+            break;
+        }
     }
 
     if (should_be_inserted) {
         if (!insert_position_found) insert_position = queue.end();
-        queue.insert(insert_position, state);
+
+        return std::make_optional(insert_position);
     }
+    return std::nullopt;
 }
 
 void insert_into_post_if_valuable2(Intermediate_Macrostate& post, const Formula* formula, Conjunction_State& successor) {
@@ -857,7 +855,10 @@ void insert_into_post_if_valuable2(Intermediate_Macrostate& post, const Formula*
     //            which is redundant since we already have this information in post.
 
     list<Conjunction_State>& prefix_bucket = formula_bucket[prefix];
-    insert_pareto_optimal(prefix_bucket, prefix_size, successor);
+    auto insert_post = find_pareto_optimal_position(prefix_bucket, prefix_size, successor);
+    if (insert_post.has_value()) {
+        prefix_bucket.insert(insert_post.value(), successor);
+    }
 }
 
 Finalized_Macrostate finalize_macrostate(Formula_Allocator& alloc, Intermediate_Macrostate& intermediate_macrostate) {
@@ -939,6 +940,16 @@ Finalized_Macrostate make_trivial_macrostate(Formula_Pool& pool, bool polarity) 
 }
 
 
+vector<s64> extract_prefix(const Formula* formula, const vector<s64>& state) {
+    u64 prefix_size = formula->congruences.size + formula->equations.size;
+    vector<s64> prefix(prefix_size);
+    for (u64 i = 0; i < prefix_size; i++) {
+        prefix[i] = state[i];
+    }
+    return prefix;
+}
+
+
 void explore_macrostate(NFA& constructed_nfa,
                         Finalized_Macrostate& macrostate,
                         Alphabet_Iterator& alphabet_iter,
@@ -977,14 +988,24 @@ void explore_macrostate(NFA& constructed_nfa,
                     if (post_formula->is_top()) {
                         is_post_top = true;
                         break;
-                    } else if (!post_formula->is_bottom()) {
-                        insert_into_post_if_valuable2(post, post_formula, successor.state);
                     }
+
+                    if (post_formula->is_bottom()) continue;
+
+                    // Check whether the state is of any value
+                    Prefix_Table& formula_buckets = post.formulae[post_formula];
+                    vector<s64> prefix = extract_prefix(post_formula, successor.state.constants);
+                    auto& bucket = formula_buckets[prefix];
+                    u64 prefix_size = post_formula->equations.size + post_formula->congruences.size;
+
+                    auto insert_pos = find_pareto_optimal_position(bucket, prefix_size, successor.state);
+                    if (!insert_pos.has_value()) continue;
+
+                    bucket.insert(insert_pos.value(), successor.state);
                 }
 
                 if (is_post_top) break;
             }
-
 
 #if DEBUG_RUNTIME
             auto end = std::chrono::system_clock::now();
@@ -1396,8 +1417,11 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
     PRINT_DEBUG("States: " << nfa.states);
     PRINT_DEBUG("Initial states: " << nfa.initial_states);
     PRINT_DEBUG("Final states: " << nfa.final_states);
+
+    std::cout << "Known states:\n";
     for (auto& [macrostate, handle]: constr_state.known_macrostates) {
-        PRINT_DEBUG(handle << "::" << macrostate);
+        std::cout << handle << "::" << macrostate << std::endl;
+        // PRINT_DEBUG(handle << "::" << macrostate);
     }
 
     if (!formula->bound_vars.empty()) {
