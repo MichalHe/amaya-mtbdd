@@ -293,27 +293,38 @@ bool linearize_moduli(Dep_Graph** graph_ptr, Ritch_Conjunction_State* state) {
     return linearizations_performed;
 }
 
-bool get_constant_value_implied_by_bounds(const Dep_Graph& graph, u64 var, Ritch_Conjunction_State& state, s64* val) {
+enum class Bounds_Implication_Result : u8 {
+    NONE          = 0x0,
+    VALUE         = 0x1,
+    CONTRADICTION = 0x2,
+};
+
+Bounds_Implication_Result get_constant_value_implied_by_bounds(const Dep_Graph& graph, u64 var, Ritch_Conjunction_State& state, s64* val) {
     auto& var_node = graph.var_nodes[var];
     if (!var_node.has_hard_lower_bound() || !var_node.has_hard_upper_bound()) {
-        return false;
+        return Bounds_Implication_Result::NONE;
     }
 
     u64 upper_bound_i      = var_node.hard_upper_bound.atom_i;
     auto& upper_bound_node = graph.inequations[upper_bound_i];
-    if (upper_bound_node.is_satisfied) return false;
+    if (upper_bound_node.is_satisfied) return Bounds_Implication_Result::NONE;
     s64 upper_bound_val    = div_bound_by_coef(state.get_ineq_val(upper_bound_i), upper_bound_node.coefs[var]);
 
     u64 lower_bound_i      = var_node.hard_lower_bound.atom_i;
     auto& lower_bound_node = graph.inequations[lower_bound_i];
-    if (lower_bound_node.is_satisfied) return false;
+    if (lower_bound_node.is_satisfied) return Bounds_Implication_Result::NONE;
     s64 lower_bound_val    = div_bound_by_coef(state.get_ineq_val(lower_bound_i), lower_bound_node.coefs[var]);
+
+    if (lower_bound_val > upper_bound_val) {
+        return Bounds_Implication_Result::CONTRADICTION;
+    }
 
     if (upper_bound_val == lower_bound_val) {
         *val = upper_bound_val;
-        return true;
+        return Bounds_Implication_Result::VALUE;
     }
-    return false;
+
+    return Bounds_Implication_Result::NONE;
 }
 
 
@@ -379,7 +390,7 @@ void set_var_value_in_ineq(
 
     } else if (ineq.vars.size() == 1) { // The atom has became a new bound for the remaining variable
         u64 last_var      = ineq.vars[0];
-        u64 last_var_coef = ineq.coefs[last_var];
+        s64 last_var_coef = ineq.coefs[last_var];
         auto& var_node    = graph->var_nodes[last_var];
 
         if (last_var_coef < 0) { // The variable has a new lower bound
@@ -407,9 +418,9 @@ void set_var_value_in_ineq(
                                                       old_bound_node.coefs[last_var]);
                 s64 new_bound_val = div_bound_by_coef(state->get_ineq_val(ineq_idx),
                                                       last_var_coef);
-                var_node.hard_lower_bound.atom_i = old_bound_val < new_bound_val ? old_bound : ineq_idx;
+                var_node.hard_upper_bound.atom_i = old_bound_val < new_bound_val ? old_bound : ineq_idx;
             } else {
-                var_node.hard_lower_bound.atom_i = ineq_idx;
+                var_node.hard_upper_bound.atom_i = ineq_idx;
             }
         }
     }
@@ -466,6 +477,7 @@ bool substitute_vars_with_known_value(Dep_Graph** graph_ptr, Ritch_Conjunction_S
     bool any_value_known = false;
     for (s64 var = 0; var < work_graph->var_nodes.size(); var++) {
         if (work_graph->is_var_protected(var)) continue;
+        if (work_graph->is_false) break;
 
         PRINT_DEBUG("-> Trying variable x" << var);
         auto& node = work_graph->var_nodes[var];
@@ -499,12 +511,22 @@ bool substitute_vars_with_known_value(Dep_Graph** graph_ptr, Ritch_Conjunction_S
         if (was_substituted_due_to_equation) continue;
 
         s64 var_value = 0;
-        bool has_known_value = get_constant_value_implied_by_bounds(*work_graph, var, *state, &var_value);
-        if (has_known_value) {
-            PRINT_DEBUG("-> Value of x" << var << " is known to be " << var_value << " (due to ineqs)");
-            work_graph = ensure_writable_graph(graph_ptr);
-            substitute_var_for_value(work_graph, state, var, var_value);
-            any_value_known = true;
+        auto bounds_implication_result = get_constant_value_implied_by_bounds(*work_graph, var, *state, &var_value);
+        switch (bounds_implication_result) {
+            case Bounds_Implication_Result::CONTRADICTION:
+                PRINT_DEBUG("-> Bounds for x" << var << " imply a contradiction");
+                work_graph = ensure_writable_graph(graph_ptr);
+                work_graph->is_false = true;
+                any_value_known = true;
+                break;
+            case Bounds_Implication_Result::VALUE:
+                PRINT_DEBUG("-> Value of x" << var << " is known to be " << var_value << " (due to ineqs)");
+                work_graph = ensure_writable_graph(graph_ptr);
+                substitute_var_for_value(work_graph, state, var, var_value);
+                any_value_known = true;
+                break;
+            default:
+                break;
         }
     }
 
@@ -744,7 +766,6 @@ void normalize_coefficients(Dep_Graph* graph, Ritch_Conjunction_State* state) {
 }
 
 
-
 bool perform_max_simplification_on_graph(Dep_Graph** graph, Ritch_Conjunction_State* state) {
     PRINT_DEBUG("Performing maximal formula simplification.");
 
@@ -755,12 +776,15 @@ bool perform_max_simplification_on_graph(Dep_Graph** graph, Ritch_Conjunction_St
         was_any_rewrite_in_this_iter = false;
 
         was_any_rewrite_in_this_iter |= substitute_vars_with_known_value(graph, state);
+        if ((*graph)->is_false) break;
         was_any_rewrite_in_this_iter |= instantiate_quantifs_with_inf(graph, state);
         was_any_rewrite_in_this_iter |= instantiate_quantifs_with_c_monotonicity(graph, state);
         was_any_rewrite_in_this_iter |= linearize_moduli(graph, state);
 
         was_any_rewrite_performed |= was_any_rewrite_in_this_iter;
     }
+
+    if (((*graph)->is_false)) return was_any_rewrite_performed;
 
     if (was_any_rewrite_performed) {
         normalize_coefficients(*graph, state);
@@ -796,15 +820,16 @@ bool perform_watched_rewrites(Dep_Graph** graph, Conjunction_State* state) {
 
 
 bool detect_contradictions(const Dep_Graph* graph, Conjunction_State* state) {
-    for (auto var_node: graph->var_nodes) {
-        if (!var_node.has_hard_lower_bound() || !var_node.has_hard_upper_bound()) continue;
+    u64 offset = graph->congruences.size() + graph->equations.size();
 
-        // x >= -A   x <= B   ... is A > B?
-        u64 offset = graph->congruences.size() + graph->equations.size();
-        auto lower_bound_val = -state->constants[offset + var_node.hard_lower_bound.atom_i]; // -A
-        auto upper_bound_val = state->constants[offset + var_node.hard_upper_bound.atom_i];  // B
+    for (auto [pos_idx, neg_idx]: graph->complementary_pairs) {
+        // Negative: -a.x <= A    <---> a.x >= -A
+        // Positive   a.x <= B    <---> a.x <=  B
+        // if -A > B, then contradiction
+        auto pos_val = state->constants[offset + pos_idx]; // B
+        auto neg_val = state->constants[offset + neg_idx]; // A
 
-        if (lower_bound_val > upper_bound_val) return true;
+        if (-neg_val > pos_val) return true;
     }
     return false;
 }

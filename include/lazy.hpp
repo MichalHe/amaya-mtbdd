@@ -837,10 +837,6 @@ Sized_Array<T> make_sized_array(const vector<T>& items) {
 // ----- MODULO LINEARIZATION -----
 
 
-bool do_any_hard_bounds_imply_contradiction(const Dep_Graph& graph, const Conjunction_State& state);
-
-u64 perfect_bit_hash(u64 symbol, const vector<u64>& interestring_vars);
-
 struct Atom {
     unordered_map<s64, sylvan::MTBDD> post_cache;
 

@@ -459,6 +459,27 @@ Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj) {
     graph.quantified_vars = conj.bound_vars;
     graph.vars_not_removed_in_simplification = conj.bound_vars;
 
+    {
+        unordered_map<vector<s64>, s32> complementary_ineqs;
+        for (s32 ineq_idx = 0; ineq_idx < graph.inequations.size(); ineq_idx++) {
+            auto& ineq = graph.inequations[ineq_idx];
+            auto complement_pos = complementary_ineqs.find(ineq.coefs);
+            if (complement_pos != complementary_ineqs.end()) {
+                auto complement_idx = complement_pos->second;
+
+                if (complement_idx < ineq_idx) {
+                    graph.complementary_pairs.push_back({complement_idx, ineq_idx});
+                } else {
+                    graph.complementary_pairs.push_back({ineq_idx, complement_idx});
+                }
+            } else {
+                vector<s64> neg_coefs = ineq.coefs;
+                for (auto& coef: neg_coefs) coef = -coef;
+                complementary_ineqs[neg_coefs] = ineq_idx;
+            }
+        }
+    }
+
     return graph;
 }
 
@@ -1278,6 +1299,8 @@ Formula_Structure describe_formula(const Dep_Graph* graph) {
 }
 
 
+u64 called_cnt = 0;
+
 NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State& init_state, sylvan::BDDSET bdd_vars, Formula_Pool& formula_pool) {
     vector<Finalized_Macrostate> work_queue;
     Lazy_Construction_State constr_state = {.formula_pool = formula_pool, .output_queue = work_queue};
@@ -1298,6 +1321,8 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
 
     // Try to simplify the formula as much as possible
     {
+        called_cnt += 1;
+
         Dep_Graph* graph_to_rewrite = const_cast<Dep_Graph*>(&formula->dep_graph);
         PRINT_DEBUG("Initial simplification of:" << *formula);
         PRINT_DEBUG(" -> State:" << init_state.constants);
@@ -1322,6 +1347,8 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
             delete graph_to_rewrite;
         }
         PRINT_DEBUG("Result:" << *formula);
+
+        if (called_cnt == 2) assert(false);
     }
 
     if (formula->is_top()) {
