@@ -900,7 +900,7 @@ TEST_CASE("substitute vars with known vars") {
         CHECK(was_any_substitution_performed);
 
         CHECK( new_graph->equations[0].is_satisfied);
-        CHECK(!new_graph->inequations[1].is_satisfied);
+        CHECK(!new_graph->inequations[0].is_satisfied);
 
         if (new_graph != &dep_graph) delete new_graph;
     }
@@ -2114,7 +2114,61 @@ TEST_CASE("Symbol vs eager approach") {
         std::chrono::duration<double> elapsed_seconds = end - start;
         std::cout << "Old implementation took: " << elapsed_seconds.count() << std::endl;
     }
+}
 
+TEST_CASE("Watched formula rewrite") {
+    SUBCASE("Values matched") {
+        // Input :: -x <= 0 && x <= 0 && x - y <=1
+        // Output:: -y <= 1
+        Watched_Position_Pair watched_positions = {
+            .position0 = 0,
+            .position1 = 1,
+            .required_value0 = 0,
+            .required_value1 = 0,
+        };
+        vector<Var_Node> var_nodes = {
+            // x0 = x
+            {
+                .upper_bounds = {1, 2},
+                .lower_bounds = {0},
+                .equations = {},
+                .congruences = {},
+                .hard_upper_bound = {.atom_i = 1},
+                .hard_lower_bound = {.atom_i = 0},
+            },
+            // x1 = y
+            {.upper_bounds = {}, .lower_bounds = {2}, .equations = {}, .congruences = {}},
+        };
+        Dep_Graph dep_graph = {
+            .quantified_vars = {},
+            .watched_positions = {watched_positions},
+            .var_nodes = var_nodes,
+            .equations = {},
+            .inequations = {
+                {.coefs = {-1,  0}, .vars = {0}},
+                {.coefs = { 1,  0}, .vars = {0}},
+                {.coefs = { 1, -1}, .vars = {0, 1}},
+            },
+            .congruences = {},
+        };
+        Formula_Structure structure = {
+            .eq_cnt = 0,
+            .ineq_cnt = 3,
+            .congruence_cnt = 0,
+        };
+        Conjunction_State state ({0, 0, 1});
+
+        Dep_Graph* res_graph = &dep_graph;
+        bool anything_rewritten = perform_watched_rewrites(&res_graph, &state);
+
+        CHECK(anything_rewritten);
+
+        CHECK( res_graph->inequations[0].is_satisfied);
+        CHECK( res_graph->inequations[1].is_satisfied);
+        CHECK(!res_graph->inequations[2].is_satisfied);
+
+        if (res_graph != &dep_graph) delete res_graph;
+    }
 }
 
 int main(int argc, char* argv[]) {

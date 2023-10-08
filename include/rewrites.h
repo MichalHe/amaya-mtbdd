@@ -50,3 +50,7 @@ bool substitute_vars_with_known_value(Dep_Graph** graph_ptr, Ritch_Conjunction_S
 bool instantiate_quantifs_with_inf(Dep_Graph** graph_ptr, Ritch_Conjunction_State* state);
 bool instantiate_quantifs_with_c_monotonicity(Dep_Graph** graph_ptr, Ritch_Conjunction_State* state);
 bool perform_max_simplification_on_graph(Dep_Graph** graph, Ritch_Conjunction_State* state);
+bool perform_watched_rewrites(Dep_Graph** graph, Conjunction_State* state);
+
+// Returns True if the graph contains a contradiction
+bool detect_contradictions(const Dep_Graph* graph_ptr, Conjunction_State* state);

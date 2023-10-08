@@ -360,6 +360,11 @@ Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj) {
     graph.inequations.reserve(conj.inequations.size);
     graph.congruences.reserve(conj.congruences.size);
 
+    for (u64 var : conj.bound_vars) {
+        graph.mark_var_as_free(var);
+    }
+    graph.free_vars = ~graph.free_vars;
+
     for (s32 eq_idx = 0; eq_idx < conj.equations.size; eq_idx++) {
         auto& eq = conj.equations.items[eq_idx];
         vector<s64> coefs(eq.coefs.begin(), eq.coefs.end());
@@ -428,6 +433,26 @@ Dep_Graph build_dep_graph(const Quantified_Atom_Conjunction& conj) {
             Hard_Bound bound_info = {.atom_i = ineq_idx};
             if (coef > 0) var_node.hard_upper_bound = bound_info;
             else          var_node.hard_lower_bound = bound_info;
+        }
+    }
+
+    s32 offset = graph.congruences.size() + graph.equations.size();
+    for (u64 var = 0; var < graph.var_nodes.size(); var++) {
+        auto& var_node = graph.var_nodes[var];
+        if (var_node.has_hard_lower_bound() && var_node.has_hard_upper_bound()) {
+            auto& lower_bound = graph.inequations[var_node.hard_lower_bound.atom_i];
+            auto& upper_bound = graph.inequations[var_node.hard_upper_bound.atom_i];
+            assert(abs(lower_bound.coefs[var]) == 1);
+
+            s32 lower_bound_pos = offset + var_node.hard_lower_bound.atom_i;
+            s32 upper_bound_pos = offset + var_node.hard_upper_bound.atom_i;
+            Watched_Position_Pair watched_positions = {
+                .position0 = lower_bound_pos,
+                .position1 = upper_bound_pos,
+                .required_value0 = 0,
+                .required_value1 = 0,
+            };
+            graph.watched_positions.push_back(watched_positions);
         }
     }
 
@@ -831,6 +856,44 @@ vector<s64> extract_prefix(const Formula* formula, const vector<s64>& state) {
     return prefix;
 }
 
+const Quantified_Atom_Conjunction* convert_graph_and_commit_if_unique(
+    Dep_Graph* graph,
+    Formula_Pool* pool,
+    Conjunction_State* state)
+{
+    Formula_Structure structure = describe_formula(graph);
+
+    // @Optimize: This is inefficient, maybe it would be better if the ritch conjunction
+    //            state had just a pointer to where the data is?
+    Ritch_Conjunction_State ritch_state = {.data = state->constants, .formula_structure = structure};
+
+    auto new_stateful_formula = convert_graph_into_tmp_formula(*graph, pool->allocator, ritch_state);
+    const auto& [formula_ptr, was_formula_new] = pool->store_formula_with_info(new_stateful_formula.formula);
+    if (was_formula_new) {
+        // The formula that was inserted has pointers referring to the temporary
+        // storage We have to replace the formula pointers with the ones
+        // pointing to a commited memory.
+        Formula commited_formula = pool->allocator.commit_tmp_space();
+
+        // We are only changing pointers to point to a different memory with the
+        // exact same contents. Since we are hashing the pointer contents and
+        // not pointers, temporary dropping const should be ok.
+        Formula* modif_formula_ptr = const_cast<Formula*>(formula_ptr);
+        modif_formula_ptr->congruences.items = commited_formula.congruences.items;
+        modif_formula_ptr->equations.items   = commited_formula.equations.items;
+        modif_formula_ptr->inequations.items = commited_formula.inequations.items;
+
+        modif_formula_ptr->dep_graph = build_dep_graph(*modif_formula_ptr);
+    } else {
+       pool->allocator.drop_tmp();
+    }
+
+    // Conversion into a temporary formula filtered out state items that belonged to satisfied atoms
+    *state = new_stateful_formula.state;
+
+    return formula_ptr;
+}
+
 
 void explore_macrostate(NFA& constructed_nfa,
                         Finalized_Macrostate& macrostate,
@@ -846,6 +909,7 @@ void explore_macrostate(NFA& constructed_nfa,
         u64 transition_symbol = alphabet_iter.init_quantif();  // The quantified bits will be masked away, so it is sufficient to take the first one
 
         bool is_post_top = false;
+        bool dbg_was_rewritten = false;
         for (u64 symbol = transition_symbol; alphabet_iter.has_more_quantif_symbols; symbol = alphabet_iter.next_symbol()) {
 #if DEBUG_RUNTIME
             auto start = std::chrono::system_clock::now();
@@ -862,6 +926,9 @@ void explore_macrostate(NFA& constructed_nfa,
                     if (!maybe_successor.has_value()) continue;
 
                     auto successor = maybe_successor.value();
+
+                    bool contradicts = detect_contradictions(&successor.formula->dep_graph, &successor.state);
+                    if (contradicts) continue;
 
                     // The old formula needs to be used to determine whether the post is accepting
                     post.is_accepting |= accepts_last_symbol(formula, current_origin_state_data, symbol);
@@ -883,7 +950,19 @@ void explore_macrostate(NFA& constructed_nfa,
                     auto insert_pos = find_pareto_optimal_position(bucket, prefix_size, successor.state);
                     if (!insert_pos.has_value()) continue;
 
-                    bucket.insert(insert_pos.value(), successor.state);
+                    // It is valuable, try rewriting the post formula
+                    Dep_Graph* work_graph = const_cast<Dep_Graph*> (&formula->dep_graph);
+                    bool was_rewritten = perform_watched_rewrites(&work_graph, &successor.state);
+                    if (!was_rewritten) {
+                        bucket.insert(insert_pos.value(), successor.state);
+                        continue;
+                    }
+
+                    // Store the formula if we have not seen it before
+                    post_formula = convert_graph_and_commit_if_unique(work_graph, &constr_state.formula_pool, &successor.state);
+                    insert_into_post_if_valuable2(post, post_formula, successor.state);
+                    dbg_was_rewritten = true;
+                    delete work_graph;
                 }
 
                 if (is_post_top) break;
@@ -909,6 +988,10 @@ void explore_macrostate(NFA& constructed_nfa,
         }
 
         Finalized_Macrostate finalized_post = finalize_macrostate(constr_state.formula_pool.allocator, post);
+
+        if (dbg_was_rewritten) {
+            // std::cout << finalized_post << std::endl;
+        }
 
         // Assign a unique integer to every state
         finalized_post.handle = constr_state.known_macrostates.size();
@@ -1186,6 +1269,14 @@ Formula_Structure describe_formula(const Formula* formula) {
     };
 }
 
+Formula_Structure describe_formula(const Dep_Graph* graph) {
+    return {
+        .eq_cnt         = static_cast<s32>(graph->equations.size()),
+        .ineq_cnt       = static_cast<s32>(graph->inequations.size()),
+        .congruence_cnt = static_cast<s32>(graph->congruences.size()),
+    };
+}
+
 
 NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State& init_state, sylvan::BDDSET bdd_vars, Formula_Pool& formula_pool) {
     vector<Finalized_Macrostate> work_queue;
@@ -1208,18 +1299,29 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
     // Try to simplify the formula as much as possible
     {
         Dep_Graph* graph_to_rewrite = const_cast<Dep_Graph*>(&formula->dep_graph);
+        PRINT_DEBUG("Initial simplification of:" << *formula);
+        PRINT_DEBUG(" -> State:" << init_state.constants);
         Ritch_Conjunction_State state = {.data = init_state.constants, .formula_structure = describe_formula(formula)};
         bool was_anything_rewritten = perform_max_simplification_on_graph(&graph_to_rewrite, &state);
-
         if (was_anything_rewritten) {
             if (graph_to_rewrite->is_false) {
                 return make_trivial_rejecting_nfa(bdd_vars, formula->var_count);
             }
             auto formula_state_pair = convert_graph_into_persistent_formula(*graph_to_rewrite, formula_pool.allocator, state);
             init_state = formula_state_pair.state;
+
+            // If an quantifier has been instantiated, it still means that we need to iterate
+            // over the entire alphabet that includes the removed variable. This is because of
+            // how we explore_macrostate - we iterate over a fixed alphabet. We would have to
+            // construct a new alphabet iterator for the remaining variables, which is problematic
+            // if one macrostate formula still has the original variable that was removed in the other
+            // parts
+            formula_state_pair.formula.bound_vars = formula->bound_vars;
+
             formula    = formula_pool.store_formula(formula_state_pair.formula);
             delete graph_to_rewrite;
         }
+        PRINT_DEBUG("Result:" << *formula);
     }
 
     if (formula->is_top()) {
@@ -1300,9 +1402,8 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
     PRINT_DEBUG("Initial states: " << nfa.initial_states);
     PRINT_DEBUG("Final states: " << nfa.final_states);
 
-    std::cout << "Known states:\n";
     for (auto& [macrostate, handle]: constr_state.known_macrostates) {
-        std::cout << handle << "::" << macrostate << std::endl;
+        // std::cout << handle << "::" << macrostate << std::endl;
         // PRINT_DEBUG(handle << "::" << macrostate);
     }
 

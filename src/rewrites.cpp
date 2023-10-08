@@ -2,6 +2,8 @@
 #include "../include/base.hpp"
 #include "../include/rewrites.h"
 
+#include <numeric>
+
 struct Linear_Function { // y = a*x + b
     s64 a, b;
     bool valid = true;
@@ -159,7 +161,11 @@ Linear_Function linearize_congruence(
         modulus_values.low  = state.get_ineq_val(mod_var_node.hard_lower_bound.atom_i);
     }
 
-    PRINTF_DEBUG("The interval of the modulo variable is [%lu, %lu]\n", modulus_values.low, modulus_values.high);
+    PRINT_DEBUG("Linearizing y=x" << captured_mod.leading_var <<
+                " subordinate m=x" << captured_mod.subordinate_var);
+
+    PRINT_DEBUG("The interval of the modulo variable x" << captured_mod.subordinate_var <<
+                " is [" << modulus_values.low << "," << modulus_values.high << "]");
 
     s64 modulus = combine_moduli(congruence.modulus_2pow, congruence.modulus_odd);
 
@@ -320,6 +326,13 @@ void set_var_value_in_eq(
 {
     auto& eq = graph->equations[eq_idx];
 
+    bool var_present = eq.coefs[var] != 0;
+    if (!var_present) return;
+
+    if (eq.vars.size() == 1 && graph->is_var_protected(var)) {
+        return;
+    }
+
     s64 current_val = state->get_eq_val(eq_idx);
     state->set_eq_val(eq_idx, current_val - eq.coefs[var] * val);
 
@@ -353,6 +366,10 @@ void set_var_value_in_ineq(
 
     bool is_var_present = ineq.coefs[var] != 0;
     if (!is_var_present) return;
+
+    if (ineq.vars.size() == 1 && graph->is_var_protected(var)) {
+        return;
+    }
 
     ineq.coefs[var] = 0;
     vector_remove(ineq.vars, var);
@@ -407,6 +424,10 @@ s64 normalize_reminder(s64 reminder, s64 modulus) {
 void substitute_var_for_value(Dep_Graph* graph, Ritch_Conjunction_State* state, u64 var, s64 val) {
     auto& var_node = graph->var_nodes[var];
 
+    if (graph->is_var_free(var)) {
+        graph->mark_var_as_protected(var);
+    }
+
     for (u64 ineq_idx = 0; ineq_idx < graph->inequations.size(); ineq_idx++) {
         set_var_value_in_ineq(graph, state, ineq_idx, var, val);
     }
@@ -430,24 +451,33 @@ void substitute_var_for_value(Dep_Graph* graph, Ritch_Conjunction_State* state, 
         if (congruence.vars.empty()) congruence.is_satisfied = true;
     }
 
+    graph->var_nodes[var].upper_bounds.clear();
+    graph->var_nodes[var].lower_bounds.clear();
+    graph->var_nodes[var].hard_lower_bound.atom_i = Var_Node::TOMBSTONE;
+    graph->var_nodes[var].hard_upper_bound.atom_i = Var_Node::TOMBSTONE;
+
     vector_remove(graph->quantified_vars, var);
 }
 
 bool substitute_vars_with_known_value(Dep_Graph** graph_ptr, Ritch_Conjunction_State* state) {
+    PRINT_DEBUG("Trying to substitute variables with known value.");
     Dep_Graph* work_graph = *graph_ptr;
 
     bool any_value_known = false;
     for (s64 var = 0; var < work_graph->var_nodes.size(); var++) {
+        if (work_graph->is_var_protected(var)) continue;
+
+        PRINT_DEBUG("-> Trying variable x" << var);
         auto& node = work_graph->var_nodes[var];
 
+        bool was_substituted_due_to_equation = false;
         for (auto eq_idx: node.equations) {
             if (eq_idx == Var_Node::TOMBSTONE) continue;
             auto& eq = work_graph->equations[eq_idx];
 
             if (eq.is_satisfied) continue;
 
-            if (eq.vars.size() == 1) {
-
+            if (eq.vars.size() == 1 && eq.coefs[var] != 0) {
                 work_graph = ensure_writable_graph(graph_ptr);
 
                 s64 val = state->get_eq_val(eq_idx);
@@ -460,18 +490,25 @@ bool substitute_vars_with_known_value(Dep_Graph** graph_ptr, Ritch_Conjunction_S
                 val /= coef;
                 substitute_var_for_value(work_graph, state, var, val);
                 any_value_known = true;
+                was_substituted_due_to_equation = true;
+
+                PRINT_DEBUG("-> Value of x" << var << " is known to be " << val << "(due to eq)");
             }
         }
+
+        if (was_substituted_due_to_equation) continue;
 
         s64 var_value = 0;
         bool has_known_value = get_constant_value_implied_by_bounds(*work_graph, var, *state, &var_value);
         if (has_known_value) {
+            PRINT_DEBUG("-> Value of x" << var << " is known to be " << var_value << " (due to ineqs)");
             work_graph = ensure_writable_graph(graph_ptr);
             substitute_var_for_value(work_graph, state, var, var_value);
             any_value_known = true;
         }
     }
 
+    PRINT_DEBUG("Any variable substituted? " << bool_into_yes_no(any_value_known));
     return any_value_known;
 }
 
@@ -505,12 +542,24 @@ bool instantiate_quantifs_with_inf(Dep_Graph** graph_ptr, Ritch_Conjunction_Stat
 
     bool any_quantif_instantiated = false;
 
+    PRINT_DEBUG("Trying to remove quantifiers on unbound vars.");
     for (auto var: work_graph->quantified_vars) {
         auto var_node = work_graph->var_nodes[var];
         bool can_be_neg_inf = var_node.lower_bounds.empty();
         bool can_be_pos_inf = var_node.upper_bounds.empty();
         bool is_not_in_eq = var_node.equations.empty();
-        if (is_not_in_eq && (can_be_neg_inf || can_be_pos_inf)) {
+        bool all_congruences_have_granularity_1 = true;
+        for (auto congr_i: var_node.congruences) {
+            auto& congr = work_graph->congruences[congr_i];
+            auto coef = congr.coefs[var];
+            if (abs(coef) > 1) {
+                all_congruences_have_granularity_1 = false;
+                break;
+            }
+        }
+
+        bool can_be_inst = all_congruences_have_granularity_1 && is_not_in_eq && (can_be_neg_inf || can_be_pos_inf);
+        if (can_be_inst) {
 
             work_graph = ensure_writable_graph(graph_ptr);
 
@@ -522,6 +571,7 @@ bool instantiate_quantifs_with_inf(Dep_Graph** graph_ptr, Ritch_Conjunction_Stat
         }
     }
 
+    PRINT_DEBUG("Any quantifier instantiated? " << bool_into_yes_no(any_quantif_instantiated));
     return any_quantif_instantiated;
 }
 
@@ -624,6 +674,7 @@ bool get_value_close_to_bounds(Dep_Graph* graph, Ritch_Conjunction_State* state,
 }
 
 bool instantiate_quantifs_with_c_monotonicity(Dep_Graph** graph_ptr, Ritch_Conjunction_State* state) {
+    PRINT_DEBUG("Instantiating quantifiers with c-monotonicity.");
     Dep_Graph* work_graph = *graph_ptr;
     bool was_any_quantif_instantiated = false;
     for (auto var: work_graph->quantified_vars) {
@@ -634,7 +685,7 @@ bool instantiate_quantifs_with_c_monotonicity(Dep_Graph** graph_ptr, Ritch_Conju
         bool optimal_value_known = get_value_close_to_bounds(work_graph, state, var, &optimal_var_value);
 
         if (optimal_value_known) {
-            PRINT_DEBUG("Simplifying graph - instantiating var: x" << potential_var << " with value " << inst_val);
+            PRINT_DEBUG("Simplifying graph - instantiating var: x" << var << " with value " << optimal_var_value);
 
             work_graph = ensure_writable_graph(graph_ptr);
 
@@ -644,15 +695,58 @@ bool instantiate_quantifs_with_c_monotonicity(Dep_Graph** graph_ptr, Ritch_Conju
             was_any_quantif_instantiated = true;
         }
     }
+    PRINT_DEBUG("Any quantifier instantiated? " << bool_into_yes_no(was_any_quantif_instantiated));
 
     return was_any_quantif_instantiated;
 }
 
 
+s64 calc_gcd(vector<u64>& use_indices, vector<s64>& coefs) {
+    if (use_indices.empty()) return 1;
+
+    s64 gcd = abs(coefs[use_indices[0]]);
+    for (auto index: use_indices) {
+        s64 coef = coefs[index];
+        gcd = std::gcd(coef, gcd);
+    }
+    return gcd;
+}
+
+
+void normalize_coefficients(Dep_Graph* graph, Ritch_Conjunction_State* state) {
+    for (s32 eq_idx = 0; eq_idx < graph->equations.size(); eq_idx++) {
+        auto& eq = graph->equations[eq_idx];
+        if (eq.is_satisfied) continue;
+
+        s64 gcd = calc_gcd(eq.vars, eq.coefs);
+        s64 eq_rhs = state->get_eq_val(eq_idx);
+        if (eq_rhs % gcd) {
+            graph->is_false = true;
+            return;
+        }
+
+        for (auto& coef: eq.coefs) coef /= gcd;
+        state->set_eq_val(eq_idx, eq_rhs/gcd);
+    }
+
+    for (s32 ineq_idx = 0; ineq_idx < graph->inequations.size(); ineq_idx++) {
+        auto& ineq = graph->inequations[ineq_idx];
+        if (ineq.is_satisfied) continue;
+
+        s64 gcd = calc_gcd(ineq.vars, ineq.coefs);
+        if (gcd == 1) continue;
+
+        for (auto& coef: ineq.coefs) coef /= gcd;
+
+        s64 ineq_rhs = state->get_ineq_val(ineq_idx);
+        state->set_ineq_val(ineq_idx, div_bound_by_coef(ineq_rhs, gcd));
+    }
+}
+
+
+
 bool perform_max_simplification_on_graph(Dep_Graph** graph, Ritch_Conjunction_State* state) {
     PRINT_DEBUG("Performing maximal formula simplification.");
-    PRINT_DEBUG("Initial formula: " << *formula);
-    PRINT_DEBUG("Initial state  : " << init_state);
 
     bool was_any_rewrite_performed    = false;
     bool was_any_rewrite_in_this_iter = true;
@@ -668,5 +762,49 @@ bool perform_max_simplification_on_graph(Dep_Graph** graph, Ritch_Conjunction_St
         was_any_rewrite_performed |= was_any_rewrite_in_this_iter;
     }
 
+    if (was_any_rewrite_performed) {
+        normalize_coefficients(*graph, state);
+    }
+
     return was_any_rewrite_performed;
+}
+
+
+bool perform_watched_rewrites(Dep_Graph** graph, Conjunction_State* state) {
+    PRINT_DEBUG("Performing watched formula rewrite.");
+
+    Dep_Graph* work_graph = *graph;
+    for (auto& watched_position: work_graph->watched_positions) {
+        bool match0 = state->constants[watched_position.position0] == watched_position.required_value0;
+        bool match1 = state->constants[watched_position.position1] == watched_position.required_value1;
+        if (match0 && match1) {
+            Formula_Structure structure = {
+                .eq_cnt        = static_cast<s32>(work_graph->equations.size()),
+                .ineq_cnt      = static_cast<s32>(work_graph->equations.size()),
+                .congruence_cnt= static_cast<s32>(work_graph->equations.size()),
+            };
+            Ritch_Conjunction_State ritch_state = {.data = state->constants, .formula_structure = structure};
+            bool result = perform_max_simplification_on_graph(graph, &ritch_state);
+
+            state->constants = ritch_state.data;
+
+            return result;
+        }
+    }
+    return false;
+}
+
+
+bool detect_contradictions(const Dep_Graph* graph, Conjunction_State* state) {
+    for (auto var_node: graph->var_nodes) {
+        if (!var_node.has_hard_lower_bound() || !var_node.has_hard_upper_bound()) continue;
+
+        // x >= -A   x <= B   ... is A > B?
+        u64 offset = graph->congruences.size() + graph->equations.size();
+        auto lower_bound_val = -state->constants[offset + var_node.hard_lower_bound.atom_i]; // -A
+        auto upper_bound_val = state->constants[offset + var_node.hard_upper_bound.atom_i];  // B
+
+        if (lower_bound_val > upper_bound_val) return true;
+    }
+    return false;
 }

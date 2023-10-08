@@ -23,7 +23,7 @@ using std::vector;
 using std::unordered_set;
 using std::map;
 using std::list;
-
+using std::pair;
 
 struct Decomposed_Modulus {
     s64 modulus_2pow, modulus_odd;
@@ -127,12 +127,27 @@ struct Var_Node {
     }
 };
 
+struct Watched_Position_Pair {
+    s32 position0;
+    s32 position1;
+    s64 required_value0;
+    s64 required_value1;
+};
+
 struct Dep_Graph {
-    vector<u64>                 potential_vars;
-    vector<u64>                 quantified_vars;
-    vector<u64>                 vars_not_removed_in_simplification;
+    vector<u64> potential_vars;
+    vector<u64> quantified_vars;
+    vector<u64> vars_not_removed_in_simplification;
+
+    // Positions in conjunction states and their values that would enable further simplifications
+    vector<Watched_Position_Pair> watched_positions;
+
+    // Pairs of atoms that might imply contradiction with right RHS
+    vector<std::pair<s32, s32>> complementary_pairs;
 
     vector<Var_Node>         var_nodes;    // Every variable has a node associated with it
+    u64 protected_vars = 0; // If a constant value for a free var is implied
+    u64 free_vars      = 0;
 
     vector<Linear_Node>      equations;    // First nodes are equations then inequations
     vector<Linear_Node>      inequations;
@@ -140,6 +155,24 @@ struct Dep_Graph {
 
     bool dirty = false;
     bool is_false = false;
+
+    bool is_var_free(u64 var) const {
+        return free_vars & (1ull << var);
+    }
+
+    void mark_var_as_free(u64 var) {
+        free_vars |= (1ull << var);
+    }
+
+
+    bool is_var_protected(u64 var) const {
+        return protected_vars & (1ull << var);
+    }
+
+    void mark_var_as_protected(u64 var) {
+        protected_vars |= (1ull << var);
+    }
+
 };
 
 struct Quantified_Atom_Conjunction;
@@ -1198,5 +1231,6 @@ void exp_macrostate(Formula2& formula, const Macrostate2* state, NFA_Constructio
 NFA build_nfa_for_conjunction(Formula2& formula, Macrostate2& initial_macrostate);
 
 Formula_Structure describe_formula(const Quantified_Atom_Conjunction* formula);
+Formula_Structure describe_formula(const Dep_Graph* graph);
 #endif
 
