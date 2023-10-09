@@ -949,7 +949,9 @@ void explore_macrostate(NFA& constructed_nfa,
                     auto successor = maybe_successor.value();
 
                     bool contradicts = detect_contradictions(&successor.formula->dep_graph, &successor.state);
-                    if (contradicts) continue;
+                    if (contradicts) {
+                        continue;
+                    }
 
                     // The old formula needs to be used to determine whether the post is accepting
                     post.is_accepting |= accepts_last_symbol(formula, current_origin_state_data, symbol);
@@ -976,6 +978,11 @@ void explore_macrostate(NFA& constructed_nfa,
                     bool was_rewritten = perform_watched_rewrites(&work_graph, &successor.state);
                     if (!was_rewritten) {
                         bucket.insert(insert_pos.value(), successor.state);
+                        continue;
+                    }
+
+                    if (work_graph->is_false) {
+                        delete work_graph;
                         continue;
                     }
 
@@ -1299,8 +1306,6 @@ Formula_Structure describe_formula(const Dep_Graph* graph) {
 }
 
 
-u64 called_cnt = 0;
-
 NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State& init_state, sylvan::BDDSET bdd_vars, Formula_Pool& formula_pool) {
     vector<Finalized_Macrostate> work_queue;
     Lazy_Construction_State constr_state = {.formula_pool = formula_pool, .output_queue = work_queue};
@@ -1321,8 +1326,6 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
 
     // Try to simplify the formula as much as possible
     {
-        called_cnt += 1;
-
         Dep_Graph* graph_to_rewrite = const_cast<Dep_Graph*>(&formula->dep_graph);
         PRINT_DEBUG("Initial simplification of:" << *formula);
         PRINT_DEBUG(" -> State:" << init_state.constants);
@@ -1347,8 +1350,6 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
             delete graph_to_rewrite;
         }
         PRINT_DEBUG("Result:" << *formula);
-
-        if (called_cnt == 2) assert(false);
     }
 
     if (formula->is_top()) {

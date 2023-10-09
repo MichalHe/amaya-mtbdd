@@ -795,7 +795,7 @@ bool perform_max_simplification_on_graph(Dep_Graph** graph, Ritch_Conjunction_St
 
 
 bool perform_watched_rewrites(Dep_Graph** graph, Conjunction_State* state) {
-    PRINT_DEBUG("Performing watched formula rewrite.");
+    PRINT_DEBUG("Performing watched formula rewrite on state: " << state->constants);
 
     Dep_Graph* work_graph = *graph;
     for (auto& watched_position: work_graph->watched_positions) {
@@ -831,5 +831,14 @@ bool detect_contradictions(const Dep_Graph* graph, Conjunction_State* state) {
 
         if (-neg_val > pos_val) return true;
     }
+
+    for (auto& var_node: graph->var_nodes) {
+        if (!var_node.has_hard_lower_bound() || !var_node.has_hard_upper_bound()) continue;
+
+        s64 lower_bound_val = state->constants[offset + var_node.hard_lower_bound.atom_i];
+        s64 upper_bound_val = state->constants[offset + var_node.hard_upper_bound.atom_i];
+        if (-lower_bound_val > upper_bound_val) return true;
+    }
+
     return false;
 }
