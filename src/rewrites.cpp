@@ -807,9 +807,9 @@ bool perform_watched_rewrites(Dep_Graph** graph, Conjunction_State* state) {
         bool match1 = state->constants[watched_position.position1] == watched_position.required_value1;
         if (match0 && match1) {
             Formula_Structure structure = {
-                .eq_cnt        = static_cast<s32>(work_graph->equations.size()),
-                .ineq_cnt      = static_cast<s32>(work_graph->equations.size()),
-                .congruence_cnt= static_cast<s32>(work_graph->equations.size()),
+                .eq_cnt         = static_cast<s32>(work_graph->equations.size()),
+                .ineq_cnt       = static_cast<s32>(work_graph->inequations.size()),
+                .congruence_cnt = static_cast<s32>(work_graph->congruences.size()),
             };
             Ritch_Conjunction_State ritch_state = {.data = state->constants, .formula_structure = structure};
             bool result = perform_max_simplification_on_graph(graph, &ritch_state);
