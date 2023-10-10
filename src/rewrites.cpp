@@ -776,13 +776,17 @@ bool perform_max_simplification_on_graph(Dep_Graph** graph, Ritch_Conjunction_St
         was_any_rewrite_in_this_iter = false;
 
         was_any_rewrite_in_this_iter |= substitute_vars_with_known_value(graph, state);
-        if ((*graph)->is_false) break;
+        if ((*graph)->is_false) {
+            break;
+        }
         was_any_rewrite_in_this_iter |= instantiate_quantifs_with_inf(graph, state);
         was_any_rewrite_in_this_iter |= instantiate_quantifs_with_c_monotonicity(graph, state);
         was_any_rewrite_in_this_iter |= linearize_moduli(graph, state);
 
         was_any_rewrite_performed |= was_any_rewrite_in_this_iter;
     }
+
+    was_any_rewrite_performed |= was_any_rewrite_in_this_iter; // In case we exit the loop before updating
 
     if (((*graph)->is_false)) return was_any_rewrite_performed;
 

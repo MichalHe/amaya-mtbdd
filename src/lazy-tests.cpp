@@ -2118,34 +2118,45 @@ TEST_CASE("Symbol vs eager approach") {
 
 TEST_CASE("Problem") {
     // (exists (x1, x2, x3)
-    //    (1*x1 - 1*x2 ~= (mod 21)) &&
-    //    ( +1*x5 = ?) &&
-    //    ( -1*x2 = ?) &&
-    //    ( -1*x3 <= ?) &&
-    //    ( +1*x1 <= ?) &&
+    //    (1*x1 - 1*x2 ~= 0 (mod 21)) &&
+    //    ( +1*x5 = 0 ?) &&
+    //    ( -1*x2 = 0 ?) &&
+    //    ( -1*x3 <= 0 ?) &&
+    //    ( +1*x1 <= -86 ?) &&
     //    ( -1*x0 + 1*x4 <= ?) &&
     //    ( -1*x2 <= ?) &&
     //    ( -1*x2 <= ?) &&
     //    ( +1*x2 <= ?) &&
     //    ( -9*x2 + 10*x3 <= ?) &&
     //    ( + 9*x2 - 10*x3 <= ?))
+    //   [0, 0, 0, 0, -86, 43, -48, 0, 20, -432, 441]
+
     Atom_Allocator allocator;
+    vector<pair<vector<s64>, s64>> congruences = {
+        {{ 0,  1, -1,  0 , 0, 0}, 21}  // (1*x1 - 1*x2 ~= 0 (mod 21))
+    };
     vector<vector<s64>> eqs = {
-       { 0,  0,  0,  0 , 0},  // x5 =
-       { 0,  0,  0,  0 , 0},  // -x2 = ?
+       { 0,  0,  0,  0,  0,  1},  // x5  = 0
+       { 0,  0, -1,  0,  0,  0},  // -x2 = 0 ?
     };
     vector<vector<s64>> ineqs = {
-       { 0,  0,  0,  0 , 0},  // -x3 <=
-       { 0,  0,  0,  0 , 0},  //  x1 <=
-       { 0,  0,  0,  0 , 0},  // -x0 + x4 <=
-       { 0,  0,  0,  0 , 0},  // -x2 <=
-       { 0,  0,  0,  0 , 0},  // -x2 <=
-       { 0,  0,  0,  0 , 0},  // -x2 <=
-       { 0,  0,  0,  0 , 0},  //  x2 <=
-       { 0,  0,  0,  0 , 0},  //-9x2 + 10x3
-       { 0,  0,  0,  0 , 0},  // 9x2 - 10x3
+       { 0,  0,  0, -1,  0,  0},  //  -x3        <= 0
+       { 0,  1,  0,  0,  0,  0},  //   x1        <= -86
+       {-1,  0,  0,  0,  1,  0},  //  -x0 + x4   <= 43
+       { 0,  0, -1,  0,  0,  0},  //  -x2        <= -48
+       { 0,  0, -1,  0,  0,  0},  //  -x2        <= 0
+       { 0,  0,  1,  0,  0,  0},  //   x2        <= 20
+       { 0,  0, -9, 10,  0,  0},  // -9x2 + 10x3 <= -432
+       { 0,  0,  9, 10,  0,  0},  //  9x2 - 10x3 <= 441
      };
 
+    Formula formula = make_formula(allocator, congruences, eqs, ineqs, {1, 2, 3});
+    Formula_Pool pool = Formula_Pool(&formula);
+    auto formula_id = pool.store_formula(formula);
+    Conjunction_State init_state({0, 0, 0, 0, -86, 43, -48, 0, 20, -432, 441});
+
+    sylvan::BDDSET vars = make_var_set({1, 2, 3, 4, 5, 6});
+    auto actual_nfa = build_nfa_with_formula_entailement(formula_id, init_state, vars, pool);
 }
 
 TEST_CASE("Watched formula rewrite") {

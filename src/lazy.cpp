@@ -1352,6 +1352,10 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
         PRINT_DEBUG("Result:" << *formula);
     }
 
+    if (formula->is_bottom()) {
+        return make_trivial_rejecting_nfa(bdd_vars, formula->var_count);
+    }
+
     if (formula->is_top()) {
         State init_state = 0;
         State acc_state  = 1;
