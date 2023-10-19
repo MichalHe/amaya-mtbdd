@@ -157,8 +157,12 @@ Linear_Function linearize_congruence(
         //         Although we want the cofficients to be as small as possible, we cannot guarantee
         //         that this is not called after some optimization pass that did not yet divide by GCD
 
-        modulus_values.high = state.get_ineq_val(mod_var_node.hard_upper_bound.atom_i);
-        modulus_values.low  = state.get_ineq_val(mod_var_node.hard_lower_bound.atom_i);
+        u64 sub_var = captured_mod.subordinate_var;
+        s64 high_bound_coef = graph.inequations[mod_var_node.hard_upper_bound.atom_i].coefs[sub_var];
+        modulus_values.high = div_bound_by_coef(state.get_ineq_val(mod_var_node.hard_upper_bound.atom_i), high_bound_coef);
+
+        s64 low_bound_coef = graph.inequations[mod_var_node.hard_lower_bound.atom_i].coefs[sub_var];
+        modulus_values.low  = div_bound_by_coef(state.get_ineq_val(mod_var_node.hard_lower_bound.atom_i), low_bound_coef);
     }
 
     PRINT_DEBUG("Linearizing y=x" << captured_mod.leading_var <<

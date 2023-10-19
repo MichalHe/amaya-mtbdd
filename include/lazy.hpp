@@ -301,6 +301,8 @@ struct Ritch_Conjunction_State {
             data[i] = data[i-1];
         }
         data[prefix] = eq_val;
+
+        formula_structure.eq_cnt += 1;
     }
 };
 
