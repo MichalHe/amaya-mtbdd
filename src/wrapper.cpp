@@ -13,6 +13,7 @@
 #include <lace.h>
 #include <utility>
 #include <iostream>
+#include <limits>
 #include <cstring>
 
 using namespace sylvan;
@@ -815,4 +816,283 @@ Serialized_NFA* amaya_perform_pad_closure(Serialized_NFA* serialized_nfa) {
     nfa.perform_pad_closure();
     auto output = serialize_nfa(nfa);
     return output;
+}
+
+struct Congruence_State {
+    s64 modulus_odd;
+    s64 modulus_2pow;
+    s64 value;
+
+    bool operator==(const Congruence_State& other) const {
+        return modulus_odd == other.modulus_odd &&
+               modulus_2pow == other.modulus_2pow &&
+               value == other.value;
+    }
+};
+
+template <>
+struct std::hash<Congruence_State> {
+    std::size_t operator() (const Congruence_State& state) const {
+        return (1 << state.modulus_2pow) + state.modulus_odd*state.value;
+    }
+};
+
+Serialized_NFA* construct_nfa_from_congruence(Serialized_Atom* congruence, s64 init_val, BDDSET vars, u64 var_count) {
+    auto moduli = decompose_modulus(congruence->modulus);
+    Congruence_State initial_state = {
+        .modulus_odd = moduli.modulus_odd,
+        .modulus_2pow = moduli.modulus_2pow,
+        .value = init_val
+    };
+
+    Congruence_State final_state = {1, 299993, -1};
+    u64 final_state_handle = 0;
+    u64 init_state_handle  = 1;
+
+    unordered_map<Congruence_State, s64> discovered_states {
+        {final_state, final_state_handle},
+        {initial_state, init_state_handle}
+    };
+    vector<pair<Congruence_State, s64>> worklist = {{initial_state, init_state_handle}};
+
+    NFA constructed_nfa(vars);
+    constructed_nfa.var_count = var_count;
+    constructed_nfa.add_state_final(final_state_handle);
+    constructed_nfa.initial_states.insert(init_state_handle);
+
+    assert(var_count > 0);
+    u8 symbol_arr[var_count];
+
+    while (!worklist.empty()) {
+        auto [state, handle] = worklist.back();
+        worklist.pop_back();
+
+        constructed_nfa.states.insert(handle);
+
+        for (u64 symbol = 0; symbol < (1 << var_count); symbol++) {
+            s64 dot = 0;
+            for (int i = 0; i < var_count; i++) {
+                s64 is_bit_set = (symbol & (1u << i)) > 0;
+                dot += is_bit_set * congruence->coefs[i];
+            }
+            s64 post = state.value - dot;
+            s64 fin_post = state.value + dot;
+            s64 modulus = combine_moduli(state.modulus_2pow, state.modulus_odd);
+
+            Congruence_State dest_state;
+            dest_state.modulus_odd = state.modulus_odd;
+            dest_state.modulus_2pow = 0;
+
+            if (state.modulus_2pow > 0) {
+                if (post % 2) {
+                    post /= 2;
+                    s64 new_modulus = combine_moduli(state.modulus_2pow - 1, state.modulus_odd);
+                    post %= new_modulus;
+                    post += (post < 0) * new_modulus;
+
+                    dest_state.modulus_2pow = state.modulus_2pow-1;
+                    dest_state.value = post;
+                } else {
+                    continue;
+                }
+            } else {
+                post += state.modulus_odd * ((post % 2) != 0);
+                post /= 2;
+                post = post % state.modulus_odd;
+                post += state.modulus_odd * (post < 0);
+
+                dest_state.value = post;
+            }
+
+            auto [insert_position, did_insert_happen] = discovered_states.emplace(dest_state,discovered_states.size());
+            s64 dest_handle = insert_position->second;
+            if (did_insert_happen) {
+                worklist.push_back({dest_state, dest_handle});
+            }
+
+            for (int i = 0; i < var_count; i++) {
+                symbol_arr[i] = (symbol >> i) & 1;
+            }
+
+            constructed_nfa.add_transition(handle, dest_handle, symbol_arr);
+
+            if ((fin_post % modulus) == 0) {
+                constructed_nfa.add_transition(handle, final_state_handle, symbol_arr);
+            }
+        }
+    }
+
+    Serialized_NFA* serialized_result = serialize_nfa(constructed_nfa);
+    return serialized_result;
+}
+
+Serialized_NFA* amaya_construct_nfa_from_congruence(
+    Serialized_Atom* congruence,
+    s64  init_val,
+    u32* vars,
+    u64  var_cnt)
+{
+    BDDSET var_set = sylvan::mtbdd_set_from_array(vars, var_cnt);
+    sylvan::mtbdd_ref(var_set);
+    auto result = construct_nfa_from_congruence(congruence, init_val, var_set, var_cnt);
+    sylvan::mtbdd_deref(var_set);
+    return result;
+}
+
+Serialized_NFA* construct_nfa_from_ineq(Serialized_Atom* ineq, s64 init_state, BDDSET vars, u64 var_count) {
+    s64 final_state_handle = 0;
+    s64 init_state_handle  = 1;
+    s64 final_state = std::numeric_limits<s64>::max();
+
+    unordered_map<s64, s64> discovered_states {
+        {final_state, final_state_handle},
+        {init_state, init_state_handle}
+    };
+    vector<pair<s64, s64>> worklist = {{init_state, init_state_handle}};
+
+    assert(var_count > 0);
+    u8 symbol_arr[var_count];
+
+    NFA constructed_nfa(vars);
+    constructed_nfa.var_count = var_count;
+    constructed_nfa.initial_states.insert(init_state_handle);
+    constructed_nfa.add_state_final(final_state_handle);
+
+    while (!worklist.empty()) {
+        auto [state, handle] = worklist.back();
+        worklist.pop_back();
+
+        constructed_nfa.states.insert(handle);
+
+        for (u64 symbol = 0; symbol < (1 << var_count); symbol++) {
+            s64 dot = 0;
+            for (int i = 0; i < var_count; i++) {
+                s64 is_bit_set = (symbol & (1u << i)) > 0;
+                dot += is_bit_set * ineq->coefs[i];
+            }
+
+            s64 post     = state - dot;
+            s64 fin_post = state + dot;
+
+            s64 post_div_2 = post / 2;
+            s64 post_mod_2 = post % 2;
+            post_div_2 -= (post_mod_2 != 0) * (post < 0);
+            post = post_div_2;
+
+            s64 post_handle = discovered_states.size();
+            auto [insert_pos, insert_happend] = discovered_states.emplace(post, post_handle);
+            if (insert_happend) {
+                worklist.push_back({post, post_handle});
+            } else {
+                post_handle = insert_pos->second;
+            }
+
+            for (int i = 0; i < var_count; i++) {
+                symbol_arr[i] = (symbol >> i) & 1;
+            }
+
+            constructed_nfa.add_transition(handle, post_handle, symbol_arr);
+
+            if (fin_post >= 0) {
+                constructed_nfa.add_transition(handle, final_state_handle, symbol_arr);
+            }
+        }
+    }
+
+    auto result_ptr = serialize_nfa(constructed_nfa);
+    return result_ptr;
+}
+
+Serialized_NFA* construct_nfa_from_eq(Serialized_Atom* eq, s64 init_state, BDDSET vars, u64 var_count) {
+    s64 final_state_handle = 0;
+    s64 init_state_handle  = 1;
+    s64 final_state = std::numeric_limits<s64>::max();
+
+    unordered_map<s64, s64> discovered_states {
+        {final_state, final_state_handle},
+        {init_state, init_state_handle}
+    };
+    vector<pair<s64, s64>> worklist = {{init_state, init_state_handle}};
+
+    assert(var_count > 0);
+    u8 symbol_arr[var_count];
+
+    NFA constructed_nfa(vars);
+    constructed_nfa.var_count = var_count;
+    constructed_nfa.initial_states.insert(init_state_handle);
+    constructed_nfa.add_state_final(final_state_handle);
+
+    while (!worklist.empty()) {
+        auto [state, handle] = worklist.back();
+        worklist.pop_back();
+
+        constructed_nfa.states.insert(handle);
+
+        for (u64 symbol = 0; symbol < (1 << var_count); symbol++) {
+            s64 dot = 0;
+            for (int i = 0; i < var_count; i++) {
+                s64 is_bit_set = (symbol & (1u << i)) > 0;
+                dot += is_bit_set * eq->coefs[i];
+            }
+
+            s64 post     = state - dot;
+            s64 fin_post = state + dot;
+
+            if ((post % 2) != 0) {
+                continue;
+            }
+
+            s64 post_div_2 = post / 2;
+            s64 post_mod_2 = post % 2;
+            post_div_2 -= (post_mod_2 != 0) * (post < 0);
+            post = post_div_2;
+
+            s64 post_handle = discovered_states.size();
+            auto [insert_pos, insert_happend] = discovered_states.emplace(post, post_handle);
+            if (insert_happend) {
+                worklist.push_back({post, post_handle});
+            } else {
+                post_handle = insert_pos->second;
+            }
+
+            for (int i = 0; i < var_count; i++) {
+                symbol_arr[i] = (symbol >> i) & 1;
+            }
+
+            constructed_nfa.add_transition(handle, post_handle, symbol_arr);
+
+            if (fin_post == 0) {
+                constructed_nfa.add_transition(handle, final_state_handle, symbol_arr);
+            }
+        }
+    }
+
+    auto result_ptr = serialize_nfa(constructed_nfa);
+    return result_ptr;
+}
+
+Serialized_NFA* amaya_construct_nfa_from_ineq(
+    Serialized_Atom* ineq,
+    s64  init_val,
+    u32* vars,
+    u64  var_cnt)
+{
+    BDDSET var_set = sylvan::mtbdd_set_from_array(vars, var_cnt);
+    sylvan::mtbdd_ref(var_set);
+    auto result = construct_nfa_from_ineq(ineq, init_val, var_set, var_cnt);
+    sylvan::mtbdd_deref(var_set);
+    return result;
+}
+
+Serialized_NFA* amaya_construct_nfa_from_eq(
+    Serialized_Atom* eq,
+    s64  init_val,
+    u32* vars,
+    u64  var_cnt)
+{
+    BDDSET var_set = sylvan::mtbdd_set_from_array(vars, var_cnt);
+    sylvan::mtbdd_ref(var_set);
+    auto result = construct_nfa_from_eq(eq, init_val, var_set, var_cnt);
+    sylvan::mtbdd_deref(var_set);
+    return result;
 }
