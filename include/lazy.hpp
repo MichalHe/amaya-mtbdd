@@ -559,7 +559,7 @@ struct Formula_Allocator {
     }
 
     Sized_Array<Inequation> alloc_inequations(u64 count) {
-        PRINTF_DEBUG("Allocating %lu equation(s)\n", count);
+        PRINTF_DEBUG("Allocating %lu inequation(s)\n", count);
         if (count == 0) return {nullptr, 0};
 
         auto& slabs_matching_size = inequation_slabs[count - 1];

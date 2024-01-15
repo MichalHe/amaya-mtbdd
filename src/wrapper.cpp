@@ -125,7 +125,7 @@ void init_machinery()
     const size_t stack_size = 1LL << 20;
     lace_startup(0, NULL, NULL);
 
-    sylvan_set_limits(500LL*1024*1024, 5, 5);
+    sylvan_set_limits(1LL << 32, 5, 5);
     //sylvan_set_sizes(1LL << 27, 1LL << 26, 1LL << 26, 1LL << 20);
     //sylvan_set_sizes(1LL << 24, 1LL << 28, 1LL << 24, 1LL << 28);
     sylvan_init_package();
@@ -867,6 +867,7 @@ Serialized_NFA* construct_nfa_from_congruence(Serialized_Atom* congruence, s64 i
         auto [state, handle] = worklist.back();
         worklist.pop_back();
 
+        s64 modulus = combine_moduli(state.modulus_2pow, state.modulus_odd);
         constructed_nfa.states.insert(handle);
 
         for (u64 symbol = 0; symbol < (1 << var_count); symbol++) {
@@ -877,14 +878,13 @@ Serialized_NFA* construct_nfa_from_congruence(Serialized_Atom* congruence, s64 i
             }
             s64 post = state.value - dot;
             s64 fin_post = state.value + dot;
-            s64 modulus = combine_moduli(state.modulus_2pow, state.modulus_odd);
 
             Congruence_State dest_state;
             dest_state.modulus_odd = state.modulus_odd;
             dest_state.modulus_2pow = 0;
 
             if (state.modulus_2pow > 0) {
-                if (post % 2) {
+                if ((post % 2) == 0) {
                     post /= 2;
                     s64 new_modulus = combine_moduli(state.modulus_2pow - 1, state.modulus_odd);
                     post %= new_modulus;
@@ -1022,11 +1022,15 @@ Serialized_NFA* construct_nfa_from_eq(Serialized_Atom* eq, s64 init_state, BDDSE
     constructed_nfa.initial_states.insert(init_state_handle);
     constructed_nfa.add_state_final(final_state_handle);
 
+    s64 states_processed = 0;
+
     while (!worklist.empty()) {
         auto [state, handle] = worklist.back();
         worklist.pop_back();
 
         constructed_nfa.states.insert(handle);
+
+        states_processed += 1;
 
         for (u64 symbol = 0; symbol < (1 << var_count); symbol++) {
             s64 dot = 0;

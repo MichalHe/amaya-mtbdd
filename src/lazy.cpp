@@ -246,13 +246,13 @@ bool accepts_last_symbol(const Formula* formula, s64* state_data, u64 symbol) {
     bool accepts = true;
 
     u64 atom_i = 0;
-    for (auto& eq: formula->equations) {
-        accepts &= equation_accepts_symbol(eq, state_data[atom_i], symbol);
+    for (auto& congr: formula->congruences) {
+        accepts &= congruence_accepts_symbol(congr, state_data[atom_i], symbol);
         atom_i += 1;
     }
 
-    for (auto& congr: formula->congruences) {
-        accepts &= congruence_accepts_symbol(congr, state_data[atom_i], symbol);
+    for (auto& eq: formula->equations) {
+        accepts &= equation_accepts_symbol(eq, state_data[atom_i], symbol);
         atom_i += 1;
     }
 
@@ -974,7 +974,7 @@ void explore_macrostate(NFA& constructed_nfa,
                     if (!insert_pos.has_value()) continue;
 
                     // It is valuable, try rewriting the post formula
-                    Dep_Graph* work_graph = const_cast<Dep_Graph*> (&formula->dep_graph);
+                    Dep_Graph* work_graph = const_cast<Dep_Graph*> (&post_formula->dep_graph);
                     bool was_rewritten = perform_watched_rewrites(&work_graph, &successor.state);
                     if (!was_rewritten) {
                         bucket.insert(insert_pos.value(), successor.state);
@@ -982,7 +982,6 @@ void explore_macrostate(NFA& constructed_nfa,
                     }
 
                     if (work_graph->is_false) {
-                        delete work_graph;
                         continue;
                     }
 
@@ -1435,10 +1434,11 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
     PRINT_DEBUG("Final states: " << nfa.final_states);
 
     for (auto& [macrostate, handle]: constr_state.known_macrostates) {
-        // std::cout << handle << "::" << macrostate << std::endl;
-        // PRINT_DEBUG(handle << "::" << macrostate);
+        PRINT_DEBUG(handle << "::" << macrostate);
+        PRINT_DEBUG(handle << "::" << macrostate);
     }
 
+    // assert(0);
     if (!formula->bound_vars.empty()) {
         nfa.perform_pad_closure();
         return determinize_nfa(nfa);
