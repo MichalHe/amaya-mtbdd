@@ -54,13 +54,20 @@ std::ostream& operator<<(std::ostream& output, const Transition& transition);
 // @Todo: Make this an ordinary struct
 class Transition_Destination_Set {
 public:
-    set<State> destination_set;
+    bool dirty = false;
+    std::vector<State> destination_set;
 
     Transition_Destination_Set() {};
     Transition_Destination_Set(const Transition_Destination_Set &other);
-    Transition_Destination_Set(set<State>& destination_set);
-    Transition_Destination_Set(set<State>&& destination_set) : destination_set(destination_set) {};
+    Transition_Destination_Set(std::vector<State>& destination_set);
+    Transition_Destination_Set(std::vector<State>&& destination_set) : destination_set(destination_set) {};
+
     void print_dest_states();
+
+    void insert_sorted(State state);
+    void insert(State state);
+    void sort();
+    bool contains(State state) const;
 };
 
 struct NFA {
@@ -181,7 +188,7 @@ bool is_set_intersection_empty(InputIterator1 left_begin, ReverseInputIterator1 
 }
 
 template <typename T>
-bool is_set_intersection_empty(const std::set<T>& left, const std::set<T>& right) {
+bool is_set_intersection_empty(const std::vector<T>& left, const std::vector<T>& right) {
     return is_set_intersection_empty(left.begin(), left.rbegin(), left.end(), right.begin(), right.rbegin(), right.end());
 }
 

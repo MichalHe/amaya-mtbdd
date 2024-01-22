@@ -33,9 +33,6 @@ extern uint64_t   ADD_TRAPSTATE_OP_COUNTER;
 extern uint64_t         STATE_RENAME_OP_COUNTER;
 extern State_Rename_Op_Info   *STATE_RENAME_OP_PARAM;
 
-extern uint64_t    TRANSFORM_MACROSTATES_TO_INTS_COUNTER;
-extern Transform_Macrostates_To_Ints_State *TRANSFORM_MACROSTATES_TO_INTS_STATE;
-
 NFA deserialize_nfa(Serialized_NFA& serialized_nfa) {
     // Deserialize the DFA
 
@@ -161,15 +158,16 @@ MTBDD amaya_mtbdd_build_single_terminal(
     // Construct variables set containing all the variables.
     BDDSET variables = mtbdd_set_empty();
     for (uint32_t i=1; i <= variable_count; i++) {
-      variables = mtbdd_set_add(variables, i); // Variables are numbered from 1
+        variables = mtbdd_set_add(variables, i); // Variables are numbered from 1
     }
 
     // Construct the destination set
 
     Transition_Destination_Set leaf_contents;
     for (uint32_t i = 0; i < destination_set_size; i++) {
-      leaf_contents.destination_set.insert(destination_set[i]);
+        leaf_contents.insert(destination_set[i]);
     }
+    leaf_contents.sort();
 
     MTBDD leaf = make_set_leaf(&leaf_contents);
 
@@ -239,7 +237,12 @@ Transition_Destination_Set* _get_transition_target(
             if (high_tds == NULL) return low_tds; // The low result is not NULL
 
             // Perform state merging.
-            low_tds->destination_set.insert(high_tds->destination_set.begin(), high_tds->destination_set.end());
+            std::vector<State> reachable_states;
+            std::set_union(low_tds->destination_set.begin(), low_tds->destination_set.end(),
+                           high_tds->destination_set.begin(), high_tds->destination_set.end(),
+                           std::inserter(reachable_states, reachable_states.begin()));
+            low_tds->destination_set = reachable_states;
+
             delete high_tds; // Only low result will be propagated upwards
             return low_tds;
         }
@@ -375,70 +378,6 @@ State* amaya_mtbdd_get_leaves(
     *leaf_cnt = (uint32_t) leaves.size();
     return _leaf_states;
 }
-
-void amaya_replace_leaf_contents_with(void *leaf_tds, State* new_contents, uint32_t contents_size)
-{
-    assert(false);
-    auto leaf_contents = reinterpret_cast<Transition_Destination_Set*>(leaf_tds);
-    leaf_contents->destination_set.clear();
-    for (uint32_t i = 0; i < contents_size; i++) {
-        leaf_contents->destination_set.insert(new_contents[i]);
-    }
-}
-
-MTBDD* amaya_rename_macrostates_to_int(
-    MTBDD*    roots,              // MTBDDs resulting from determinization
-    uint32_t  root_cnt,           // Root count
-    State     start_numbering_macrostates_from,
-    State**   out_serialized_macrostates,
-    uint64_t**  out_macrostates_sizes,
-    uint64_t* out_macrostates_cnt)
-{
-  // Set up the tranform state
-  TRANSFORM_MACROSTATES_TO_INTS_STATE = (Transform_Macrostates_To_Ints_State *) malloc(sizeof(Transform_Macrostates_To_Ints_State));
-  TRANSFORM_MACROSTATES_TO_INTS_STATE->first_available_state_number = start_numbering_macrostates_from;
-  TRANSFORM_MACROSTATES_TO_INTS_STATE->macrostates_cnt = 0;
-  TRANSFORM_MACROSTATES_TO_INTS_STATE->macrostates_sizes = new vector<uint64_t>();
-  TRANSFORM_MACROSTATES_TO_INTS_STATE->serialized_macrostates = new vector<State>();
-  TRANSFORM_MACROSTATES_TO_INTS_STATE->alias_map = new std::map<std::set<State>, State>();
-
-  MTBDD *transformed_mtbdds = (MTBDD *) malloc(sizeof(MTBDD) * root_cnt);
-  assert(transformed_mtbdds);
-
-  LACE_ME;
-  for (uint32_t i = 0; i < root_cnt; i++) {
-    MTBDD transformed_mtbdd = mtbdd_uapply(roots[i], TASK(transform_macrostates_to_ints_op), TRANSFORM_MACROSTATES_TO_INTS_COUNTER);
-    transformed_mtbdds[i] = transformed_mtbdd;
-    mtbdd_ref(transformed_mtbdd);
-  }
-
-  TRANSFORM_MACROSTATES_TO_INTS_COUNTER += 1;
-
-  // Write values to the Python side.
-  State* serialized_macrostates = (State *) malloc(sizeof(State) * TRANSFORM_MACROSTATES_TO_INTS_STATE->serialized_macrostates->size());
-  assert(serialized_macrostates);
-  for (uint64_t i = 0; i < TRANSFORM_MACROSTATES_TO_INTS_STATE->serialized_macrostates->size(); i++) {
-    serialized_macrostates[i] = TRANSFORM_MACROSTATES_TO_INTS_STATE->serialized_macrostates->at(i);
-  }
-  *out_serialized_macrostates = serialized_macrostates;
-
-  uint64_t* macrostate_sizes = (uint64_t*) malloc(sizeof(uint64_t) * TRANSFORM_MACROSTATES_TO_INTS_STATE->macrostates_cnt);
-  assert(macrostate_sizes);
-  for (uint64_t i = 0; i < TRANSFORM_MACROSTATES_TO_INTS_STATE->macrostates_sizes->size(); i++) {
-    macrostate_sizes[i] = TRANSFORM_MACROSTATES_TO_INTS_STATE->macrostates_sizes->at(i);
-  }
-  *out_macrostates_sizes = macrostate_sizes;
-
-  *out_macrostates_cnt = TRANSFORM_MACROSTATES_TO_INTS_STATE->macrostates_cnt;
-
-  delete TRANSFORM_MACROSTATES_TO_INTS_STATE->macrostates_sizes;
-  delete TRANSFORM_MACROSTATES_TO_INTS_STATE->serialized_macrostates;
-  delete TRANSFORM_MACROSTATES_TO_INTS_STATE->alias_map;
-  free(TRANSFORM_MACROSTATES_TO_INTS_STATE);
-  TRANSFORM_MACROSTATES_TO_INTS_STATE = NULL;
-  return transformed_mtbdds;
-}
-
 
 void amaya_print_dot(MTBDD m, int32_t fd)
 {

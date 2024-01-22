@@ -48,11 +48,9 @@ uint64_t    REMOVE_STATES_OP_COUNTER = 0;
 void*       ADD_TRAPSTATE_OP_PARAM = NULL;
 
 State_Rename_Op_Info *STATE_RENAME_OP_PARAM = NULL;
-Transform_Macrostates_To_Ints_State *TRANSFORM_MACROSTATES_TO_INTS_STATE = NULL;
 
 uint64_t  ADD_TRAPSTATE_OP_COUNTER = (1LL << 32);
 uint64_t  STATE_RENAME_OP_COUNTER = (1LL << 33);
-uint64_t  TRANSFORM_MACROSTATES_TO_INTS_COUNTER = (1LL << 34);
 
 /**
  * Dynamic operation ID management.
@@ -72,6 +70,8 @@ Pad_Closure_Info2* g_pad_closure_info = nullptr;
 /**
  * Unites the two transition MTBDDs.
  */
+u64 union_applied_cnt = 0;
+
 TASK_IMPL_3(MTBDD, transitions_union_op, MTBDD *, left_op_ptr, MTBDD *, right_op_ptr, uint64_t, param)
 {
     MTBDD left_mtbdd = *left_op_ptr, right_mtbdd = *right_op_ptr;
@@ -89,6 +89,8 @@ TASK_IMPL_3(MTBDD, transitions_union_op, MTBDD *, left_op_ptr, MTBDD *, right_op
         std::set_union(left_contents->destination_set.begin(), left_contents->destination_set.end(),
                        right_contents->destination_set.begin(), right_contents->destination_set.end(),
                        std::inserter(leaf_contents.destination_set, leaf_contents.destination_set.begin()));
+
+        union_applied_cnt += 1;
 
         MTBDD union_leaf = make_set_leaf(&leaf_contents);
         return union_leaf;
@@ -122,11 +124,11 @@ TASK_IMPL_2(MTBDD, remove_states_op, MTBDD, dd, uint64_t, param) {
         auto states_to_remove = (set<State>*) (REMOVE_STATES_OP_PARAM);
         auto tds = (Transition_Destination_Set *) mtbdd_getvalue(dd);
 
-        auto new_tds = new Transition_Destination_Set(*tds); // Make leaf value copy.
+        auto new_tds = new Transition_Destination_Set(); // Make leaf value copy.
 
         for (auto state : tds->destination_set) {
-            bool should_be_removed = states_to_remove->find(state) != states_to_remove->end();
-            if (should_be_removed) new_tds->destination_set.erase(state);
+            bool should_persist = states_to_remove->find(state) == states_to_remove->end();
+            if (should_persist) new_tds->insert_sorted(state);
         }
 
         if (new_tds->destination_set.empty()) {
@@ -169,57 +171,12 @@ TASK_IMPL_2(MTBDD, rename_states_op, MTBDD, dd, uint64_t, param) {
             }
 
             auto new_state_name = new_name_it->second;
-            new_leaf_contents->destination_set.insert(new_state_name);
+
+            new_leaf_contents->insert(new_state_name);
         }
 
+        new_leaf_contents->sort();
         return mtbdd_makeleaf(mtbdd_leaf_type_set, reinterpret_cast<uint64_t>(new_leaf_contents));
-    }
-
-    return mtbdd_invalid;
-}
-
-TASK_IMPL_2(MTBDD, transform_macrostates_to_ints_op, MTBDD, dd, uint64_t, param) {
-    if (dd == mtbdd_false) return mtbdd_false;
-
-    if (mtbdd_isleaf(dd)) {
-        (void) param;
-
-        auto transform_state = TRANSFORM_MACROSTATES_TO_INTS_STATE;
-        auto old_tds = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(dd));
-
-        State macrostate_state_number;
-        bool is_cache_miss = false;
-        auto iterator = transform_state->alias_map->find(old_tds->destination_set);
-        if (iterator == transform_state->alias_map->end()) {
-            macrostate_state_number = transform_state->first_available_state_number++;
-        } else {
-            // Cache entry for this leaf must have gotten evicted, we need to
-            // return the previously returned leaf with the same alias number.
-            is_cache_miss = true;
-            macrostate_state_number = iterator->second;
-        }
-
-        // @Warn: This relies on the fact that the state sets are represented in a canoical fashion - the std::set
-        //        keeps them sorted. That means that two macrostates e.g {1, 2, 3} and {3, 2, 1} will get always hashed to the
-        //        same value --- Otherwise the same macrostates would get more than 1 ID which would cause troubles.
-
-        Transition_Destination_Set new_leaf_contents;
-        new_leaf_contents.destination_set.insert(macrostate_state_number);
-
-        if (!is_cache_miss) {
-            // Serialize the current macrostate, so that the python side will get notified about the created mapping.
-            for (auto state : old_tds->destination_set) {
-                transform_state->serialized_macrostates->push_back(state);
-            }
-
-            transform_state->macrostates_sizes->push_back(old_tds->destination_set.size());
-            transform_state->macrostates_cnt += 1;
-
-            transform_state->alias_map->emplace(old_tds->destination_set, macrostate_state_number);
-        }
-
-        MTBDD leaf = make_set_leaf(&new_leaf_contents);
-        return leaf;
     }
 
     return mtbdd_invalid;
@@ -232,6 +189,7 @@ void write_mtbdd_dot_to_tmp_file(const std::string& filename, sylvan::MTBDD mtbd
     sylvan::mtbdd_fprintdot(output_file_handle, mtbdd);
     fclose(output_file_handle);
 }
+
 
 template<typename T>
 std::string array_to_str(T* array, const uint64_t array_size) {
@@ -268,16 +226,20 @@ TASK_IMPL_3(MTBDD, build_pad_closure_fronier_op, MTBDD *, p_extension, MTBDD *, 
         auto extension_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(extension));
         auto frontier_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(frontier));
 
-        if (frontier_contents->destination_set.contains(extension_origin_state)) {
+        bool is_already_present = std::binary_search(frontier_contents->destination_set.begin(),
+                                                     frontier_contents->destination_set.end(),
+                                                     extension_origin_state);
+
+        if (is_already_present) {
             return frontier;
         }
 
+
+        // Check whether there is a state Q such that the following run is possible: O -(a)-> Q -(a*) F
         if (!is_set_intersection_empty(extension_contents->destination_set, frontier_contents->destination_set)) {
-            // It is possible to reach a state from extension_origin_state by a single transition along the current
-            // symbol from which it is possible to reach a final state along the same symbol by reading finitely many
-            // such symbols
             Transition_Destination_Set new_frontier_contents(*frontier_contents);
-            new_frontier_contents.destination_set.insert(extension_origin_state);
+            new_frontier_contents.insert(extension_origin_state);
+            new_frontier_contents.sort();
             MTBDD new_frontier = make_set_leaf(&new_frontier_contents);
             return new_frontier;
         }
@@ -287,6 +249,7 @@ TASK_IMPL_3(MTBDD, build_pad_closure_fronier_op, MTBDD *, p_extension, MTBDD *, 
 
     return mtbdd_invalid;
 }
+
 
 TASK_IMPL_3(MTBDD, add_pad_transitions_op, MTBDD *, p_transitions, MTBDD *, p_frontier, u64, raw_origin_state) {
     State origin_state = static_cast<State>(raw_origin_state);
@@ -309,7 +272,7 @@ TASK_IMPL_3(MTBDD, add_pad_transitions_op, MTBDD *, p_transitions, MTBDD *, p_fr
         auto frontier_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(frontier));
 
         // It must be possible to reach a final state from the current origin
-        if (!frontier_contents->destination_set.contains(origin_state))
+        if (!frontier_contents->contains(origin_state))
             return transitions;
 
         // Make sure that also its post is contained in the frontier as states that are final are contained in the frontier
@@ -319,9 +282,19 @@ TASK_IMPL_3(MTBDD, add_pad_transitions_op, MTBDD *, p_transitions, MTBDD *, p_fr
             return transitions;
         }
 
-        if (is_set_intersection_empty(transition_contents->destination_set, *pad_closure_info->final_states)) {
+        bool has_no_transition_to_fin = is_set_intersection_empty(transition_contents->destination_set.begin(),
+                                                                  transition_contents->destination_set.rbegin(),
+                                                                  transition_contents->destination_set.end(),
+                                                                  pad_closure_info->final_states->begin(),
+                                                                  pad_closure_info->final_states->rbegin(),
+                                                                  pad_closure_info->final_states->end());
+
+        if (has_no_transition_to_fin) {
             Transition_Destination_Set new_transition_contents(*transition_contents);
-            new_transition_contents.destination_set.insert(pad_closure_info->new_final_state);
+
+            assert(pad_closure_info->new_final_state > transition_contents->destination_set.back());
+
+            new_transition_contents.insert_sorted(pad_closure_info->new_final_state);
             MTBDD new_destinations = sylvan::mtbdd_makeleaf(mtbdd_leaf_type_set, reinterpret_cast<u64>(&new_transition_contents));
             return new_destinations;
         }
@@ -353,8 +326,6 @@ bool skip_product_state_due_to_no_post(Intersection_Info2& info, std::pair<State
     return false;
 #endif
 }
-
-
 
 TASK_IMPL_3(MTBDD, transitions_intersection2_op, MTBDD *, pa, MTBDD *, pb, uint64_t, param) {
     MTBDD a = *pa, b = *pb;
@@ -398,9 +369,12 @@ TASK_IMPL_3(MTBDD, transitions_intersection2_op, MTBDD *, pa, MTBDD *, pb, uint6
             } else {
                 product_handle = existing_entry_it->second;
             }
-            leaf_contents.destination_set.insert(product_handle);
+
+            leaf_contents.insert(product_handle);
         }
     }
+
+    leaf_contents.sort();
 
     MTBDD intersection_leaf = make_set_leaf(&leaf_contents);
     return intersection_leaf;
@@ -412,7 +386,7 @@ TASK_IMPL_2(MTBDD, replace_macrostates_with_handles_op, MTBDD, dd, uint64_t, par
         ctx->is_trapstate_needed = true;
 
         Transition_Destination_Set new_leaf_contents;
-        new_leaf_contents.destination_set.insert(ctx->trapstate_handle);
+        new_leaf_contents.insert(ctx->trapstate_handle);
         MTBDD new_leaf = make_set_leaf(&new_leaf_contents);
 
         return new_leaf;
@@ -431,7 +405,7 @@ TASK_IMPL_2(MTBDD, replace_macrostates_with_handles_op, MTBDD, dd, uint64_t, par
 
     State macrostate_handle = known_macrostates_elem->second;
     Transition_Destination_Set new_leaf_contents;
-    new_leaf_contents.destination_set.insert(macrostate_handle);
+    new_leaf_contents.insert(macrostate_handle);
 
     MTBDD new_leaf = make_set_leaf(&new_leaf_contents);
     return new_leaf;
@@ -476,7 +450,7 @@ TASK_IMPL_2(MTBDD, replace_states_with_partition_ids_op, MTBDD, dd, uint64_t, it
         State eq_class_id = op_info->state_to_eq_class_id.at(dest_state);
 
         Transition_Destination_Set new_leaf_contents;
-        new_leaf_contents.destination_set.insert(eq_class_id);
+        new_leaf_contents.insert(eq_class_id);
         MTBDD leaf = make_set_leaf(&new_leaf_contents);
         return leaf;
     }

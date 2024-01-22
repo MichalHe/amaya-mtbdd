@@ -16,12 +16,12 @@
 
 using sylvan::MTBDD;
 
-Transition_Destination_Set::Transition_Destination_Set(const Transition_Destination_Set &other) {
-    // NOTE: Copy is called when a new leaf is created
-    this->destination_set = std::set<State>(other.destination_set);
+Transition_Destination_Set::Transition_Destination_Set(const Transition_Destination_Set& other) {
+    // @Note: Copy is called when a new leaf is created
+    this->destination_set = std::vector<State>(other.destination_set);
 }
 
-Transition_Destination_Set::Transition_Destination_Set(std::set<State>& destination_set) {
+Transition_Destination_Set::Transition_Destination_Set(std::vector<State>& destination_set) {
     // @Cleanup: Check whether is is even called as it does a copy of the destination set,
     //           and thus it is essentially the same as the copy constructor
     this->destination_set = destination_set;
@@ -42,6 +42,23 @@ void Transition_Destination_Set::print_dest_states() {
     std::cout << "}" << std::endl;
 }
 
+void Transition_Destination_Set::insert_sorted(State state) {
+    this->destination_set.push_back(state);
+}
+
+void Transition_Destination_Set::insert(State state) {
+    this->destination_set.push_back(state);
+    this->dirty = true;
+}
+
+void Transition_Destination_Set::sort() {
+    std::sort(this->destination_set.begin(), this->destination_set.end());
+    this->dirty = false;
+}
+
+bool Transition_Destination_Set::contains(State state) const {
+    return std::binary_search(this->destination_set.begin(), this->destination_set.end(), state);
+}
 
 void unpack_dont_care_bits_in_mtbdd_path(
         uint8_t* mtbdd_path,
@@ -217,8 +234,7 @@ void NFA::perform_pad_closure() {
     LACE_ME;
     using namespace sylvan; // @Cleanup: Remove this once we migrate to the new Sylvan version
 
-    Transition_Destination_Set frontier_init;
-    frontier_init.destination_set = std::set<State>(this->final_states);
+    Transition_Destination_Set frontier_init(std::vector<State>(this->final_states.begin(), this->final_states.end()));
 
     MTBDD frontier = sylvan::mtbdd_makeleaf(mtbdd_leaf_type_set, reinterpret_cast<u64>(&frontier_init));
     sylvan::mtbdd_refs_push(frontier);
@@ -338,8 +354,7 @@ void NFA::remove_states(std::set<State>& states_to_remove) {
 MTBDD compute_states_reaching_set_by_repeated_symbol(NFA& nfa, std::set<State>& states_to_reach) {
     LACE_ME;
 
-    Transition_Destination_Set frontier_init;
-    frontier_init.destination_set = std::set<State>(states_to_reach);
+    Transition_Destination_Set frontier_init (std::vector<State>(states_to_reach.begin(), states_to_reach.end()));
 
     MTBDD frontier = sylvan::mtbdd_makeleaf(mtbdd_leaf_type_set, reinterpret_cast<u64>(&frontier_init));
     sylvan::mtbdd_refs_push(frontier);
@@ -516,6 +531,8 @@ NFA compute_nfa_intersection(NFA& left, NFA& right) {
     return intersection_nfa;
 }
 
+extern u64 union_applied_cnt;
+
 NFA determinize_nfa(NFA& nfa) {
     LACE_ME;
     NFA result(nfa.vars, nfa.var_count);
@@ -543,6 +560,10 @@ NFA determinize_nfa(NFA& nfa) {
     u8 path_in_transitions_mtbdd[nfa.var_count];
 
     const u64 current_determinization_op_id = get_next_operation_id();
+
+    u64 total_state_size = 0;
+    u64 processed_states = 0;
+    union_applied_cnt = 0;
 
     while (!work_queue.empty()) {
         auto current_macrostate_entry = work_queue.back();
@@ -579,7 +600,15 @@ NFA determinize_nfa(NFA& nfa) {
         sylvan::mtbdd_ref(transition_mtbdd);
         sylvan::mtbdd_refs_pop(1);
         result.transitions.emplace(handle, transition_mtbdd);
+
+        total_state_size += current_macrostate_entry->first.size();
+        processed_states += 1;
     }
+
+    // std::cout << "# Determinization stats: \n";
+    // std::cout << "Union has been applied " << union_applied_cnt << " times.\n";
+    // std::cout << "Total states processed: " << processed_states << ".\n";
+    // std::cout << "Average macrostate size: " << total_state_size / static_cast<double>(processed_states) << ".\n";
 
     if (ctx.is_trapstate_needed) {
         result.states.insert(ctx.trapstate_handle);
