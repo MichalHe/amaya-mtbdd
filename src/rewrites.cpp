@@ -15,18 +15,12 @@ struct Linearization_Info {
     Captured_Modulus captured_mod;
 };
 
-s64 eval_mod_congruence_at_point(const Congruence_Node& congruence, s64 K, Captured_Modulus& mod, s64 point) {
-    // n*y + {+1, -1}m ~ K  (mod MODULUS)
-    s64 mod_coef = congruence.coefs[mod.subordinate_var];
-    assert(std::abs(mod_coef) == 1);
-
-    s64 n = congruence.coefs[mod.leading_var];
-    s64 modulus = combine_moduli(congruence.modulus_2pow, congruence.modulus_odd);
-
-    s64 congruence_val = ((n * point % modulus) - K) % modulus;
-    if (mod_coef > 0) {
-        congruence_val = (-1 * congruence_val) + modulus;
-    }
+/**
+ * Evaluate congruence of the form: m ~ <other_var_coef>*point - abs_part
+ */
+s64 eval_mod_congruence_at_point(s64 modulus, s64 other_var_coef, s64 abs_part, Captured_Modulus& mod, s64 point) {
+    // m ~ n*y - K  (mod MODULUS)
+    s64 congruence_val = ((other_var_coef * point % modulus) - abs_part) % modulus;
     return congruence_val + (congruence_val < 0) * modulus;
 }
 
@@ -217,10 +211,11 @@ Linear_Function linearize_congruence(
     s64 mod_var_coef = congruence.coefs[captured_mod.subordinate_var];
     s64 mod_inverse = compute_multiplicative_inverse(modulus, -mod_var_coef);
     // Transform n*y - u*m ~ K (mod MODULUS) into m ~ mod_inverse(u)*n*y - K (mod MODULUS)
-    s64 linear_function_dir = mod_inverse * leading_var_coef;
+    s64 linear_function_dir = (mod_inverse * leading_var_coef) % abs(modulus);
     s64 left_val = linear_function_dir * y_values.low - K;
 
-    s64 left_mod_val  = eval_mod_congruence_at_point(congruence, K, captured_mod, y_values.low);
+    // m = (linear_function_dir*Y - K) -- plug in <y_values.low> for Y
+    s64 left_mod_val  = eval_mod_congruence_at_point(modulus, linear_function_dir, K, captured_mod, y_values.low);
 
     PRINTF_DEBUG("Evaluating the congruence at %ld would yield %ld, evaluating a linear function would yield %ld\n", y_values.low, left_mod_val, left_val);
 
