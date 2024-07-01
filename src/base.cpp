@@ -237,19 +237,35 @@ void NFA::perform_pad_closure() {
     Transition_Destination_Set frontier_init(std::vector<State>(this->final_states.begin(), this->final_states.end()));
 
     MTBDD frontier = sylvan::mtbdd_makeleaf(mtbdd_leaf_type_set, reinterpret_cast<u64>(&frontier_init));
-    sylvan::mtbdd_refs_push(frontier);
 
+    sylvan::mtbdd_ref(frontier);
     bool was_frontier_modified = true;
-    while (was_frontier_modified) {
-        MTBDD new_frontier = frontier;
-        for (auto& [origin, state_mtbdd]: transitions) {
-            new_frontier = mtbdd_applyp(state_mtbdd, new_frontier, origin, TASK(build_pad_closure_fronier_op), AMAYA_EXTEND_FRONTIER_OP_ID);
-        }
-        was_frontier_modified = (new_frontier != frontier);
 
-        frontier = new_frontier;
-        sylvan::mtbdd_refs_pop(1);
-        sylvan::mtbdd_refs_push(frontier);
+    while (was_frontier_modified) {
+
+        MTBDD this_iter_start_frontier = frontier;  // Frontier created at the end of this iteration
+        MTBDD this_iter_end_frontier   = frontier;  // Frontier after we propagate everything in this iteration
+
+        sylvan::mtbdd_ref(this_iter_start_frontier);
+        sylvan::mtbdd_ref(this_iter_end_frontier);
+
+        for (auto& [origin, state_mtbdd]: transitions) {
+            MTBDD tmp_frontier = mtbdd_applyp(state_mtbdd, this_iter_end_frontier, origin, TASK(build_pad_closure_fronier_op), AMAYA_EXTEND_FRONTIER_OP_ID);
+
+            sylvan::mtbdd_ref(tmp_frontier);
+            sylvan::mtbdd_deref(this_iter_end_frontier);
+
+            this_iter_end_frontier = tmp_frontier;
+        }
+
+        was_frontier_modified = (this_iter_end_frontier != this_iter_start_frontier);
+
+        // frontier, start_frontier, end_frontier are all referenced
+        sylvan::mtbdd_deref(frontier);
+        frontier = this_iter_end_frontier;
+        sylvan::mtbdd_deref(this_iter_start_frontier);
+        // Only end_frontier is now referenced, and it is assigned above to fronier --->
+        // only frontier is referenced
     }
 
     State new_final_state = *states.rbegin() + 1;
@@ -284,7 +300,7 @@ void NFA::perform_pad_closure() {
         PRINT_DEBUG("Added a new final state " << new_final_state << " during pad closue.");
     }
 
-    sylvan::mtbdd_refs_pop(1); // -frontier
+    sylvan::mtbdd_deref(frontier); // -frontier
 }
 
 void collect_reachable_states_from_mtbdd_leaves(MTBDD root, std::set<State>& output) {
