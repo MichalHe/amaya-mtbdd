@@ -1,1 +1,6 @@
 build/
+.cache/
+.clang
+.idea/
+compile_commands.json
+external/
