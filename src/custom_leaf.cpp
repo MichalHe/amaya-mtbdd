@@ -10,11 +10,14 @@
 #include <sstream>
 #include <sylvan.h>
 
-uint64_t mtbdd_leaf_type_set;
+uint64_t mtbdd_leaf_type_singleton;
 
-sylvan::MTBDD
-make_set_leaf(Transition_Destination_Set* value) {
-    sylvan::MTBDD leaf = sylvan::mtbdd_makeleaf(mtbdd_leaf_type_set, (uint64_t) value);
+Solver_Context* g_solver_context;
+
+
+sylvan::MTBDD make_set_leaf(Transition_Destination_Set* value) {
+    sylvan::MTBDD leaf = sylvan::mtbdd_makeleaf(g_solver_context->leaf_id_store.transition_set,
+                                                (uint64_t) value);
     return leaf;
 }
 
@@ -58,6 +61,24 @@ uint64_t set_leaf_hash(const uint64_t leaf_contents_raw_ptr, const uint64_t seed
     return hash ^ (hash >> 32);
 }
 
+
+char* write_str_into_buf_or_alloc_new(const std::string& str, char *buf, size_t buflen) {
+    // Does the resulting string fit into the provided buffer?
+    const size_t required_buf_size = str.size() + 1; // With '\0' at the end
+    if (required_buf_size <= buflen) {
+        const char *cstr = str.c_str();
+        std::memcpy(buf, cstr, sizeof(char) * required_buf_size);
+        return buf;
+    }
+
+    char *new_buf = (char*) malloc(sizeof(char) * required_buf_size);
+    assert(new_buf != nullptr);
+
+    std::memcpy(new_buf, str.c_str(), sizeof(char) * required_buf_size);
+    return new_buf;
+}
+
+
 char* set_leaf_to_str(int comp, uint64_t leaf_contents_raw_ptr, char *buf, size_t buflen) {
     (void)comp;
 
@@ -75,17 +96,44 @@ char* set_leaf_to_str(int comp, uint64_t leaf_contents_raw_ptr, char *buf, size_
     ss << "}";
 
     const std::string str(ss.str());
+    return write_str_into_buf_or_alloc_new(str, buf, buflen);
+}
 
-    // Does the resulting string fit into the provided buffer?
-    const size_t required_buf_size = str.size() + 1; // With '\0' at the end
-    if (required_buf_size <= buflen) {
-        const char *cstr = str.c_str();
-        std::memcpy(buf, cstr, sizeof(char) * required_buf_size);
-        return buf;
+
+void Set_Leaf::init_set_leaf(Leaf_Type_Id_Store* type_store) {
+    type_store->transition_set = sylvan::sylvan_mt_create_type();
+    sylvan::sylvan_mt_set_hash(type_store->transition_set, set_leaf_hash);
+    sylvan::sylvan_mt_set_equals(type_store->transition_set, set_leaf_equals);
+    sylvan::sylvan_mt_set_create(type_store->transition_set, mk_set_leaf);
+    sylvan::sylvan_mt_set_destroy(type_store->transition_set, destroy_set_leaf);
+    sylvan::sylvan_mt_set_to_str(type_store->transition_set, set_leaf_to_str);
+}
+
+
+namespace Deterministic_Leaf {
+    sylvan::MTBDD create(s64 value) {
+        sylvan::MTBDD leaf = sylvan::mtbdd_makeleaf(mtbdd_leaf_type_singleton, (uint64_t) value);
+        return leaf;
     }
-    else {
-        char *new_buf = (char *)malloc(sizeof(char) * required_buf_size);
-        std::memcpy(new_buf, str.c_str(), sizeof(char) * required_buf_size);
-        return new_buf;
+
+    void create_form_value(uint64_t* value_ptr) {
+        *value_ptr = *value_ptr; // NOP
     }
+
+    void destroy() {}
+
+    int equals(uint64_t a_value, uint64_t b_value) {
+        return a_value == b_value;
+    }
+
+    uint64_t hash(const uint64_t value, const uint64_t seed) {
+        return value;
+    }
+    
+    char* into_str(int comp, uint64_t leaf_val, char *buf, size_t buflen) {
+        std::stringstream ss;
+        ss << leaf_val;
+        return write_str_into_buf_or_alloc_new(ss.str(), buf, buflen);
+    }
+
 }

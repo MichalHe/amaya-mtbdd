@@ -70,11 +70,18 @@ public:
     bool contains(State state) const;
 };
 
+
+enum NFA_Flags {
+    NFA_FLAG_DETERMINISTIC = 0x01,
+};
+
+
 struct NFA {
     set<State> states;
     set<State> final_states;
     set<State> initial_states;
     unordered_map<State, sylvan::MTBDD> transitions;
+    u64 flags = 0u;
 
     sylvan::BDDSET vars;
     u64 var_count;
@@ -86,13 +93,14 @@ struct NFA {
         std::set<State>&& initial_states={}) : vars(vars), var_count(var_count), states(states), final_states(final_states), initial_states(initial_states), transitions({}) {
         sylvan::mtbdd_ref(vars);
     };
-    ~NFA() {
-        sylvan::mtbdd_deref(vars);
-    }
+
     NFA(const NFA& other) : vars(other.vars), var_count(other.var_count), states(other.states), final_states(other.final_states), initial_states(other.initial_states), transitions(other.transitions)  {
         sylvan::mtbdd_ref(vars);
     }
 
+    ~NFA() {
+        sylvan::mtbdd_deref(vars);
+    }
 
     // @Cleanup: Factor out the sylvan global configuration into a context struct
     void perform_pad_closure();

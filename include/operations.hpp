@@ -10,6 +10,7 @@
 #include <unordered_map>
 
 #include <sylvan.h>
+#include "../include/bit_set.hpp"
 
 /**
 Operation IDs are shifted by 40, because of the way sylvan combines the operation ID with other value parameters
@@ -33,8 +34,9 @@ u64 get_next_operation_id();
 * Global constant information used troughout a single invocation of a pad closure
 */
 struct Pad_Closure_Info2 {
-    const State new_final_state;
+    State                  new_final_state;
     const std::set<State>* final_states;
+    Bit_Set::Bit_Set       final_states_bits;
 };
 extern Pad_Closure_Info2* g_pad_closure_info;
 
@@ -62,7 +64,9 @@ TASK_DECL_2(sylvan::MTBDD, remove_states_op, sylvan::MTBDD, uint64_t);
 TASK_DECL_2(sylvan::MTBDD, rename_states_op, sylvan::MTBDD, uint64_t);
 
 TASK_DECL_3(sylvan::MTBDD, build_pad_closure_fronier_op, sylvan::MTBDD*, sylvan::MTBDD*, u64);
+TASK_DECL_3(sylvan::MTBDD, build_pad_closure_bit_set_fronier_op, sylvan::MTBDD*, sylvan::MTBDD*, u64);
 TASK_DECL_3(sylvan::MTBDD, add_pad_transitions_op, sylvan::MTBDD*, sylvan::MTBDD*, u64);
+TASK_DECL_3(sylvan::MTBDD, add_pad_transitions_bit_set_op, sylvan::MTBDD*, sylvan::MTBDD*, u64);
 
 TASK_DECL_3(sylvan::MTBDD, transitions_intersection2_op, sylvan::MTBDD *, sylvan::MTBDD *, uint64_t);
 TASK_DECL_2(sylvan::MTBDD, replace_macrostates_with_handles_op, sylvan::MTBDD, uint64_t);

@@ -1051,12 +1051,10 @@ void init_mtbdd_libs() {
     sylvan::sylvan_init_package();
     sylvan::sylvan_init_mtbdd();
 
-    mtbdd_leaf_type_set = sylvan::sylvan_mt_create_type();
-    sylvan::sylvan_mt_set_hash(mtbdd_leaf_type_set, set_leaf_hash);
-    sylvan::sylvan_mt_set_equals(mtbdd_leaf_type_set, set_leaf_equals);
-    sylvan::sylvan_mt_set_create(mtbdd_leaf_type_set, mk_set_leaf);
-    sylvan::sylvan_mt_set_destroy(mtbdd_leaf_type_set, destroy_set_leaf);
-    sylvan::sylvan_mt_set_to_str(mtbdd_leaf_type_set, set_leaf_to_str);
+
+    g_solver_context = new Solver_Context();
+    Bit_Set_Leaf::init_bit_set_leaf(&g_solver_context->leaf_id_store);   
+    Set_Leaf::init_set_leaf(&g_solver_context->leaf_id_store);   
 
     init_tfa_leaves();
 }

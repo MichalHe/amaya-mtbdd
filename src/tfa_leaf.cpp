@@ -353,7 +353,7 @@ TASK_IMPL_3(
     assert(mtbdd_isleaf(not_bot));
     if (not_bot_type != mtbdd_tfa_intersection_leaf_type_id) {
         debug_show_tfa_types(std::cout);
-        std::cout << mtbdd_leaf_type_set << std::endl;
+        std::cout << g_solver_context->leaf_id_store.transition_set << std::endl;
         std::cout << not_bot_type << " vs " << mtbdd_tfa_intersection_leaf_type_id << std::endl;
     }
     assert(mtbdd_gettype(not_bot) == mtbdd_tfa_intersection_leaf_type_id);

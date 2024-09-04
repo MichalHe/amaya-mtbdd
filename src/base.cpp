@@ -236,7 +236,8 @@ void NFA::perform_pad_closure() {
 
     Transition_Destination_Set frontier_init(std::vector<State>(this->final_states.begin(), this->final_states.end()));
 
-    MTBDD frontier = sylvan::mtbdd_makeleaf(mtbdd_leaf_type_set, reinterpret_cast<u64>(&frontier_init));
+    MTBDD frontier = sylvan::mtbdd_makeleaf(g_solver_context->leaf_id_store.transition_set,
+                                            reinterpret_cast<u64>(&frontier_init));
 
     sylvan::mtbdd_ref(frontier);
     bool was_frontier_modified = true;
@@ -372,7 +373,8 @@ MTBDD compute_states_reaching_set_by_repeated_symbol(NFA& nfa, std::set<State>& 
 
     Transition_Destination_Set frontier_init (std::vector<State>(states_to_reach.begin(), states_to_reach.end()));
 
-    MTBDD frontier = sylvan::mtbdd_makeleaf(mtbdd_leaf_type_set, reinterpret_cast<u64>(&frontier_init));
+    MTBDD frontier = sylvan::mtbdd_makeleaf(g_solver_context->leaf_id_store.transition_set,
+                                            reinterpret_cast<u64>(&frontier_init));
     sylvan::mtbdd_refs_push(frontier);
 
     bool was_frontier_modified = true;

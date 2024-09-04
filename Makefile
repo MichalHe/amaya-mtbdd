@@ -2,7 +2,7 @@ CXX=g++
 CC=gcc
 CXXLIBS=$(shell pkg-config --libs sylvan)
 
-COMMON_FLAGS := -O3 -g
+COMMON_FLAGS := -O0 -g
 SHARED_LIB_FLAGS=-shared -fPIC
 
 CXXFLAGS=$(COMMON_FLAGS) --std=c++20 $(SHARED_LIB_FLAGS)
@@ -10,7 +10,7 @@ CFLAGS=$(COMMON_FLAGS) $(SHARED_LIB_FLAGS)
 
 .PHONY := clean
 
-lazy-tests: build/lazy-tests.o build/lazy.o build/base.o build/custom_leaf.o build/operations.o build/sylvan-extra.o build/pareto_set.o build/tfa_leaf.o build/rewrites.o
+lazy-tests: build/lazy-tests.o build/lazy.o build/base.o build/custom_leaf.o build/operations.o build/sylvan-extra.o build/pareto_set.o build/tfa_leaf.o build/rewrites.o build/bit_set.o build/bit_set_leaf.o build/algorithms.o
 	$(CXX) -o $@ $^ $(CXXLIBS)
 
 build/lazy-tests.o: src/lazy-tests.cpp
@@ -47,6 +47,15 @@ build/rewrites.o: include/base.hpp include/rewrites.h include/lazy.hpp src/rewri
 
 build/tfa_leaf.o: include/base.hpp include/tfa_leaf.h include/operations.hpp include/pareto_set.h src/tfa_leaf.cpp
 	$(CXX) -c $(CXXFLAGS) src/tfa_leaf.cpp -o $@
+
+build/bit_set.o: include/bit_set.hpp src/bit_set.cpp
+	$(CXX) -c $(CXXFLAGS) src/bit_set.cpp -o $@
+
+build/bit_set_leaf.o: src/bit_set_leaf.cpp include/bit_set.hpp
+	$(CXX) -c $(CXXFLAGS) src/bit_set_leaf.cpp -o $@
+
+build/algorithms.o: src/algorithms.cpp include/custom_leaf.hpp
+	$(CXX) -c $(CXXFLAGS) src/algorithms.cpp -o $@
 
 build/sylvan-extra.o: include/sylvan-extra.h src/sylvan-extra.c
 	$(CC) -c $(CFLAGS) -o $@ src/sylvan-extra.c

@@ -38,8 +38,6 @@ using sylvan::mtbdd_getvalue;
 using sylvan::mtbdd_invalid;
 using sylvan::mtbdd_applyp_CALL;
 
-extern uint64_t mtbdd_leaf_type_set;
-
 /**
  * Global variables:
  */
@@ -176,7 +174,8 @@ TASK_IMPL_2(MTBDD, rename_states_op, MTBDD, dd, uint64_t, param) {
         }
 
         new_leaf_contents->sort();
-        return mtbdd_makeleaf(mtbdd_leaf_type_set, reinterpret_cast<uint64_t>(new_leaf_contents));
+        return mtbdd_makeleaf(g_solver_context->leaf_id_store.transition_set,
+                              reinterpret_cast<uint64_t>(new_leaf_contents));
     }
 
     return mtbdd_invalid;
@@ -250,6 +249,97 @@ TASK_IMPL_3(MTBDD, build_pad_closure_fronier_op, MTBDD *, p_extension, MTBDD *, 
     return mtbdd_invalid;
 }
 
+TASK_IMPL_3(MTBDD, build_pad_closure_bit_set_fronier_op, MTBDD *, p_extension, MTBDD *, p_frontier, u64, raw_extension_origin_state)
+{
+    State state_to_extend_frontier_with = static_cast<State>(raw_extension_origin_state);
+    MTBDD extension = *p_extension;  // Set_Leaf
+    MTBDD frontier  = *p_frontier;   // Bit_Set
+    
+    if (extension == mtbdd_false) {
+        return frontier;
+    }
+
+    if (frontier == mtbdd_false) {
+        return mtbdd_false;
+    }
+
+    
+    if (mtbdd_isleaf(extension) && mtbdd_isleaf(frontier)) {
+        auto extension_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(extension));
+        auto frontier_contents  = reinterpret_cast<Bit_Set::Bit_Set>(mtbdd_getvalue(frontier));
+
+        bool is_already_present = Bit_Set::is_state_present(frontier_contents, state_to_extend_frontier_with);
+        if (is_already_present) {
+            return frontier;
+        }
+
+        bool can_ext_post_state_reach_final = Bit_Set::has_any_state(frontier_contents, extension_contents->destination_set);
+        if (can_ext_post_state_reach_final) {
+            Bit_Set::Bit_Set new_frontier = g_solver_context->bit_set_alloc->alloc();
+            Bit_Set::populate_with(new_frontier, frontier_contents);
+            Bit_Set::add_state(new_frontier, state_to_extend_frontier_with);
+
+            MTBDD result = Bit_Set_Leaf::make_bit_set_leaf(new_frontier);
+
+            g_solver_context->bit_set_alloc->dealloc(new_frontier);
+
+            return result;
+        }
+
+        return frontier;
+    }
+
+    return sylvan::mtbdd_invalid;
+}
+
+TASK_IMPL_3(MTBDD, add_pad_transitions_bit_set_op, MTBDD *, p_transitions, MTBDD *, p_frontier, u64, raw_origin_state) {
+    State origin_state = static_cast<State>(raw_origin_state);
+
+    assert(g_pad_closure_info != nullptr);
+    const Pad_Closure_Info2* pad_closure_info = g_pad_closure_info;
+
+    MTBDD transitions = *p_transitions, frontier = *p_frontier;
+
+    if (transitions == mtbdd_false) {
+        return mtbdd_false;
+    }
+
+    if (frontier == mtbdd_false) {
+        return transitions;
+    }
+
+    if (!mtbdd_isleaf(transitions) || !mtbdd_isleaf(frontier)) {
+        return mtbdd_invalid;
+    }
+
+    auto frontier_states     = reinterpret_cast<Bit_Set::Bit_Set>(mtbdd_getvalue(frontier));
+    auto current_transitions = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(transitions));
+
+    if (!Bit_Set::is_state_present(frontier_states, origin_state)) {
+        return transitions;
+    }
+
+    if (!Bit_Set::has_any_state(frontier_states, current_transitions->destination_set)) {
+        // It is not possible to reach a final state from origin
+        return transitions;
+    }
+
+    Bit_Set::Bit_Set final_states = pad_closure_info->final_states_bits;
+
+    if (!Bit_Set::has_any_state(final_states, current_transitions->destination_set)) {
+        // The pad property is broken here, we need to fix it
+        Transition_Destination_Set new_transition_contents(*current_transitions);
+
+        assert(pad_closure_info->new_final_state > current_transitions->destination_set.back());
+
+        new_transition_contents.insert_sorted(pad_closure_info->new_final_state);
+        MTBDD new_destinations = sylvan::mtbdd_makeleaf(g_solver_context->leaf_id_store.transition_set,
+                                                        reinterpret_cast<u64>(&new_transition_contents));
+        return new_destinations;
+    }
+
+    return transitions;
+}
 
 TASK_IMPL_3(MTBDD, add_pad_transitions_op, MTBDD *, p_transitions, MTBDD *, p_frontier, u64, raw_origin_state) {
     State origin_state = static_cast<State>(raw_origin_state);
@@ -295,7 +385,8 @@ TASK_IMPL_3(MTBDD, add_pad_transitions_op, MTBDD *, p_transitions, MTBDD *, p_fr
             assert(pad_closure_info->new_final_state > transition_contents->destination_set.back());
 
             new_transition_contents.insert_sorted(pad_closure_info->new_final_state);
-            MTBDD new_destinations = sylvan::mtbdd_makeleaf(mtbdd_leaf_type_set, reinterpret_cast<u64>(&new_transition_contents));
+            MTBDD new_destinations = sylvan::mtbdd_makeleaf(g_solver_context->leaf_id_store.transition_set,
+                                                            reinterpret_cast<u64>(&new_transition_contents));
             return new_destinations;
         }
 

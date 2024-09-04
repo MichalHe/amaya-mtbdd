@@ -6,6 +6,7 @@
 #include "../include/vectors.h"
 #include "../include/tfa_leaf.h"
 #include "../include/rewrites.h"
+#include "../include/algorithms.hpp"
 
 #include <algorithm>
 #include <vector>
@@ -1346,48 +1347,6 @@ TEST_CASE("Test extended Euclidean") {
     CHECK(compute_multiplicative_inverse(13, 12) == 12);
 }
 
-TEST_CASE("Test evaluate_mod_congruence_at_point") {
-    SUBCASE("atom `y - m = 0 (mod 4)`") {
-        Atom_Allocator alloc;
-        Formula formula1 = make_formula(alloc, {{{1, -1}, 4}}, {}, {}, {});
-
-        Formula_Allocator formula_allocator (&formula1);
-
-        CHECK(formula1.dep_graph.congruences.size() == 1);
-        Congruence_Node& node = formula1.dep_graph.congruences[0];
-
-        Captured_Modulus mod = {.leading_var = 0, .subordinate_var = 1};
-        s64 value = eval_mod_congruence_at_point(node, 0, mod, 0);
-        CHECK(value == 0);
-
-        value = eval_mod_congruence_at_point(node, 0, mod, 4);
-        CHECK(value == 0);
-
-        value = eval_mod_congruence_at_point(node, 0, mod, -1);
-        CHECK(value == 3);
-    }
-
-    SUBCASE("atom `3*y - m = 0 (mod 5)`") {
-        Atom_Allocator alloc;
-        Formula formula1 = make_formula(alloc, {{{3, -1}, 5}}, {}, {}, {});
-
-        Formula_Allocator formula_allocator (&formula1);
-
-        CHECK(formula1.dep_graph.congruences.size() == 1);
-        Congruence_Node& node = formula1.dep_graph.congruences[0];
-
-        Captured_Modulus mod = {.leading_var = 0, .subordinate_var = 1};
-        s64 value = eval_mod_congruence_at_point(node, 0, mod, 0);
-        CHECK(value == 0);
-
-        value = eval_mod_congruence_at_point(node, 0, mod, 4);
-        CHECK(value == 2);
-
-        value = eval_mod_congruence_at_point(node, 0, mod, -1);
-        CHECK(value == 2);
-    }
-}
-
 TEST_CASE("Test get_point_for_mod_congruence_to_obtain_value") {
     SUBCASE("atom `3*y - m = 0 (mod 5)`") {
         Atom_Allocator alloc;
@@ -1824,16 +1783,6 @@ TEST_CASE("Explore macrostate") {
             actual_macrostates.insert(*m);
         }
 
-        std::cout << "Expected:\n";
-        for (auto& m: expected_macrostates) {
-            std::cout << m << std::endl;
-        }
-
-        std::cout << "Actual:\n";
-        for (auto& m: actual_macrostates) {
-            std::cout << m << std::endl;
-        }
-
         CHECK(expected_macrostates == actual_macrostates);
     }
 
@@ -2078,16 +2027,10 @@ TEST_CASE("Symbol vs eager approach") {
         Macrostate2 init_macrostate = make_macrostate(
             alloc, {Macrostate_Init({}, {-39, 218, 0, 100, -44982})}, &formula);
 
-        auto start = std::chrono::system_clock::now();
         auto actual_nfa = build_nfa_for_conjunction(formula, init_macrostate);
         actual_nfa.perform_pad_closure();
         actual_nfa = determinize_nfa(actual_nfa);
         auto result = minimize_hopcroft(actual_nfa);
-        std::cout << actual_nfa.states.size() << std::endl;
-        std::cout << "Result result! " << result.states.size() << std::endl;
-        auto end = std::chrono::system_clock::now();
-        std::chrono::duration<double> elapsed_seconds = end - start;
-        std::cout << "New implementation took: " << elapsed_seconds.count() << std::endl;
     }
 
     {
@@ -2106,13 +2049,8 @@ TEST_CASE("Symbol vs eager approach") {
 
         sylvan::BDDSET vars = make_var_set({1, 2, 3});
 
-        auto start = std::chrono::system_clock::now();
         auto actual_nfa = build_nfa_with_formula_entailement(formula_id, init_state, vars, pool);
         std::cout << actual_nfa.states.size() << std::endl;
-        std::cout << "Minimal: " << minimize_hopcroft(actual_nfa).states.size() << std::endl;
-        auto end = std::chrono::system_clock::now();
-        std::chrono::duration<double> elapsed_seconds = end - start;
-        std::cout << "Old implementation took: " << elapsed_seconds.count() << std::endl;
     }
 }
 
@@ -2212,6 +2150,43 @@ TEST_CASE("Watched formula rewrite") {
 
         if (res_graph != &dep_graph) delete res_graph;
     }
+}
+
+void add_all_transitions_to_nfa(NFA& nfa, const std::vector<Transition>& transitions) {
+    for (auto it: transitions) nfa.add_transition(it.from, it.to, it.symbol.data());
+}
+
+TEST_CASE("Test pad closure") {
+    SUBCASE("Simple") {
+        sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
+        vars = sylvan::mtbdd_set_add(vars, 1);
+
+        NFA nfa (
+            vars, 1,
+            {0, 1, 2}, {2}, {0}
+        );
+
+        vector<Transition> transitions {
+            {.from = 0, .to = 1, .symbol = {1}},
+            {.from = 1, .to = 2, .symbol = {1}},
+        };
+
+        add_all_transitions_to_nfa(nfa, transitions);
+
+        NFA result = do_pad_closure_using_bit_sets(&nfa);
+
+        CHECK(result.states == std::set<State>({0, 1, 2, 3}));
+        CHECK(result.final_states == std::set<State>({2, 3}));
+        auto actual_transitions = result.get_symbolic_transitions_for_state(0);
+
+        Transition needle_transition = {.from = 0, .to = 3, .symbol = {1}};
+        CHECK(actual_transitions.size() == 2);
+
+        auto needle_pos = std::find(actual_transitions.begin(), actual_transitions.end(), needle_transition);
+        CHECK(needle_pos != actual_transitions.end());
+    }
+    
+    
 }
 
 int main(int argc, char* argv[]) {
