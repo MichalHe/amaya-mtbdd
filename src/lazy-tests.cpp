@@ -2156,37 +2156,89 @@ void add_all_transitions_to_nfa(NFA& nfa, const std::vector<Transition>& transit
     for (auto it: transitions) nfa.add_transition(it.from, it.to, it.symbol.data());
 }
 
-TEST_CASE("Test pad closure") {
-    SUBCASE("Simple") {
+TEST_CASE("Test bit_set pad closure") {
+    Bit_Set::Block_Arena_Allocator allocator = Bit_Set::create_allocator_for_n_states(0, 0);
+    g_solver_context->bit_set_alloc = &allocator;
+    SUBCASE("Simple (distance 2)") {
         sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
         vars = sylvan::mtbdd_set_add(vars, 1);
 
         NFA nfa (
             vars, 1,
-            {0, 1, 2}, {2}, {0}
+            {0, 1, 2, 3}, {3}, {0}
         );
 
         vector<Transition> transitions {
             {.from = 0, .to = 1, .symbol = {1}},
             {.from = 1, .to = 2, .symbol = {1}},
+            {.from = 2, .to = 3, .symbol = {1}},
         };
 
         add_all_transitions_to_nfa(nfa, transitions);
 
-        NFA result = do_pad_closure_using_bit_sets(&nfa);
+        allocator.start_new_generation(nfa.states.size());
+        NFA result = do_pad_closure_using_bit_sets(&nfa, &allocator);
 
-        CHECK(result.states == std::set<State>({0, 1, 2, 3}));
-        CHECK(result.final_states == std::set<State>({2, 3}));
-        auto actual_transitions = result.get_symbolic_transitions_for_state(0);
+        CHECK(result.states == std::set<State>({0, 1, 2, 3, 4}));
+        CHECK(result.final_states == std::set<State>({3, 4}));
 
-        Transition needle_transition = {.from = 0, .to = 3, .symbol = {1}};
-        CHECK(actual_transitions.size() == 2);
+        std::vector<Transition> needle_transitions = {
+            {.from = 0, .to = 4, .symbol = {1}},
+            {.from = 1, .to = 4, .symbol = {1}}
+        };
 
-        auto needle_pos = std::find(actual_transitions.begin(), actual_transitions.end(), needle_transition);
-        CHECK(needle_pos != actual_transitions.end());
+        for (auto& needle_transition: needle_transitions) {
+            auto actual_transitions = result.get_symbolic_transitions_for_state(needle_transition.from);
+            auto needle_pos = std::find(actual_transitions.begin(), actual_transitions.end(), needle_transition);
+            if (needle_pos == actual_transitions.end()) {
+                std::cout << "Transition " << needle_transition << " has not been added during pad closure\n";
+            }
+            CHECK(needle_pos != actual_transitions.end());
+        }
     }
-    
-    
+
+    SUBCASE("Simple (multiple symbols)") {
+        std::cout << "Simple!" << std::endl;
+        sylvan::BDDSET vars = sylvan::mtbdd_set_empty();
+        vars = sylvan::mtbdd_set_add(vars, 1);
+        vars = sylvan::mtbdd_set_add(vars, 2);
+        u64 var_count = 2;
+
+        NFA nfa (
+            vars, var_count,
+            {0, 1, 2, 3, 4}, {3}, {0}
+        );
+
+        vector<Transition> transitions {
+            {.from = 0, .to = 1, .symbol = {1, 0}},
+            {.from = 1, .to = 2, .symbol = {1, 0}},
+            {.from = 2, .to = 3, .symbol = {1, 0}},
+            {.from = 0, .to = 4, .symbol = {0, 1}},
+            {.from = 4, .to = 3, .symbol = {0, 1}},
+        };
+
+        add_all_transitions_to_nfa(nfa, transitions);
+
+        allocator.start_new_generation(nfa.states.size());
+        NFA result = do_pad_closure_using_bit_sets(&nfa, &allocator);
+
+        CHECK(result.states == std::set<State>({0, 1, 2, 3, 4, 5}));
+        CHECK(result.final_states == std::set<State>({3, 5}));
+
+        std::vector<Transition> needle_transitions = {
+            {.from = 0, .to = 5, .symbol = {1, 0}},
+            {.from = 0, .to = 5, .symbol = {0, 1}}
+        };
+
+        auto actual_transitions = result.get_symbolic_transitions_for_state(0);
+        for (auto& needle_transition: needle_transitions) {
+            auto needle_pos = std::find(actual_transitions.begin(), actual_transitions.end(), needle_transition);
+            if (needle_pos == actual_transitions.end()) {
+                std::cout << "Transition " << needle_transition << " has not been added during pad closure\n";
+            }
+            CHECK(needle_pos != actual_transitions.end());
+        }
+    }
 }
 
 int main(int argc, char* argv[]) {

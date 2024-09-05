@@ -2,7 +2,7 @@ CXX=g++
 CC=gcc
 CXXLIBS=$(shell pkg-config --libs sylvan)
 
-COMMON_FLAGS := -O0 -g
+COMMON_FLAGS := -O2 -g
 SHARED_LIB_FLAGS=-shared -fPIC
 
 CXXFLAGS=$(COMMON_FLAGS) --std=c++20 $(SHARED_LIB_FLAGS)
@@ -21,7 +21,7 @@ shared-lib: build build/amaya-mtbdd.so
 build/lazy.o: src/lazy.cpp include/lazy.hpp include/base.hpp include/pareto_set.h include/tfa_leaf.h include/vectors.h include/rewrites.h
 	$(CXX) -c $(CXXFLAGS) src/lazy.cpp -o build/lazy.o
 
-build/amaya-mtbdd.so: build/wrapper.o build/operations.o build/custom_leaf.o build/base.o build/lazy.o build/sylvan-extra.o build/tfa_leaf.o build/pareto_set.o build/rewrites.o
+build/amaya-mtbdd.so: build/wrapper.o build/operations.o build/custom_leaf.o build/base.o build/lazy.o build/sylvan-extra.o build/tfa_leaf.o build/pareto_set.o build/rewrites.o build/bit_set_leaf.o build/algorithms.o
 	$(CXX) $(CXXFLAGS) $(SHARED_LIB_FLAGS) -o $@ $^ $(CXXLIBS)
 
 build/wrapper.o: src/wrapper.cpp include/wrapper.hpp include/operations.hpp include/base.hpp include/custom_leaf.hpp

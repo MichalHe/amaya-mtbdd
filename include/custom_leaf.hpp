@@ -15,7 +15,7 @@ struct Leaf_Type_Id_Store {
 
 struct Solver_Context {
     Leaf_Type_Id_Store leaf_id_store;
-    Bit_Set::Block_Arena_Allocator* bit_set_alloc;  
+    Bit_Set::Block_Arena_Allocator* bit_set_alloc;
 };
 
 extern Solver_Context* g_solver_context;
@@ -52,7 +52,7 @@ namespace Deterministic_Leaf {
 }
 
 namespace Bit_Set_Leaf {
-    sylvan::MTBDD make_bit_set_leaf(Bit_Set::Bit_Set bit_set);
+    sylvan::MTBDD make_bit_set_leaf(Bit_Set::Bit_Set* bit_set);
     void create_from_value(u64* bit_set_to_copy);
     void destroy_leaf(u64 bit_set_raw_ptr);
     int leaf_equals(u64 left_bit_set_raw_ptr, u64 right_bit_set_raw_ptr);
@@ -60,6 +60,7 @@ namespace Bit_Set_Leaf {
     char* into_str(int comp, uint64_t leaf_val, char *buf, size_t buflen);
 
     void init_bit_set_leaf(Leaf_Type_Id_Store* type_store);
+    std::vector<Transition> unpack_mtbdd(sylvan::MTBDD bdd, State origin_state, sylvan::BDDSET support_vars, u64 support_size);
 }
 
 #endif

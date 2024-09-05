@@ -2,6 +2,7 @@
 #include "../include/base.hpp"
 #include "../include/custom_leaf.hpp"
 #include "../include/operations.hpp"
+#include "../include/algorithms.hpp"
 
 #include <algorithm>
 #include <sylvan.h>
@@ -129,18 +130,20 @@ void init_machinery()
     sylvan_init_mtbdd();
 
     // Initialize leaf type for leaves containing sets - represents outgoing transition from a state
-    mtbdd_leaf_type_set = sylvan_mt_create_type();
-    sylvan_mt_set_hash(mtbdd_leaf_type_set, set_leaf_hash);
-    sylvan_mt_set_equals(mtbdd_leaf_type_set, set_leaf_equals);
-    sylvan_mt_set_create(mtbdd_leaf_type_set, mk_set_leaf);
-    sylvan_mt_set_destroy(mtbdd_leaf_type_set, destroy_set_leaf);
-    sylvan_mt_set_to_str(mtbdd_leaf_type_set, set_leaf_to_str);
+    g_solver_context = new Solver_Context;
+    Set_Leaf::init_set_leaf(&g_solver_context->leaf_id_store);
+    Bit_Set_Leaf::init_bit_set_leaf(&g_solver_context->leaf_id_store);
+
+    g_solver_context->bit_set_alloc = new Bit_Set::Block_Arena_Allocator();
 }
 
 void shutdown_machinery()
 {
     sylvan_quit();
     lace_exit();
+
+    delete g_solver_context->bit_set_alloc;
+    delete g_solver_context;
 }
 
 MTBDD amaya_mtbdd_build_single_terminal(
@@ -754,6 +757,13 @@ Serialized_NFA* amaya_perform_pad_closure(Serialized_NFA* serialized_nfa) {
     NFA nfa = deserialize_nfa(*serialized_nfa);
     nfa.perform_pad_closure();
     auto output = serialize_nfa(nfa);
+    return output;
+}
+
+Serialized_NFA* amaya_perform_pad_closure_using_bit_sets(Serialized_NFA* serialized_nfa) {
+    NFA nfa = deserialize_nfa(*serialized_nfa);
+    NFA result = do_pad_closure_using_bit_sets(&nfa, g_solver_context->bit_set_alloc);
+    auto output = serialize_nfa(result);
     return output;
 }
 

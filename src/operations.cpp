@@ -254,7 +254,7 @@ TASK_IMPL_3(MTBDD, build_pad_closure_bit_set_fronier_op, MTBDD *, p_extension, M
     State state_to_extend_frontier_with = static_cast<State>(raw_extension_origin_state);
     MTBDD extension = *p_extension;  // Set_Leaf
     MTBDD frontier  = *p_frontier;   // Bit_Set
-    
+
     if (extension == mtbdd_false) {
         return frontier;
     }
@@ -263,21 +263,22 @@ TASK_IMPL_3(MTBDD, build_pad_closure_bit_set_fronier_op, MTBDD *, p_extension, M
         return mtbdd_false;
     }
 
-    
+
     if (mtbdd_isleaf(extension) && mtbdd_isleaf(frontier)) {
         auto extension_contents = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(extension));
-        auto frontier_contents  = reinterpret_cast<Bit_Set::Bit_Set>(mtbdd_getvalue(frontier));
+        auto frontier_contents  = reinterpret_cast<Bit_Set::Bit_Set*>(mtbdd_getvalue(frontier));
 
-        bool is_already_present = Bit_Set::is_state_present(frontier_contents, state_to_extend_frontier_with);
+        bool is_already_present = frontier_contents->has_state(state_to_extend_frontier_with);
         if (is_already_present) {
             return frontier;
         }
 
-        bool can_ext_post_state_reach_final = Bit_Set::has_any_state(frontier_contents, extension_contents->destination_set);
+        bool can_ext_post_state_reach_final = frontier_contents->has_any_state(extension_contents->destination_set);
         if (can_ext_post_state_reach_final) {
-            Bit_Set::Bit_Set new_frontier = g_solver_context->bit_set_alloc->alloc();
-            Bit_Set::populate_with(new_frontier, frontier_contents);
-            Bit_Set::add_state(new_frontier, state_to_extend_frontier_with);
+            auto new_frontier = g_solver_context->bit_set_alloc->alloc();
+            u64 block_cnt = g_solver_context->bit_set_alloc->current_generation_block_cnt;
+            new_frontier->populate_with(*frontier_contents, block_cnt);
+            new_frontier->add_state(state_to_extend_frontier_with);
 
             MTBDD result = Bit_Set_Leaf::make_bit_set_leaf(new_frontier);
 
@@ -312,21 +313,21 @@ TASK_IMPL_3(MTBDD, add_pad_transitions_bit_set_op, MTBDD *, p_transitions, MTBDD
         return mtbdd_invalid;
     }
 
-    auto frontier_states     = reinterpret_cast<Bit_Set::Bit_Set>(mtbdd_getvalue(frontier));
+    auto frontier_states     = reinterpret_cast<Bit_Set::Bit_Set*>(mtbdd_getvalue(frontier));
     auto current_transitions = reinterpret_cast<Transition_Destination_Set*>(mtbdd_getvalue(transitions));
 
-    if (!Bit_Set::is_state_present(frontier_states, origin_state)) {
+    if (!frontier_states->has_state(origin_state)) {
         return transitions;
     }
 
-    if (!Bit_Set::has_any_state(frontier_states, current_transitions->destination_set)) {
+    if (!frontier_states->has_any_state(current_transitions->destination_set)) {
         // It is not possible to reach a final state from origin
         return transitions;
     }
 
-    Bit_Set::Bit_Set final_states = pad_closure_info->final_states_bits;
+    Bit_Set::Bit_Set* final_states = pad_closure_info->final_states_bits;
 
-    if (!Bit_Set::has_any_state(final_states, current_transitions->destination_set)) {
+    if (!final_states->has_any_state(current_transitions->destination_set)) {
         // The pad property is broken here, we need to fix it
         Transition_Destination_Set new_transition_contents(*current_transitions);
 

@@ -244,5 +244,7 @@ s64 div_bound_by_coef(s64 bound, s64 coef) {
     return d;
 }
 
+std::vector<Transition> unpack_mtbdd_symbolic(sylvan::MTBDD bdd, State origin_state, sylvan::BDDSET support_vars, u64 support_size);
+
 
 #endif

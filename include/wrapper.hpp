@@ -193,48 +193,50 @@ extern "C" {
 
     Serialized_NFA* amaya_minimize_hopcroft(struct Serialized_NFA* serialized_dfa);
     Serialized_NFA* amaya_construct_dfa_for_atom_conjunction(Serialized_Quantified_Atom_Conjunction* raw_formula);
-        Serialized_NFA* amaya_compute_nfa_intersection(Serialized_NFA* left_serialized, Serialized_NFA* right_serialized);
-        Serialized_NFA* amaya_determinize(Serialized_NFA* nfa);
-        Serialized_NFA* amaya_perform_pad_closure(Serialized_NFA* serialized_nfa);
+    Serialized_NFA* amaya_compute_nfa_intersection(Serialized_NFA* left_serialized, Serialized_NFA* right_serialized);
+    Serialized_NFA* amaya_determinize(Serialized_NFA* nfa);
+    Serialized_NFA* amaya_perform_pad_closure(Serialized_NFA* serialized_nfa);
+    Serialized_NFA* amaya_perform_pad_closure_using_bit_sets(Serialized_NFA* serialized_nfa);
 
-        Serialized_NFA* amaya_construct_nfa_from_congruence(
-            Serialized_Atom* congruence,
+    Serialized_NFA* amaya_construct_nfa_from_congruence(
+        Serialized_Atom* congruence,
         s64  init_val,
         u32* vars,
         u64  var_cnt
     );
 
-        Serialized_NFA* amaya_construct_nfa_from_ineq(
-            Serialized_Atom* ineq,
+    Serialized_NFA* amaya_construct_nfa_from_ineq(
+        Serialized_Atom* ineq,
         s64  init_val,
         u32* vars,
         u64  var_cnt
     );
 
-        Serialized_NFA* amaya_construct_nfa_from_eq(
-            Serialized_Atom* eq,
+    Serialized_NFA* amaya_construct_nfa_from_eq(
+        Serialized_Atom* eq,
         s64  init_val,
         u32* vars,
         u64  var_cnt
     );
 
 
-      void amaya_mtbdd_ref(sylvan::MTBDD mtbdd);
-      void amaya_mtbdd_deref(sylvan::MTBDD mtbdd);
-      void amaya_sylvan_gc();
-      void amaya_sylvan_try_performing_gc();
+    void amaya_mtbdd_ref(sylvan::MTBDD mtbdd);
+    void amaya_mtbdd_deref(sylvan::MTBDD mtbdd);
+    void amaya_sylvan_gc();
+    void amaya_sylvan_try_performing_gc();
 
-      void amaya_sylvan_clear_cache();
+    void amaya_sylvan_clear_cache();
 
-      void shutdown_machinery();
-      void init_machinery();
+    void shutdown_machinery();
+    void init_machinery();
 }
 
 Transition_Destination_Set* _get_transition_target(
-        sylvan::MTBDD root,
-        uint32_t current_variable,
-        uint8_t* variable_assigments,
-        uint32_t var_count);
+      sylvan::MTBDD root,
+      uint32_t current_variable,
+      uint8_t* variable_assigments,
+      uint32_t var_count
+);
 
 void collect_mtbdd_leaves(sylvan::MTBDD root, std::set<sylvan::MTBDD>& dest);
 

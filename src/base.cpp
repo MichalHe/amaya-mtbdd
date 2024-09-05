@@ -99,6 +99,30 @@ void unpack_dont_care_bits_in_mtbdd_path(
 }
 
 
+std::vector<Transition> unpack_mtbdd_symbolic(sylvan::MTBDD bdd, State origin_state, sylvan::BDDSET support_vars, u64 support_size) {
+    std::vector<Transition> transitions;
+    u8 raw_symbol[support_size];
+
+    MTBDD leaf = sylvan::mtbdd_enum_first(bdd, support_vars, raw_symbol, NULL);
+    while (leaf != sylvan::mtbdd_false) {
+        auto leaf_contents = reinterpret_cast<Transition_Destination_Set*>(sylvan::mtbdd_getvalue(leaf));
+
+        for (auto& dest_state: leaf_contents->destination_set) {
+
+            std::vector<u8> symbol(support_size);
+            for (u64 i = 0; i < support_size; i++) symbol[i] = raw_symbol[i];
+
+            Transition transition = {.from = origin_state, .to = dest_state, .symbol = symbol};
+            transitions.push_back(transition);
+        }
+
+        leaf = sylvan::mtbdd_enum_next(bdd, support_vars, raw_symbol, NULL);
+    }
+
+    return transitions;
+}
+
+
 std::vector<Transition> NFA::get_symbolic_transitions_for_state(State state) const {
     std::vector<Transition> symbolic_transitions;
 
@@ -109,25 +133,8 @@ std::vector<Transition> NFA::get_symbolic_transitions_for_state(State state) con
 
     auto mtbdd = state_mtbdd_it->second;
 
-    u8 raw_symbol[this->var_count];
-
-    MTBDD leaf = sylvan::mtbdd_enum_first(mtbdd, this->vars, raw_symbol, NULL);
-    while (leaf != sylvan::mtbdd_false) {
-        auto leaf_contents = reinterpret_cast<Transition_Destination_Set*>(sylvan::mtbdd_getvalue(leaf));
-
-        for (auto& dest_state: leaf_contents->destination_set) {
-
-            std::vector<u8> symbol(this->var_count);
-            for (u64 i = 0; i < this->var_count; i++) symbol[i] = raw_symbol[i];
-
-            Transition transition = {.from = state, .to = dest_state, .symbol = symbol};
-            symbolic_transitions.push_back(transition);
-        }
-
-        leaf = sylvan::mtbdd_enum_next(mtbdd, this->vars, raw_symbol, NULL);
-    }
-
-    return symbolic_transitions;
+    auto transitions = unpack_mtbdd_symbolic(mtbdd, state, this->vars, this->var_count);
+    return transitions;
 }
 
 void NFA::add_transition(State from, State to, const u64 symbol, const u64 quantified_bits_mask) {

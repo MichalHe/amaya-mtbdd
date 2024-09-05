@@ -36,7 +36,7 @@ u64 get_next_operation_id();
 struct Pad_Closure_Info2 {
     State                  new_final_state;
     const std::set<State>* final_states;
-    Bit_Set::Bit_Set       final_states_bits;
+    Bit_Set::Bit_Set*      final_states_bits;
 };
 extern Pad_Closure_Info2* g_pad_closure_info;
 
