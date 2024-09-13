@@ -1,6 +1,7 @@
 #include "../include/operations.hpp"
 #include "../include/custom_leaf.hpp"
 #include "../include/base.hpp"
+#include "../include/bit_set.hpp"
 
 #include <sylvan.h>
 #include <sylvan_common.h>
