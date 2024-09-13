@@ -1,5 +1,6 @@
 #include "../include/lazy.hpp"
 #include "../include/tfa_leaf.h"
+#include "../include/algorithms.hpp"
 #include "../include/rewrites.h"
 
 #include <cmath>
@@ -1053,8 +1054,8 @@ void init_mtbdd_libs() {
 
 
     g_solver_context = new Solver_Context();
-    Bit_Set_Leaf::init_bit_set_leaf(&g_solver_context->leaf_id_store);   
-    Set_Leaf::init_set_leaf(&g_solver_context->leaf_id_store);   
+    Bit_Set_Leaf::init_bit_set_leaf(&g_solver_context->leaf_id_store);
+    Set_Leaf::init_set_leaf(&g_solver_context->leaf_id_store);
 
     init_tfa_leaves();
 }
@@ -1436,8 +1437,13 @@ NFA build_nfa_with_formula_entailement(const Formula* formula, Conjunction_State
         PRINT_DEBUG(handle << "::" << macrostate);
     }
 
-    // assert(0);
     if (!formula->bound_vars.empty()) {
+        if (g_solver_context->config.is_feature_enabled(SOLVER_CONFIG_USE_BIT_SETS)) {
+            std::cout << "Using bit sets!\n";
+            NFA result = do_pad_closure_using_bit_sets(&nfa, g_solver_context->bit_set_alloc);
+            return determinize_nfa(result);
+        }
+        // Use the old implementation
         nfa.perform_pad_closure();
         return determinize_nfa(nfa);
     }
