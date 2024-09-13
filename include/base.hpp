@@ -131,6 +131,8 @@ struct NFA {
 
     std::string show_transitions() const;
     std::vector<Transition> get_symbolic_transitions_for_state(State state) const;
+    std::vector<Transition> get_symbolic_transitions() const;
+    void write_into_mata_format(std::ostream& output_stream) const;
 
     std::set<State> get_state_post(State state);
 

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <iostream>
 #include <set>
 #include <vector>
@@ -134,6 +135,16 @@ std::vector<Transition> NFA::get_symbolic_transitions_for_state(State state) con
     auto mtbdd = state_mtbdd_it->second;
 
     auto transitions = unpack_mtbdd_symbolic(mtbdd, state, this->vars, this->var_count);
+    return transitions;
+}
+
+std::vector<Transition> NFA::get_symbolic_transitions() const {
+    std::vector<Transition> transitions;
+    for (auto state: states) {
+        auto state_transitions = this->get_symbolic_transitions_for_state(state);
+        for (auto t : state_transitions)
+            transitions.push_back(t);
+    }
     return transitions;
 }
 
@@ -373,6 +384,45 @@ void NFA::remove_states(std::set<State>& states_to_remove) {
     in_place_set_difference(states, states_to_remove);
     in_place_set_difference(final_states, states_to_remove);
     in_place_set_difference(initial_states, states_to_remove);
+}
+
+void NFA::write_into_mata_format(std::ostream &output_stream) const {
+    output_stream << "@NFA-explicit\n";
+
+    output_stream << "%States-enum";
+    for (State state : this->states) {
+        output_stream << " q" << state;
+    }
+
+    output_stream << "%Alphabet-auto\n";
+
+    output_stream << "%Initial";
+    for (State state : this->initial_states) {
+        output_stream << " q" << state;
+    }
+    output_stream << "\n";
+
+    output_stream << "%Final";
+    for (State state : this->final_states) {
+        output_stream << " q" << state;
+    }
+    output_stream << "\n";
+
+    std::vector<Transition> transitions = this->get_symbolic_transitions();
+    for (auto& transition : transitions) {
+        output_stream << "q" << transition.from
+                      << " ";
+        for (u8 bit : transition.symbol) {
+            const char* bit_str;
+            switch (bit) {
+                case 0: bit_str = "0"; break;
+                case 1: bit_str = "1"; break;
+                default: bit_str = "2";
+            }
+            output_stream << bit_str;
+        }
+        output_stream << " q" << transition.to << "\n";
+    }
 }
 
 MTBDD compute_states_reaching_set_by_repeated_symbol(NFA& nfa, std::set<State>& states_to_reach) {
@@ -891,6 +941,7 @@ NFA perform_pad_closure(NFA& nfa) {
     nfa_copy.perform_pad_closure();
     return nfa_copy;
 }
+
 
 std::ostream& operator<<(std::ostream& output, const Transition& transition) {
     output << "( " << transition.from << " --(";
