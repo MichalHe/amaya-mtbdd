@@ -13,8 +13,25 @@ struct Leaf_Type_Id_Store {
     u64 transition_set;
 };
 
+enum Solver_Config_Flags {
+    SOLVER_CONFIG_USE_BIT_SETS = 1,
+};
+
+struct Solver_Configuration {
+    u64 flags;
+
+    bool is_feature_enabled(Solver_Config_Flags flag_feature) {
+        return (this->flags & flag_feature) > 0;
+    }
+
+    void enable_feature(Solver_Config_Flags flag_feature) {
+        this->flags = this->flags | flag_feature;
+    }
+};
+
 struct Solver_Context {
-    Leaf_Type_Id_Store leaf_id_store;
+    Leaf_Type_Id_Store   leaf_id_store;
+    Solver_Configuration config;
     Bit_Set::Block_Arena_Allocator* bit_set_alloc;
 };
 
