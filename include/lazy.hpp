@@ -1080,7 +1080,7 @@ struct Macrostate_Data {
         }
 
         ~Iterator() {
-            delete buffer.items;
+            delete[] buffer.items;
         }
     };
 
