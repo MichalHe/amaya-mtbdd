@@ -139,6 +139,9 @@ void init_machinery()
 
 void shutdown_machinery()
 {
+    LACE_ME;
+
+    sylvan_gc();
     sylvan_quit();
     lace_exit();
 
@@ -1048,4 +1051,8 @@ Serialized_NFA* amaya_construct_nfa_from_eq(
     auto result = construct_nfa_from_eq(eq, init_val, var_set, var_cnt);
     sylvan::mtbdd_deref(var_set);
     return result;
+}
+
+void amaya_enable_bit_sets() {
+    g_solver_context->config.enable_feature(SOLVER_CONFIG_USE_BIT_SETS);
 }

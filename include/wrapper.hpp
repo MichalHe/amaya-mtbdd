@@ -229,6 +229,8 @@ extern "C" {
 
     void shutdown_machinery();
     void init_machinery();
+
+    void amaya_enable_bit_sets();
 }
 
 Transition_Destination_Set* _get_transition_target(
