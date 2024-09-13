@@ -1,4 +1,7 @@
+#include <chrono>
+
 #include <sylvan.h>
+#include <sylvan_mtbdd.h>
 #include "../include/base.hpp"
 #include "../include/bit_set.hpp"
 #include "../include/custom_leaf.hpp"
@@ -23,14 +26,14 @@ void sanity_check_state_numbers(NFA* nfa) {
 
 NFA do_pad_closure_using_bit_sets(NFA* nfa, Bit_Set::Block_Arena_Allocator* allocator) {
     if (nfa->states.empty()) return *nfa;
-  
+
     sanity_check_state_numbers(nfa);
 
     LACE_ME;
     using namespace sylvan;
 
     Pad_Closure_Info2 pad_closure_info = {};
-    g_pad_closure_info = &pad_closure_info; 
+    g_pad_closure_info = &pad_closure_info;
 
     allocator->start_new_generation(nfa->states.size());
 
@@ -40,8 +43,8 @@ NFA do_pad_closure_using_bit_sets(NFA* nfa, Bit_Set::Block_Arena_Allocator* allo
     }
 
     sylvan::MTBDD frontier = Bit_Set_Leaf::make_bit_set_leaf(initial_frontier);
-    sylvan::mtbdd_ref(frontier);
 
+    sylvan::mtbdd_ref(frontier);
 
     g_pad_closure_info->final_states_bits = initial_frontier;
 
@@ -81,7 +84,7 @@ NFA do_pad_closure_using_bit_sets(NFA* nfa, Bit_Set::Block_Arena_Allocator* allo
     g_pad_closure_info->new_final_state = new_final_state;
 
     NFA new_nfa = *nfa;
-   
+
     const u64 current_pad_closure_id = get_next_operation_id();
 
     bool was_any_transition_added = false;
@@ -110,6 +113,9 @@ NFA do_pad_closure_using_bit_sets(NFA* nfa, Bit_Set::Block_Arena_Allocator* allo
         new_nfa.final_states.insert(new_final_state);
         PRINT_DEBUG("Added a new final state " << new_final_state << " during pad closue.");
     }
+
+
+    allocator->dealloc(initial_frontier);
 
     sylvan::mtbdd_deref(frontier); // -frontier
     return new_nfa;
