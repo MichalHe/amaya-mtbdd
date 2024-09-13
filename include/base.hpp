@@ -6,6 +6,7 @@
 #define INTERSECTION_DETECT_STATES_WITH_NO_POST 0
 #define INTERSECTION_REMOVE_NONFINISHING_STATES 0
 
+#include <chrono>
 #include <iostream>
 #include <vector>
 #include <set>
@@ -246,5 +247,23 @@ s64 div_bound_by_coef(s64 bound, s64 coef) {
 
 std::vector<Transition> unpack_mtbdd_symbolic(sylvan::MTBDD bdd, State origin_state, sylvan::BDDSET support_vars, u64 support_size);
 
+struct Measure_Block_Exec_Time {
+    std::chrono::steady_clock::time_point start;
+    std::string block_name;
+    explicit Measure_Block_Exec_Time(const std::string& block_name) : block_name(block_name) {
+        start = std::chrono::steady_clock::now();
+    }
+
+    Measure_Block_Exec_Time() = delete;
+    Measure_Block_Exec_Time(Measure_Block_Exec_Time&& other) = delete;
+    Measure_Block_Exec_Time(const Measure_Block_Exec_Time& other) = delete;
+
+    ~Measure_Block_Exec_Time() {
+        auto end = std::chrono::steady_clock::now();
+        std::cout << this->block_name << " took "
+                  << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()
+                  << "[µs]" << std::endl;
+    }
+};
 
 #endif
