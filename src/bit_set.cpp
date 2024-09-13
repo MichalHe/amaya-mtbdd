@@ -32,9 +32,16 @@ Bit_Set::Block_Arena_Allocator Bit_Set::create_allocator_for_n_states(u64 state_
     u64 reminder = state_cnt % sizeof(u64);
     block_cnt += (reminder > 0);
 
-    return {
-        .current_generation = 0,
-        .current_generation_state_cnt = state_cnt,
-        .current_generation_block_cnt = block_cnt,
-    };
+    return Block_Arena_Allocator();
+}
+
+std::ostream& Bit_Set::operator<<(std::ostream& output, const Bit_Set& bit_set) {
+    output << "{";
+    for (u64 i = 0; i < g_solver_context->bit_set_alloc->current_generation_state_cnt; i++) {
+        if (bit_set.has_state(i)) {
+            output << i << ", ";
+        }
+    }
+    output << "}";
+    return output;
 }

@@ -9,7 +9,7 @@ namespace Bit_Set {
         u64 generation;
         u64* data;
 
-        bool has_state(u64 state) {
+        bool has_state(u64 state) const {
             u64 target_chunk = state / 64;
             u64 chunk_offset = state % 64;
 
@@ -26,7 +26,7 @@ namespace Bit_Set {
 
         template <typename Iterator>
         bool has_any_state(Iterator first, Iterator end) {
-            for (Iterator it = first; first != end; first++) {
+            for (Iterator it = first; it != end; it++) {
                 if (has_state(*it)) return true;
             }
             return false;
@@ -57,6 +57,8 @@ namespace Bit_Set {
         }
     };
 
+    std::ostream& operator<<(std::ostream& output, const Bit_Set& bit_set);
+
     struct Block_Arena_Allocator {
         u64 current_generation = 0;
         u64 current_generation_state_cnt;
@@ -74,7 +76,7 @@ namespace Bit_Set {
         }
 
         void dealloc(Bit_Set* bit_set) {
-            delete bit_set->data;
+            delete[] bit_set->data;
             delete bit_set;
         };
 
@@ -84,7 +86,7 @@ namespace Bit_Set {
         void start_new_generation(u64 state_cnt) {
             current_generation += 1;
             current_generation_state_cnt = state_cnt;
-            current_generation_block_cnt = state_cnt / sizeof(u64) + ((state_cnt % sizeof(u64)) > 0);
+            current_generation_block_cnt = state_cnt / 64 + ((state_cnt % 64) > 0);
         }
     };
 
