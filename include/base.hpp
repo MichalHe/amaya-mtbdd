@@ -89,7 +89,7 @@ struct NFA {
 
     NFA(sylvan::BDDSET vars = sylvan::mtbdd_set_empty(),
         u64 var_count = 0,
-        std::set<State>&& states={},
+        const std::set<State>&& states={},
         std::set<State>&& final_states={},
         std::set<State>&& initial_states={}) : vars(vars), var_count(var_count), states(states), final_states(final_states), initial_states(initial_states), transitions({}) {
         sylvan::mtbdd_ref(vars);
@@ -97,6 +97,24 @@ struct NFA {
 
     NFA(const NFA& other) : vars(other.vars), var_count(other.var_count), states(other.states), final_states(other.final_states), initial_states(other.initial_states), transitions(other.transitions)  {
         sylvan::mtbdd_ref(vars);
+    }
+
+    NFA(NFA&& other) : states(other.states), initial_states(other.initial_states), final_states(other.final_states), vars(other.vars), var_count(other.var_count), transitions(other.transitions) {
+        sylvan::mtbdd_ref(vars);
+    }
+
+    NFA& operator=(const NFA& other) {
+        sylvan::mtbdd_deref(this->vars);
+
+        this->states         = other.states;
+        this->initial_states = other.initial_states;
+        this->final_states   = other.final_states;
+        this->vars           = other.vars;
+        this->var_count      = other.var_count;
+        this->transitions    = other.transitions;
+
+        sylvan::mtbdd_ref(this->vars);
+        return *this;
     }
 
     ~NFA() {
