@@ -61,7 +61,7 @@ char* Bit_Set_Leaf::into_str(int comp, uint64_t leaf_contents_raw_ptr, char *buf
     auto leaf_contents = reinterpret_cast<Bit_Set::Bit_Set*>(leaf_contents_raw_ptr);
     ss << "{";
     uint32_t cnt = 1;
-    for (State state = 0; state < g_solver_context->bit_set_alloc->current_generation_block_cnt; state++) {
+    for (State state = 0; state < g_solver_context->bit_set_alloc->current_generation_state_cnt; state++) {
         bool is_present = leaf_contents->has_state(state);
         if (!is_present) continue;
 
